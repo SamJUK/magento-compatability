@@ -1,0 +1,74 @@
+# Base Docker Compose stack for a single test combination.
+# This file defines the PHP-FPM and webserver services.
+# Service-specific dependencies (DB, search, cache, queue, varnish) are
+# provided via override files from compose/services/ by orchestrate.sh.
+#
+# Required environment variables (set by orchestrate.sh):
+#   PHP_VERSION     — e.g. "8.3"
+#   WEBSERVER_TYPE  — "nginx" or "apache"
+#   MAGENTO_DIR     — absolute path on host to mount the Magento installation
+#   COMPOSE_PROJECT_NAME — unique per combination run
+
+services:
+  php-fpm:
+    build:
+      context: ../php
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: "${PHP_VERSION:-8.3}"
+    image: "m2test/php:${PHP_VERSION:-8.3}"
+    volumes:
+      - magento:/var/www/html
+      - composer-cache:/composer-cache
+      - vendor-cache:/vendor-cache
+      - ../scripts:/scripts:ro
+    environment:
+      COMPOSER_HOME: /composer-cache
+      MAGENTO_DIR: /var/www/html
+    networks:
+      - magento
+    depends_on:
+      db:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+    restart: "no"
+
+  webserver:
+    build:
+      context: "../${WEBSERVER_TYPE:-nginx}"
+      dockerfile: Dockerfile
+    image: "m2test/webserver-${WEBSERVER_TYPE:-nginx}:latest"
+    ports:
+      - "${WEBSERVER_PORT:-0}:80"
+    volumes:
+      - magento:/var/www/html:ro
+    networks:
+      - magento
+    depends_on:
+      - php-fpm
+    restart: "no"
+
+volumes:
+  # Named volume — Magento is installed here during the run
+  magento:
+
+  # Shared Composer cache — persists across all combinations on the same machine
+  # to avoid re-downloading packages for every run.
+  composer-cache:
+    name: m2test-composer-cache
+    external: false
+
+  # Shared vendor cache — keyed by {php}-{package}-{version}, allows skipping
+  # composer install entirely on repeated runs for the same combination.
+  vendor-cache:
+    name: m2test-vendor-cache
+    external: false
+
+networks:
+  magento:
+    driver: bridge

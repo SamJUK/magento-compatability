@@ -1,0 +1,99 @@
+---
+import Base from '../../layouts/Base.astro';
+import ServiceMatrix from '../../components/ServiceMatrix.astro';
+import CombinationTable from '../../components/CombinationTable.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+import { getProducts, getVersionsForProduct } from '@lib/matrix.js';
+import { getVersionSummary, getResultsForVersion } from '@lib/results.js';
+import type { ServiceStatus } from '@lib/types.js';
+
+export async function getStaticPaths() {
+  const paths = [];
+  for (const product of getProducts()) {
+    for (const version of getVersionsForProduct(product.name)) {
+      paths.push({
+        params: { product: product.name, version },
+        props: { productName: product.name, version },
+      });
+    }
+  }
+  return paths;
+}
+
+const { productName, version } = Astro.props;
+const summary = getVersionSummary(productName, version);
+const results = getResultsForVersion(productName, version);
+
+const tested = summary.passCount + summary.failCount;
+const overallStatus: ServiceStatus =
+  tested === 0 ? 'unknown'
+  : summary.failCount === 0 ? 'pass'
+  : summary.passCount === 0 ? 'fail'
+  : 'partial';
+
+const passRate = tested > 0 ? Math.round((summary.passCount / tested) * 100) : null;
+---
+
+<Base
+  title={`${productName} ${version} compatibility`}
+  description={`${productName} ${version} — ${tested} combinations tested, ${summary.passCount} passing.`}
+>
+
+  <!-- breadcrumb -->
+  <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
+    <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
+    <span class="mx-1.5">/</span>
+    <a href={`/${productName}`} class="capitalize hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">{productName}</a>
+    <span class="mx-1.5">/</span>
+    <span>{version}</span>
+  </nav>
+
+  <!-- header -->
+  <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
+    <div>
+      <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">
+        <span class="capitalize text-zinc-400 dark:text-zinc-500 text-xl font-normal">{productName} </span>
+        {version}
+      </h1>
+      {summary.lastTested && (
+        <p class="mt-1 text-sm text-zinc-400 dark:text-zinc-500">
+          Last tested {new Date(summary.lastTested).toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}
+        </p>
+      )}
+    </div>
+
+    <!-- stats pills -->
+    <div class="flex items-center gap-3 flex-wrap">
+      <StatusBadge status={overallStatus} passed={summary.passCount} total={tested} />
+      {passRate !== null && (
+        <span class="text-sm text-zinc-500 dark:text-zinc-400">{passRate}% pass rate</span>
+      )}
+      <span class="text-sm text-zinc-400 dark:text-zinc-500">{summary.unknownCount} untested</span>
+    </div>
+  </div>
+
+  <!-- service compatibility matrix -->
+  <section class="mb-8">
+    <h2 class="text-lg font-bold text-zinc-900 dark:text-white mb-3">Service compatibility</h2>
+    <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+      Each badge shows aggregate results across all combinations that included that service version.
+      Click a badge to see the reverse view — which {productName} versions work with that service.
+    </p>
+    <ServiceMatrix rows={summary.serviceRows} product={productName} version={version} />
+  </section>
+
+  <!-- full combinations table -->
+  {results.length > 0 && (
+    <section class="mb-8">
+      <h2 class="text-lg font-bold text-zinc-900 dark:text-white mb-3">Tested combinations</h2>
+      <CombinationTable results={results} />
+    </section>
+  )}
+
+  {results.length === 0 && (
+    <div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-400 dark:text-zinc-500">
+      No test results yet for {productName} {version}. Results will appear here once CI has run.
+    </div>
+  )}
+
+</Base>

@@ -1,0 +1,246 @@
+---
+import Base from '../layouts/Base.astro';
+import { getProducts, getVersionsForProduct, getAllServiceDimensions, getAllPhpVersions } from '@lib/matrix.js';
+import { getGlobalStats } from '@lib/results.js';
+
+const GITHUB_URL = 'https://github.com/swiftotter/magento2-supported-versions';
+
+const stats = getGlobalStats();
+const products = getProducts();
+const generated = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+
+const phpVersions = getAllPhpVersions();
+const phpMin = phpVersions[phpVersions.length - 1];
+const phpMax = phpVersions[0];
+const totalReleases = products.reduce((sum, p) => sum + getVersionsForProduct(p.name).length, 0);
+const totalServiceVersions = getAllServiceDimensions().filter(d => !(d.key === 'varnish' && d.version === 'none')).length;
+
+const keyOrder = ['php', 'db', 'search', 'cache', 'queue', 'webserver', 'varnish'];
+const keyLabels: Record<string, string> = {
+  php: 'PHP', db: 'Database', search: 'Search', cache: 'Cache',
+  queue: 'Queue', webserver: 'Webserver', varnish: 'Varnish',
+};
+const serviceCategories = keyOrder.map(key => ({
+  label: keyLabels[key] ?? key,
+  badges: getAllServiceDimensions()
+    .filter(d => d.key === key && !(d.key === 'varnish' && d.version === 'none'))
+    .map(d => ({ label: d.label, href: `/software/${d.key}/${d.type}-${d.version}` })),
+})).filter(cat => cat.badges.length > 0);
+---
+
+<Base title="Home" description="Magento 2 and MageOS service compatibility — tested, not guessed.">
+
+  <!-- ── Hero ──────────────────────────────────────────────────────────────── -->
+  <section class="hero-pattern pt-12 pb-16 border-b border-zinc-100 dark:border-zinc-800 -mx-4 sm:-mx-6 px-4 sm:px-6">
+    <div class="max-w-3xl">
+      <div class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 mb-5">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        Open source · CI-generated · Always free
+      </div>
+      <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-zinc-900 dark:text-white leading-tight">
+        The Magento compatibility tests <span class="text-emerald-500 dark:text-emerald-400">Adobe won't run.</span>
+      </h1>
+      <p class="mt-5 text-lg text-zinc-500 dark:text-zinc-400 max-w-2xl leading-relaxed">
+        Adobe publishes system requirements for Magento&nbsp;2 but rarely validates them with automated
+        tests before releases. We install every version of Magento&nbsp;2 and MageOS against every
+        supported service combination in Docker and run real smoke&nbsp;+&nbsp;checkout tests.
+        <strong class="text-zinc-700 dark:text-zinc-300">Tested, not guessed.</strong>
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href="/magento" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-semibold text-sm hover:opacity-90 transition-opacity">
+          Magento results →
+        </a>
+        <a href="/mageos" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300 font-semibold text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+          MageOS results
+        </a>
+        <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300 font-semibold text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub ↗
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Stats ─────────────────────────────────────────────────────────────── -->
+  <section class="py-10 border-b border-zinc-100 dark:border-zinc-800">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 px-5 py-4 bg-zinc-50 dark:bg-zinc-900">
+        <div class="text-2xl font-bold text-zinc-900 dark:text-white tabular-nums">{stats.total.toLocaleString()}</div>
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Combinations tested</div>
+      </div>
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 px-5 py-4 bg-zinc-50 dark:bg-zinc-900">
+        <div class="text-2xl font-bold text-zinc-900 dark:text-white font-mono">PHP {phpMin} – {phpMax}</div>
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{phpVersions.length} PHP versions</div>
+      </div>
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 px-5 py-4 bg-zinc-50 dark:bg-zinc-900">
+        <div class="text-2xl font-bold text-zinc-900 dark:text-white tabular-nums">{totalReleases}</div>
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Magento &amp; MageOS releases</div>
+      </div>
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 px-5 py-4 bg-zinc-50 dark:bg-zinc-900">
+        <div class="text-2xl font-bold text-zinc-900 dark:text-white tabular-nums">{totalServiceVersions}</div>
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Service versions tested</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ──────────────────────────────────────────────────────────── -->
+  <section class="py-12 border-b border-zinc-100 dark:border-zinc-800">
+    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-2">What's included</h2>
+    <p class="text-zinc-500 dark:text-zinc-400 mb-8 max-w-2xl">
+      More than a compatibility chart — a full testing infrastructure with multiple ways to consume the data.
+    </p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 p-6 bg-white dark:bg-zinc-900">
+        <div class="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-4">
+          <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h3 class="font-bold text-zinc-900 dark:text-white mb-2">Full stack Docker tests</h3>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+          Each configuration spins up a real Docker Compose environment — PHP, database, search engine,
+          cache, queue, and web server — installs Magento, then runs smoke tests and a Playwright-driven
+          checkout flow. No mocks. No shortcuts.
+        </p>
+      </div>
+
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 p-6 bg-white dark:bg-zinc-900">
+        <div class="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-4">
+          <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h3 class="font-bold text-zinc-900 dark:text-white mb-2">Static REST API</h3>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+          Results are pre-rendered as static JSON endpoints — no auth, no rate limits, CDN-served.
+          Pull them directly into GitHub Actions CI matrices, deployment scripts, or compatibility checkers.
+        </p>
+        <div class="mt-4 flex items-center gap-2">
+          <span class="text-xs font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded">GET</span>
+          <code class="text-xs font-mono text-zinc-600 dark:text-zinc-300">/api/v1/magento/2.4.8.json</code>
+        </div>
+        <a href="/api" class="mt-3 inline-flex items-center text-sm text-blue-600 dark:text-blue-400 font-medium hover:underline">
+          API docs →
+        </a>
+      </div>
+
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 p-6 bg-white dark:bg-zinc-900">
+        <div class="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-4">
+          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.75 3.75 0 01-5.303 0l-.347-.347z" />
+          </svg>
+        </div>
+        <h3 class="font-bold text-zinc-900 dark:text-white mb-2">MCP server</h3>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+          An MCP (Model Context Protocol) server lets AI coding assistants — Cursor, Claude,
+          VS&nbsp;Code Copilot — query compatibility data directly. Ask
+          <em>"does Magento 2.4.8-p4 support PHP&nbsp;8.4?"</em> without leaving your editor.
+        </p>
+        <blockquote class="mt-4 border-l-2 border-violet-300 dark:border-violet-700 pl-3 text-xs text-zinc-500 dark:text-zinc-400 italic leading-relaxed">
+          "Does Magento 2.4.8-p4 support PHP 8.4?"
+        </blockquote>
+      </div>
+
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 p-6 bg-white dark:bg-zinc-900">
+        <div class="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
+          <svg class="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3" />
+          </svg>
+        </div>
+        <h3 class="font-bold text-zinc-900 dark:text-white mb-2">CLI tool</h3>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+          A standalone CLI binary lets you query compatibility from your terminal.
+          Check which PHP versions work with a given Magento release, or get a full JSON report,
+          without opening a browser.
+        </p>
+        <pre class="mt-4 rounded-lg bg-zinc-900 dark:bg-zinc-950 text-emerald-400 text-xs px-4 py-3 font-mono overflow-x-auto">m2compat check magento 2.4.8 --php 8.3</pre>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── What we test ──────────────────────────────────────────────────────── -->
+  <section class="py-12 border-b border-zinc-100 dark:border-zinc-800">
+    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-2">What we test</h2>
+    <p class="text-zinc-500 dark:text-zinc-400 mb-8 max-w-2xl">
+      Every combination is tested across these service versions. Click any badge to see its compatibility across all Magento and MageOS releases.
+    </p>
+    <div class="space-y-4">
+      {serviceCategories.map(({ label, badges }) => (
+        <div class="flex items-start gap-4">
+          <span class="w-24 shrink-0 text-sm font-semibold text-zinc-600 dark:text-zinc-400 pt-1">{label}</span>
+          <div class="flex flex-wrap gap-1.5">
+            {badges.map(({ label: badgeLabel, href }) => (
+              <a
+                href={href}
+                class="inline-block text-xs px-2.5 py-1 rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:border-emerald-400 dark:hover:border-emerald-600 hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors font-mono"
+              >{badgeLabel}</a>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <!-- ── Browse results ────────────────────────────────────────────────────── -->
+  <section class="py-12 border-b border-zinc-100 dark:border-zinc-800">
+    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-6">Browse results</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {products.map((product) => {
+        const versions = getVersionsForProduct(product.name);
+        return (
+          <a href={`/${product.name}`} class="group rounded-xl border border-zinc-200 dark:border-zinc-700 p-6 bg-white dark:bg-zinc-900 hover:border-zinc-300 dark:hover:border-zinc-600 hover:shadow-sm transition-all">
+            <h3 class="text-lg font-bold text-zinc-900 dark:text-white capitalize group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-1">
+              {product.name}
+            </h3>
+            <p class="text-sm text-zinc-500 dark:text-zinc-400">
+              {versions.length} version{versions.length !== 1 ? 's' : ''} tracked
+            </p>
+            <span class="mt-3 inline-flex items-center text-sm text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+              View all versions →
+            </span>
+          </a>
+        );
+      })}
+    </div>
+  </section>
+
+  <!-- ── GitHub ─────────────────────────────────────────────────────────────── -->
+  <section class="py-12">
+    <div class="rounded-2xl border border-zinc-200 dark:border-zinc-700 p-8 bg-zinc-50 dark:bg-zinc-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+      <div>
+        <h2 class="text-lg font-bold text-zinc-900 dark:text-white mb-1">Open source on GitHub</h2>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 max-w-lg">
+          The test harness, matrix configuration, result data, and this site are all open source.
+          Contributions, corrections, and new version additions are welcome.
+        </p>
+        <p class="text-xs text-zinc-400 dark:text-zinc-500 mt-2">
+          {stats.total.toLocaleString()} test results generated by CI and published here.
+        </p>
+      </div>
+      <a
+        href={GITHUB_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="shrink-0 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-semibold text-sm hover:opacity-90 transition-opacity"
+      >
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+  </section>
+
+</Base>
+
+<style>
+  .hero-pattern {
+    background-image: radial-gradient(circle, #d4d4d8 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .hero-pattern {
+      background-image: radial-gradient(circle, #3f3f46 1px, transparent 1px);
+    }
+  }
+</style>

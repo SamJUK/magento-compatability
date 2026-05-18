@@ -1,0 +1,24 @@
+services:
+  db:
+    image: "mariadb:${DB_VERSION:-11.4}"
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: magento
+      MARIADB_USER: magento
+      MARIADB_PASSWORD: magento
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - magento
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  db-data:
+
+networks:
+  magento:

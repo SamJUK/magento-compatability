@@ -1,0 +1,32 @@
+# Varnish override — used when VARNISH_VERSION != "none".
+# Routes external traffic through Varnish, which proxies to the webserver on port 8080.
+# When this override is active, the webserver port is remapped to 8080 (internal only)
+# and Varnish is exposed on port WEBSERVER_PORT.
+
+services:
+  # Remove the host-port mapping so only Varnish is reachable from outside.
+  # Nginx still listens on port 80 inside the container; Varnish proxies to it.
+  webserver:
+    ports: !reset []
+
+  varnish:
+    build:
+      context: ../docker/varnish
+      dockerfile: Dockerfile
+    image: "m2test/varnish:${VARNISH_VERSION:-7.7}"
+    ports:
+      - "${WEBSERVER_PORT:-0}:80"
+    networks:
+      - magento
+    depends_on:
+      - webserver
+    healthcheck:
+      test: ["CMD-SHELL", "varnishstat -1 -f MAIN.uptime > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: "no"
+
+networks:
+  magento:

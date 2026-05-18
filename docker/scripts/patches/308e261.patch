@@ -1,0 +1,43 @@
+From 308e26105c97006d74e87d7c9e4c29d1ad5873f9 Mon Sep 17 00:00:00 2001
+From: Pieter Hoste <hoste.pieter@gmail.com>
+Date: Wed, 27 Mar 2024 10:57:22 +0100
+Subject: [PATCH] Fixes xsd schema to work with libxml 2.12 and higher.
+Fixes: "complex type 'mixedDataType': The content model is not deterministic" error on Magento 2.4.7 
+
+---
+ .../Magento/Elasticsearch/etc/esconfig.xsd    | 21 ++++++++++++-------
+ 1 file changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/vendor/magento/module-elasticsearch/etc/esconfig.xsd b/vendor/magento/module-elasticsearch/etc/esconfig.xsd
+index d1442b074ac80..778e67a8fdc3f 100644
+--- a/vendor/magento/module-elasticsearch/etc/esconfig.xsd
++++ b/vendor/magento/module-elasticsearch/etc/esconfig.xsd
+@@ -11,14 +11,21 @@
+ <xs:element name="config" type="configType" />
+ <xs:complexType name="configType" mixed="true">
+     <xs:choice maxOccurs="unbounded" minOccurs="1">
+-        <xs:element name="stemmer" type="mixedDataType" />
+-        <xs:element name="stopwords_file" type="mixedDataType" />
++        <xs:element name="stemmer" type="stemmerDataType" />
++        <xs:element name="stopwords_file" type="stopwordsDataType" />
+     </xs:choice>
+ </xs:complexType>
+-<xs:complexType name="mixedDataType">
+-    <xs:choice maxOccurs="unbounded" minOccurs="1">
+-        <xs:element type="xs:string" name="default" minOccurs="1" maxOccurs="1" />
+-        <xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded" />
+-    </xs:choice>
++<xs:complexType name="stemmerDataType">
++    <xs:sequence>
++        <xs:element type="xs:string" name="type" minOccurs="1" maxOccurs="1"/>
++        <xs:element type="xs:string" name="default" minOccurs="1" maxOccurs="1"/>
++        <xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
++    </xs:sequence>
++</xs:complexType>
++<xs:complexType name="stopwordsDataType">
++    <xs:sequence>
++        <xs:element type="xs:string" name="default" minOccurs="1" maxOccurs="1"/>
++        <xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
++    </xs:sequence>
+ </xs:complexType>
+ </xs:schema>

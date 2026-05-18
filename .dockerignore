@@ -1,0 +1,5 @@
+.git
+app/
+docker/
+site/node_modules
+site/dist

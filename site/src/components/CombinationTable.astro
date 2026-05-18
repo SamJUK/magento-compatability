@@ -1,0 +1,266 @@
+---
+// CombinationTable.astro — collapsible full list of tested combinations
+import StatusBadge from './StatusBadge.astro';
+import type { TestResult } from '@lib/types.js';
+
+interface Props {
+  results: TestResult[];
+}
+
+const { results } = Astro.props;
+
+const sortedResults = [...results].sort((a, b) =>
+  (a.overall_status === 'pass' ? -1 : 1) - (b.overall_status === 'pass' ? -1 : 1)
+);
+
+// Pre-serialise log data so it can be embedded as a data attribute.
+type LogData = {
+  id: string;
+  label: string;
+  steps: Array<{ name: string; status: string; duration_s: number; log: string }>;
+  containerLogs: Array<{ name: string; log: string }>;
+};
+
+const logData: LogData[] = sortedResults.map((r) => ({
+  id: r.id,
+  label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
+  steps: (['stack_up', 'install', 'smoke', 'playwright'] as const)
+    .filter((s) => r.steps?.[s] != null)
+    .map((s) => ({
+      name: s,
+      status: r.steps![s].status,
+      duration_s: r.steps![s].duration_s,
+      log: r.steps![s].log,
+    })),
+  containerLogs: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
+}));
+---
+
+<details class="group rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+  <summary class="flex items-center justify-between px-4 py-3 bg-zinc-50 dark:bg-zinc-800 cursor-pointer select-none hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors">
+    <span class="font-semibold text-sm text-zinc-700 dark:text-zinc-200">
+      All tested combinations ({results.length})
+    </span>
+    <span class="text-zinc-400 dark:text-zinc-500 text-xs group-open:hidden">Show ▸</span>
+    <span class="text-zinc-400 dark:text-zinc-500 text-xs hidden group-open:inline">Hide ▴</span>
+  </summary>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-t border-zinc-200 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-800/50">
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Status</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">PHP</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">DB</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Search</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Cache</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Queue</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Webserver</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Varnish</th>
+          <th class="px-3 py-2 text-left font-semibold text-zinc-500 dark:text-zinc-400">Steps</th>
+          <th class="px-3 py-2"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {sortedResults.map((r, i) => {
+          const status = r.overall_status === 'pass' ? 'pass' : 'fail';
+          return (
+            <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+              <td class="px-3 py-2">
+                <StatusBadge status={status} size="sm" />
+              </td>
+              <td class="px-3 py-2 font-mono text-zinc-700 dark:text-zinc-300">{r.services.php}</td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                {r.services.db.type} {r.services.db.version}
+              </td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                {r.services.search.type} {r.services.search.version}
+              </td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                {r.services.cache.type} {r.services.cache.version}
+              </td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                {r.services.queue.type} {r.services.queue.version}
+              </td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">{r.services.webserver}</td>
+              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                {r.services.varnish === 'none' ? '–' : r.services.varnish}
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex gap-1">
+                  {(['stack_up', 'install', 'smoke', 'playwright'] as const).map((step) => {
+                    const s = r.steps?.[step];
+                    return s ? (
+                      <StatusBadge
+                        status={s.status === 'pass' ? 'pass' : s.status === 'fail' ? 'fail' : 'unknown'}
+                        label={step.replace('_', ' ').slice(0, 3)}
+                        size="sm"
+                      />
+                    ) : null;
+                  })}
+                </div>
+              </td>
+              <td class="px-3 py-2 text-right">
+                <button
+                  type="button"
+                  class="log-view-btn inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors"
+                  data-log-index={i}
+                  aria-label="View logs"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M2 2.5A.5.5 0 0 1 2.5 2h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 2.5Zm0 4A.5.5 0 0 1 2.5 6h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 6.5Zm0 4A.5.5 0 0 1 2.5 10h6a.5.5 0 0 1 0 1h-6A.5.5 0 0 1 2 10.5Z"/>
+                  </svg>
+                  Logs
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+<!-- ── Log viewer dialog ────────────────────────────────────────────────────── -->
+<dialog
+  id="log-dialog"
+  class="w-full max-w-4xl rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 p-0 backdrop:bg-black/50 backdrop:backdrop-blur-sm"
+>
+  <!-- Header -->
+  <div class="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-700">
+    <h2 id="log-dialog-title" class="font-semibold text-sm truncate pr-4">Run logs</h2>
+
+    <div class="flex items-center gap-2">
+        <p id="log-dialog-timestamp" class="text-xs text-zinc-400 dark:text-zinc-500"></p>
+        <button
+          id="log-dialog-close"
+          type="button"
+          class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          aria-label="Close"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+          </svg>
+        </button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex border-b border-zinc-200 dark:border-zinc-700 px-5">
+    <button
+      id="log-tab-steps"
+      type="button"
+      class="log-tab -mb-px px-1 py-3 text-xs font-medium border-b-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white mr-5 transition-colors"
+      data-tab="steps"
+    >Step logs</button>
+    <button
+      id="log-tab-containers"
+      type="button"
+      class="log-tab -mb-px px-1 py-3 text-xs font-medium border-b-2 border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+      data-tab="containers"
+    >Container logs</button>
+  </div>
+
+  <!-- Body -->
+  <div id="log-dialog-body" class="overflow-y-auto max-h-[65vh] p-5 space-y-4">
+    <!-- populated by JS -->
+  </div>
+</dialog>
+
+<script define:vars={{ logData }}>
+  const dialog = document.getElementById('log-dialog');
+  const dialogTitle = document.getElementById('log-dialog-title');
+  const dialogTimestamp = document.getElementById('log-dialog-timestamp');
+  const dialogBody = document.getElementById('log-dialog-body');
+  const closeBtn = document.getElementById('log-dialog-close');
+  const tabs = document.querySelectorAll('.log-tab');
+
+  let activeTab = 'steps';
+  let activeIndex = 0;
+
+  const STATUS_COLORS = {
+    pass: 'text-emerald-600 dark:text-emerald-400',
+    fail: 'text-rose-600 dark:text-rose-400',
+    skip: 'text-zinc-400 dark:text-zinc-500',
+    error: 'text-amber-600 dark:text-amber-400',
+  };
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderStepsTab(entry) {
+    if (!entry.steps.length) {
+      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No step data recorded.</p>';
+    }
+    return entry.steps.map((step) => {
+      const color = STATUS_COLORS[step.status] ?? 'text-zinc-400';
+      const dur = step.duration_s > 0 ? `${step.duration_s.toFixed(2)}s` : '';
+      return `
+        <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2 bg-zinc-50 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
+            <span class="font-mono font-semibold text-xs text-zinc-700 dark:text-zinc-200">${step.name}</span>
+            <span class="text-xs font-medium ${color}">${step.status}</span>
+            ${dur ? `<span class="ml-auto text-xs text-zinc-400">${dur}</span>` : ''}
+          </div>
+          <pre class="px-4 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto bg-white dark:bg-zinc-950 max-h-72 overflow-y-auto leading-relaxed">${escapeHtml(step.log || '(no output)')}</pre>
+        </div>`;
+    }).join('');
+  }
+
+  function renderContainersTab(entry) {
+    if (!entry.containerLogs.length) {
+      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No container logs recorded — results from older runs may not include them.</p>';
+    }
+    return entry.containerLogs.map((c) => `
+      <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+        <div class="flex items-center gap-2 px-4 py-2 bg-zinc-50 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
+          <span class="font-mono font-semibold text-xs text-zinc-700 dark:text-zinc-200">${escapeHtml(c.name)}</span>
+        </div>
+        <pre class="px-4 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto bg-white dark:bg-zinc-950 max-h-72 overflow-y-auto leading-relaxed">${escapeHtml(c.log || '(no output)')}</pre>
+      </div>`).join('');
+  }
+
+  function renderBody() {
+    const entry = logData[activeIndex];
+    if (!entry) return;
+    dialogTitle.textContent = entry.label;
+    const timestamp = new Date(entry.steps?.[0]?.timestamp || Date.now()).toLocaleString();
+    dialogTimestamp.textContent = `${timestamp}`;
+    dialogBody.innerHTML = activeTab === 'steps'
+      ? renderStepsTab(entry)
+      : renderContainersTab(entry);
+  }
+
+  function setTab(tab) {
+    activeTab = tab;
+    tabs.forEach((btn) => {
+      const isActive = btn.dataset.tab === tab;
+      btn.classList.toggle('border-zinc-900', isActive);
+      btn.classList.toggle('dark:border-white', isActive);
+      btn.classList.toggle('text-zinc-900', isActive);
+      btn.classList.toggle('dark:text-white', isActive);
+      btn.classList.toggle('border-transparent', !isActive);
+      btn.classList.toggle('text-zinc-500', !isActive);
+      btn.classList.toggle('dark:text-zinc-400', !isActive);
+    });
+    renderBody();
+  }
+
+  tabs.forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+
+  document.querySelectorAll('.log-view-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeIndex = parseInt(btn.dataset.logIndex, 10);
+      activeTab = 'steps';
+      setTab('steps');
+      dialog.showModal();
+    });
+  });
+
+  closeBtn.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+</script>

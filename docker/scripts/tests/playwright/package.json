@@ -1,0 +1,16 @@
+{
+  "name": "magento-playwright-tests",
+  "version": "1.0.0",
+  "description": "Playwright end-to-end tests for Magento/MageOS compatibility testing",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,105 @@
+---
+import Base from '../../../layouts/Base.astro';
+import StatusBadge from '../../../components/StatusBadge.astro';
+import { getAllServicePaths } from '@lib/results.js';
+import { getSoftwareVersionSummary } from '@lib/results.js';
+import { getProducts, getVersionsForProduct, SERVICE_GROUP_LABELS } from '@lib/matrix.js';
+import type { ServiceStatus } from '@lib/types.js';
+
+export async function getStaticPaths() {
+  return getAllServicePaths().map((entry) => ({
+    params: { service: entry.key, version: `${entry.type}-${entry.version}` },
+    props: { key: entry.key, type: entry.type, version: entry.version, label: entry.label },
+  }));
+}
+
+const { key, type, version, label } = Astro.props;
+const summary = getSoftwareVersionSummary(key, type, version);
+const products = getProducts();
+
+function statusOrder(s: ServiceStatus) {
+  return s === 'pass' ? 0 : s === 'partial' ? 1 : s === 'fail' ? 2 : 3;
+}
+---
+
+<Base
+  title={`${label} compatibility`}
+  description={`Which Magento and MageOS versions work with ${label}?`}
+>
+
+  <!-- breadcrumb -->
+  <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
+    <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
+    <span class="mx-1.5">/</span>
+    <a href="/software" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Software</a>
+    <span class="mx-1.5">/</span>
+    {SERVICE_GROUP_LABELS[key] ?? key}
+    <span class="mx-1.5">/</span>
+    {label}
+  </nav>
+
+  <div class="mb-8">
+    <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">
+      <span class="text-zinc-400 dark:text-zinc-500 text-xl font-normal">{SERVICE_GROUP_LABELS[key] ?? key} </span>
+      {label.replace(/^\S+\s/, '')}
+    </h1>
+    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
+      Compatibility results for {label} across all Magento 2 and MageOS versions.
+    </p>
+  </div>
+
+  <!-- per-product tables -->
+  {products.map((product) => {
+    const versions = getVersionsForProduct(product.name);
+    const rows = versions
+      .map((ver) => {
+        const entry = summary.compatibility[`${product.name}/${ver}`];
+        return { ver, agg: entry?.aggregate ?? { status: 'unknown' as ServiceStatus, passed: 0, failed: 0, total: 0, resultIds: [] } };
+      })
+      .sort((a, b) => statusOrder(a.agg.status) - statusOrder(b.agg.status));
+
+    return (
+      <section class="mb-10">
+        <h2 class="text-lg font-bold capitalize text-zinc-900 dark:text-white mb-4">{product.name}</h2>
+        <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800">
+                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Version</th>
+                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Status</th>
+                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Combinations</th>
+                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {rows.map(({ ver, agg }) => (
+                <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+                  <td class="px-4 py-3 font-bold text-zinc-900 dark:text-white">{ver}</td>
+                  <td class="px-4 py-3">
+                    <StatusBadge
+                      status={agg.status}
+                      passed={agg.passed}
+                      total={agg.total}
+                    />
+                  </td>
+                  <td class="px-4 py-3 text-zinc-500 dark:text-zinc-400">
+                    {agg.total === 0 ? 'No results yet' : `${agg.passed}/${agg.total} pass`}
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <a
+                      href={`/${product.name}/${ver}`}
+                      class="text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+                    >
+                      Full matrix →
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  })}
+
+</Base>

@@ -1,0 +1,24 @@
+{
+  "patches": [
+    {
+      "file": "AC-2855.patch",
+      "description": "ACSD-59280: ReflectionUnionType::getName() error in 2.4.4-pX installations on PHP 8.3",
+      "affects": ["2.4.4"]
+    },
+    {
+      "file": "ACSD-46815_2.4.4_v2.patch",
+      "description": "ACSD-46815: setup:static-content:deploy fails with compact strategy (2.4.4)",
+      "affects": ["2.4.4"]
+    },
+    {
+      "file": "ACSD-46815_2.4.5_v2.patch",
+      "description": "ACSD-46815: setup:static-content:deploy fails with compact strategy (2.4.5)",
+      "affects": ["2.4.5"]
+    },
+    {
+      "file": "308e261.patch",
+      "description": "Fixes: \"complex type 'mixedDataType': The content model is not deterministic\" error on Magento 2.4.7",
+      "affects": ["2.4.7"]
+    }
+  ]
+}

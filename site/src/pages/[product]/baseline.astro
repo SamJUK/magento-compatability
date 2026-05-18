@@ -1,0 +1,393 @@
+---
+import Base from '../../layouts/Base.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+import { getProducts, getProductVersions } from '@lib/matrix.js';
+import { getResultsForVersion } from '@lib/results.js';
+import type { TestResult, Baseline, ProductVersion } from '@lib/types.js';
+
+export async function getStaticPaths() {
+  const products = getProducts();
+  return products.map((p) => ({
+    params: { product: p.name },
+    props: { product: p },
+  }));
+}
+
+const { product } = Astro.props;
+const productVersions = getProductVersions(product.name);
+
+// ── Find the baseline result for a version ────────────────────────────────────
+
+function findBaselineResult(version: string, bl: Baseline): TestResult | null {
+  const results = getResultsForVersion(product.name, version);
+  return results.find((r) => {
+    const s = r.services;
+    return (
+      s.php === bl.php &&
+      s.webserver === bl.webserver &&
+      s.db.type === bl.db.type &&
+      s.db.version === bl.db.version &&
+      s.search.type === bl.search.type &&
+      s.search.version === bl.search.version &&
+      s.cache.type === bl.cache.type &&
+      s.cache.version === bl.cache.version &&
+      s.queue.type === bl.queue.type &&
+      s.queue.version === bl.queue.version &&
+      s.varnish === bl.varnish
+    );
+  }) ?? null;
+}
+
+// ── Collect rows ──────────────────────────────────────────────────────────────
+
+interface BaselineRow {
+  pv: ProductVersion;
+  result: TestResult | null;
+}
+
+const rows: BaselineRow[] = productVersions
+  .filter((pv) => pv.baseline != null)
+  .map((pv) => ({
+    pv,
+    result: findBaselineResult(pv.version, pv.baseline!),
+  }));
+
+// Sort newest version first (semantic descending)
+rows.sort((a, b) => {
+  const ap = a.pv.version.replace(/-p(\d+)$/, '').split('.').map(Number);
+  const bp = b.pv.version.replace(/-p(\d+)$/, '').split('.').map(Number);
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const diff = (bp[i] ?? 0) - (ap[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  // same base — sort by patch suffix
+  const aP = Number(a.pv.version.match(/-p(\d+)$/)?.[1] ?? 0);
+  const bP = Number(b.pv.version.match(/-p(\d+)$/)?.[1] ?? 0);
+  return bP - aP;
+});
+
+// ── Log data for dialog ───────────────────────────────────────────────────────
+
+type LogData = {
+  id: string;
+  label: string;
+  steps: Array<{ name: string; status: string; duration_s: number; log: string }>;
+  containerLogs: Array<{ name: string; log: string }>;
+};
+
+const STEPS = ['stack_up', 'install', 'smoke', 'playwright'] as const;
+
+const logData: LogData[] = rows
+  .filter((row) => row.result != null)
+  .map((row) => {
+    const r = row.result!;
+    return {
+      id: r.id,
+      label: `${r.product} ${r.version} baseline`,
+      steps: STEPS
+        .filter((s) => r.steps?.[s] != null)
+        .map((s) => ({
+          name: s,
+          status: r.steps![s].status,
+          duration_s: r.steps![s].duration_s,
+          log: r.steps![s].log,
+        })),
+      containerLogs: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
+    };
+  });
+
+// Map result id → logData index for the button data attribute
+const logIndexMap = new Map<string, number>();
+logData.forEach((entry, i) => logIndexMap.set(entry.id, i));
+
+// Stats
+const passCount = rows.filter((r) => r.result?.overall_status === 'pass').length;
+const failCount = rows.filter((r) => r.result?.overall_status === 'fail').length;
+const unknownCount = rows.filter((r) => r.result == null).length;
+---
+
+<Base
+  title={`${product.name} baselines`}
+  description={`Baseline compatibility results for all ${product.name} versions.`}
+>
+
+  <!-- Breadcrumb + header -->
+  <div class="mb-8">
+    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
+      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
+      <span class="mx-1.5">/</span>
+      <a href={`/${product.name}`} class="capitalize hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">{product.name}</a>
+      <span class="mx-1.5">/</span>
+      <span>Baselines</span>
+    </nav>
+    <h1 class="text-3xl font-extrabold capitalize text-zinc-900 dark:text-white">
+      {product.name} — Baseline Results
+    </h1>
+    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
+      One result per version: the recommended service configuration (baseline). All baselines are expected to pass.
+    </p>
+
+    <!-- Stats -->
+    <div class="mt-4 flex items-center gap-4 text-sm">
+      {passCount > 0 && (
+        <span class="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+          {passCount} passing
+        </span>
+      )}
+      {failCount > 0 && (
+        <span class="inline-flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
+          <span class="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+          {failCount} failing
+        </span>
+      )}
+      {unknownCount > 0 && (
+        <span class="inline-flex items-center gap-1.5 text-zinc-400 dark:text-zinc-500 font-medium">
+          <span class="w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600 shrink-0"></span>
+          {unknownCount} not tested
+        </span>
+      )}
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
+          <th class="px-4 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400 whitespace-nowrap">Version</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Status</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">PHP</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">DB</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Search</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Cache</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Queue</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Webserver</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Varnish</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Steps</th>
+          <th class="px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {rows.map((row) => {
+          const { pv, result } = row;
+          const bl = pv.baseline!;
+          const overallStatus = result?.overall_status ?? 'unknown';
+          const badgeStatus = overallStatus === 'pass' ? 'pass' : overallStatus === 'fail' ? 'fail' : 'unknown';
+          const logIdx = result ? logIndexMap.get(result.id) : undefined;
+
+          return (
+            <tr class={`transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${overallStatus === 'fail' ? 'bg-rose-50/30 dark:bg-rose-950/20' : ''}`}>
+              <!-- Version -->
+              <td class="px-4 py-3 font-mono font-semibold text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
+                <a
+                  href={`/${product.name}/${pv.version}`}
+                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                >
+                  {pv.version}
+                </a>
+              </td>
+
+              <!-- Overall status -->
+              <td class="px-3 py-3">
+                <StatusBadge status={badgeStatus} size="sm" />
+              </td>
+
+              <!-- Service versions from baseline definition -->
+              <td class="px-3 py-3 font-mono text-zinc-700 dark:text-zinc-300">{bl.php}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300 whitespace-nowrap">{bl.db.type} {bl.db.version}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300 whitespace-nowrap">{bl.search.type} {bl.search.version}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300 whitespace-nowrap">{bl.cache.type} {bl.cache.version}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300 whitespace-nowrap">{bl.queue.type} {bl.queue.version}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300">{bl.webserver}</td>
+              <td class="px-3 py-3 text-zinc-700 dark:text-zinc-300">
+                {bl.varnish === 'none' ? <span class="text-zinc-400 dark:text-zinc-600">–</span> : bl.varnish}
+              </td>
+
+              <!-- Steps -->
+              <td class="px-3 py-3">
+                {result ? (
+                  <div class="flex gap-1">
+                    {STEPS.map((step) => {
+                      const s = result.steps?.[step];
+                      return s ? (
+                        <StatusBadge
+                          status={s.status === 'pass' ? 'pass' : s.status === 'fail' ? 'fail' : 'unknown'}
+                          label={step === 'stack_up' ? 'up' : step === 'playwright' ? 'pw' : step.slice(0, 3)}
+                          size="sm"
+                        />
+                      ) : null;
+                    })}
+                  </div>
+                ) : (
+                  <span class="text-zinc-300 dark:text-zinc-700 text-xs">—</span>
+                )}
+              </td>
+
+              <!-- Logs button -->
+              <td class="px-3 py-3 text-right">
+                {logIdx != null ? (
+                  <button
+                    type="button"
+                    class="log-view-btn inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors"
+                    data-log-index={logIdx}
+                    aria-label="View logs"
+                  >
+                    <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M2 2.5A.5.5 0 0 1 2.5 2h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 2.5Zm0 4A.5.5 0 0 1 2.5 6h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 6.5Zm0 4A.5.5 0 0 1 2.5 10h6a.5.5 0 0 1 0 1h-6A.5.5 0 0 1 2 10.5Z"/>
+                    </svg>
+                    Logs
+                  </button>
+                ) : (
+                  <span class="text-zinc-300 dark:text-zinc-700 text-xs select-none">—</span>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+
+</Base>
+
+<!-- ── Log viewer dialog ──────────────────────────────────────────────────────── -->
+<dialog
+  id="log-dialog"
+  class="w-full max-w-4xl rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 p-0 backdrop:bg-black/50 backdrop:backdrop-blur-sm"
+>
+  <!-- Header -->
+  <div class="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-700">
+    <h2 id="log-dialog-title" class="font-semibold text-sm truncate pr-4">Run logs</h2>
+    <div class="flex items-center gap-2">
+      <p id="log-dialog-timestamp" class="text-xs text-zinc-400 dark:text-zinc-500"></p>
+      <button
+        id="log-dialog-close"
+        type="button"
+        class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        aria-label="Close"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex border-b border-zinc-200 dark:border-zinc-700 px-5">
+    <button
+      id="log-tab-steps"
+      type="button"
+      class="log-tab -mb-px px-1 py-3 text-xs font-medium border-b-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white mr-5 transition-colors"
+      data-tab="steps"
+    >Step logs</button>
+    <button
+      id="log-tab-containers"
+      type="button"
+      class="log-tab -mb-px px-1 py-3 text-xs font-medium border-b-2 border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+      data-tab="containers"
+    >Container logs</button>
+  </div>
+
+  <!-- Body -->
+  <div id="log-dialog-body" class="overflow-y-auto max-h-[65vh] p-5 space-y-4">
+    <!-- populated by JS -->
+  </div>
+</dialog>
+
+<script define:vars={{ logData }}>
+  const dialog = document.getElementById('log-dialog');
+  const dialogTitle = document.getElementById('log-dialog-title');
+  const dialogTimestamp = document.getElementById('log-dialog-timestamp');
+  const dialogBody = document.getElementById('log-dialog-body');
+  const closeBtn = document.getElementById('log-dialog-close');
+  const tabs = document.querySelectorAll('.log-tab');
+
+  let activeTab = 'steps';
+  let activeIndex = 0;
+
+  const STATUS_COLORS = {
+    pass: 'text-emerald-600 dark:text-emerald-400',
+    fail: 'text-rose-600 dark:text-rose-400',
+    skip: 'text-zinc-400 dark:text-zinc-500',
+    error: 'text-amber-600 dark:text-amber-400',
+  };
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderStepsTab(entry) {
+    if (!entry.steps.length) {
+      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No step data recorded.</p>';
+    }
+    return entry.steps.map((step) => {
+      const color = STATUS_COLORS[step.status] ?? 'text-zinc-400';
+      const dur = step.duration_s > 0 ? `${step.duration_s.toFixed(2)}s` : '';
+      return `
+        <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2 bg-zinc-50 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
+            <span class="font-mono font-semibold text-xs text-zinc-700 dark:text-zinc-200">${step.name}</span>
+            <span class="text-xs font-medium ${color}">${step.status}</span>
+            ${dur ? `<span class="ml-auto text-xs text-zinc-400">${dur}</span>` : ''}
+          </div>
+          <pre class="px-4 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto bg-white dark:bg-zinc-950 max-h-72 overflow-y-auto leading-relaxed">${escapeHtml(step.log || '(no output)')}</pre>
+        </div>`;
+    }).join('');
+  }
+
+  function renderContainersTab(entry) {
+    if (!entry.containerLogs.length) {
+      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No container logs recorded — results from older runs may not include them.</p>';
+    }
+    return entry.containerLogs.map((c) => `
+      <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+        <div class="flex items-center gap-2 px-4 py-2 bg-zinc-50 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
+          <span class="font-mono font-semibold text-xs text-zinc-700 dark:text-zinc-200">${escapeHtml(c.name)}</span>
+        </div>
+        <pre class="px-4 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto bg-white dark:bg-zinc-950 max-h-72 overflow-y-auto leading-relaxed">${escapeHtml(c.log || '(no output)')}</pre>
+      </div>`).join('');
+  }
+
+  function renderBody() {
+    const entry = logData[activeIndex];
+    if (!entry) return;
+    dialogTitle.textContent = entry.label;
+    dialogBody.innerHTML = activeTab === 'steps'
+      ? renderStepsTab(entry)
+      : renderContainersTab(entry);
+  }
+
+  function setTab(tab) {
+    activeTab = tab;
+    tabs.forEach((btn) => {
+      const isActive = btn.dataset.tab === tab;
+      btn.classList.toggle('border-zinc-900', isActive);
+      btn.classList.toggle('dark:border-white', isActive);
+      btn.classList.toggle('text-zinc-900', isActive);
+      btn.classList.toggle('dark:text-white', isActive);
+      btn.classList.toggle('border-transparent', !isActive);
+      btn.classList.toggle('text-zinc-500', !isActive);
+      btn.classList.toggle('dark:text-zinc-400', !isActive);
+    });
+    renderBody();
+  }
+
+  tabs.forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+
+  document.querySelectorAll('.log-view-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeIndex = parseInt(btn.dataset.logIndex, 10);
+      activeTab = 'steps';
+      setTab('steps');
+      dialog.showModal();
+    });
+  });
+
+  closeBtn.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+</script>

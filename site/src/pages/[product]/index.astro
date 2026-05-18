@@ -1,0 +1,155 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getProducts, getProductVersions } from '@lib/matrix.js';
+import { getVersionSummary } from '@lib/results.js';
+import type { ServiceStatus, VersionSummary } from '@lib/types.js';
+
+export async function getStaticPaths() {
+  const products = getProducts();
+  return products.map((p) => ({
+    params: { product: p.name },
+    props: { product: p },
+  }));
+}
+
+const { product } = Astro.props;
+const productVersions = getProductVersions(product.name);
+const versions = productVersions.map((pv) => pv.version);
+
+// ── Version parsing ───────────────────────────────────────────────────────────
+interface PatchEntry {
+  version: string;
+  patchNum: number;
+  patchLabel: string;
+}
+
+function parseVersion(v: string): { base: string; patchNum: number; patchLabel: string } {
+  const m = v.match(/^([\d.]+)(?:-p(\d+))?$/);
+  if (!m) return { base: v, patchNum: 0, patchLabel: 'base' };
+  const patchNum = m[2] ? parseInt(m[2], 10) : 0;
+  return { base: m[1], patchNum, patchLabel: m[2] ? `p${m[2]}` : 'base' };
+}
+
+// Group by base version
+const groups = new Map<string, PatchEntry[]>();
+for (const v of versions) {
+  const { base, patchNum, patchLabel } = parseVersion(v);
+  if (!groups.has(base)) groups.set(base, []);
+  groups.get(base)!.push({ version: v, patchNum, patchLabel });
+}
+
+// Sort each group by patchNum ascending
+for (const entries of groups.values()) {
+  entries.sort((a, b) => a.patchNum - b.patchNum);
+}
+
+// Sort rows by base version descending
+const sortedBases = [...groups.keys()].sort((a, b) => {
+  const aParts = a.split('.').map(Number);
+  const bParts = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+    const diff = (bParts[i] ?? 0) - (aParts[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+});
+
+// All unique patch numbers across all versions (for column headers)
+const allPatchNums = [...new Set(versions.map((v) => parseVersion(v).patchNum))].sort((a, b) => a - b);
+
+// Pre-fetch summaries
+const summaries = new Map<string, VersionSummary>();
+for (const v of versions) {
+  summaries.set(v, getVersionSummary(product.name, v));
+}
+
+function cellStatus(summary: VersionSummary): ServiceStatus {
+  const tested = summary.passCount + summary.failCount;
+    // Not tested yet
+  if (tested === 0) return 'unknown';
+  if (summary.unknownCount > 0) return 'partial';
+  if (summary.passCount > 0) return 'pass';
+  return 'fail';
+}
+
+const cellColors: Record<ServiceStatus, string> = {
+  pass:    'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/40',
+  fail:    'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 dark:bg-rose-900/25 dark:text-rose-300 dark:border-rose-800 dark:hover:bg-rose-900/40',
+  partial: 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:border-amber-800 dark:hover:bg-amber-900/40',
+  unknown: 'bg-zinc-50 text-zinc-500 border border-zinc-200 hover:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:bg-zinc-700',
+};
+---
+
+<Base title={`${product.name} versions`} description={`${product.name} compatibility results for all tested versions.`}>
+
+  <div class="mb-8">
+    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
+      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
+      <span class="mx-1.5">/</span>
+      <span class="capitalize">{product.name}</span>
+    </nav>
+    <h1 class="text-3xl font-extrabold capitalize text-zinc-900 dark:text-white">{product.name}</h1>
+    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
+      Select a version to view the full service compatibility matrix.
+    </p>
+  </div>
+
+  <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
+          <th class="text-left px-5 py-3 font-semibold text-zinc-600 dark:text-zinc-400 w-32">Version</th>
+          {allPatchNums.map((pn) => (
+            <th class="text-center px-4 py-3 font-semibold text-zinc-600 dark:text-zinc-400">
+              {pn === 0 ? 'base' : `p${pn}`}
+            </th>
+          ))}
+          <th class="text-right px-5 py-3 font-semibold text-zinc-600 dark:text-zinc-400 whitespace-nowrap">Last tested</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {sortedBases.map((base) => {
+          const entries = groups.get(base)!;
+          const entryMap = new Map(entries.map((e) => [e.patchNum, e]));
+          const lastTested = entries
+            .map((e) => summaries.get(e.version)?.lastTested)
+            .filter(Boolean)
+            .sort()
+            .at(-1);
+          return (
+            <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
+              <td class="px-5 py-3 font-mono font-semibold text-zinc-700 dark:text-zinc-300">{base}</td>
+              {allPatchNums.map((pn) => {
+                const entry = entryMap.get(pn);
+                if (!entry) {
+                  return <td class="px-4 py-3 text-center text-zinc-300 dark:text-zinc-700 select-none">—</td>;
+                }
+                const summary = summaries.get(entry.version)!;
+                const status = cellStatus(summary);
+                return (
+                  <td class="px-4 py-3 text-center">
+                    <a
+                      href={`/${product.name}/${entry.version}`}
+                      class={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${cellColors[status]}`}
+                    >
+                      {entry.patchLabel}
+                      {status === 'pass'    && <span aria-hidden="true">✓</span>}
+                      {status === 'fail'    && <span aria-hidden="true">✗</span>}
+                      {status === 'partial' && <span aria-hidden="true">~</span>}
+                    </a>
+                  </td>
+                );
+              })}
+              <td class="px-5 py-3 text-right text-xs text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+                {lastTested
+                  ? new Date(lastTested).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' })
+                  : '—'}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+
+</Base>

@@ -1,0 +1,5 @@
+app/bin/*
+test-results/
+playwright-report/
+
+!.gitkeep

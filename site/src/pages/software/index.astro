@@ -1,0 +1,56 @@
+---
+import Base from '../../layouts/Base.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+import { getAllServicePaths } from '@lib/results.js';
+import { SERVICE_GROUP_LABELS } from '@lib/matrix.js';
+
+const allPaths = getAllServicePaths();
+
+// Group by key (php, db, search, etc.)
+const groups = new Map<string, typeof allPaths>();
+for (const p of allPaths) {
+  if (!groups.has(p.key)) groups.set(p.key, []);
+  groups.get(p.key)!.push(p);
+}
+
+const keyOrder = ['php', 'db', 'search', 'cache', 'queue', 'webserver', 'varnish'];
+---
+
+<Base title="Software compatibility" description="Browse all service and software versions to see which Magento versions they work with.">
+
+  <div class="mb-8">
+    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
+      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
+      <span class="mx-1.5">/</span>
+      Software
+    </nav>
+    <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">Software versions</h1>
+    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
+      Select a service version to see which Magento and MageOS versions are compatible.
+    </p>
+  </div>
+
+  <div class="space-y-8">
+    {keyOrder.map((key) => {
+      const entries = groups.get(key);
+      if (!entries) return null;
+      const groupLabel = SERVICE_GROUP_LABELS[key] ?? key;
+      return (
+        <section>
+          <h2 class="text-base font-semibold text-zinc-700 dark:text-zinc-200 mb-3">{groupLabel}</h2>
+          <div class="flex flex-wrap gap-2">
+            {entries.map((e) => (
+              <a
+                href={`/software/${e.key}/${e.type}-${e.version}`}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
+              >
+                {e.label}
+              </a>
+            ))}
+          </div>
+        </section>
+      );
+    })}
+  </div>
+
+</Base>

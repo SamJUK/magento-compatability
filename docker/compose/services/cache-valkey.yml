@@ -1,0 +1,15 @@
+services:
+  cache:
+    image: "valkey/valkey:${CACHE_VERSION:-8}-alpine"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - magento
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+networks:
+  magento:

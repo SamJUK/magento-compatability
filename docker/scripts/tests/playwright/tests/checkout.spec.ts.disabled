@@ -1,0 +1,107 @@
+import { test, expect, Page } from '@playwright/test';
+
+/**
+ * Checkout flow tests — add a product to cart and complete a guest checkout.
+ * Requires sample data to be installed (orchestrate.sh sets INSTALL_SAMPLE_DATA=1).
+ */
+
+async function addProductToCart(page: Page): Promise<void> {
+  // Use the Joust Duffle Bag (SKU 24-MB01) — a known simple product in Luma
+  // sample data with no configurable options.
+  await page.goto('/joust-duffle-bag.html');
+
+  // Wait for the server-rendered product form — no JS required.
+  await page.waitForSelector('#product_addtocart_form', { timeout: 30_000 });
+
+  // In Magento 2 developer mode, the catalogAddToCart JS widget initialises
+  // slowly on cold Docker instances (RequireJS config generated on first hit).
+  // The button starts as `disabled` in HTML and is enabled by the widget.
+  // To avoid flaky 30-120 s waits, we submit the form directly via JS, which
+  // bypasses the disabled-button guard and triggers the server-side add-to-cart
+  // action (same PHP endpoint as the AJAX widget, but as a normal POST redirect).
+  await Promise.all([
+    page.waitForNavigation({ timeout: 30_000 }),
+    page.evaluate(() => {
+      const form = document.getElementById('product_addtocart_form') as HTMLFormElement;
+      form.submit();
+    }),
+  ]);
+
+  // After Magento redirects back (usually to the product page), confirm the
+  // cart now contains the item by navigating to the cart page.
+  await page.goto('/checkout/cart/');
+  const cartItem = page.locator('.cart.item, .cart-item, .items.data.table');
+  await expect(cartItem.first()).toBeVisible({ timeout: 20_000 });
+}
+
+test.describe('Checkout', () => {
+  test('add product to cart and proceed to checkout', async ({ page }) => {
+    await addProductToCart(page);
+
+    // Navigate directly to checkout
+    await page.goto('/checkout/');
+    await expect(page).toHaveURL(/\/checkout/);
+  });
+
+  test('complete guest checkout with shipping and payment', async ({ page }) => {
+    await addProductToCart(page);
+
+    // Go to checkout
+    await page.goto('/checkout/');
+
+    // ── Step 1: Shipping ────────────────────────────────────────────────────
+    // Wait for the shipping form
+    const emailField = page.locator('#customer-email');
+    await expect(emailField).toBeVisible({ timeout: 20_000 });
+    await emailField.fill('test@example.com');
+
+    // Fill shipping address fields
+    const firstName = page.locator('input[name="firstname"]');
+    await expect(firstName).toBeVisible();
+    await firstName.fill('Test');
+
+    await page.locator('input[name="lastname"]').fill('User');
+    await page.locator('input[name="street[0]"]').fill('123 Main St');
+    await page.locator('input[name="city"]').fill('Austin');
+
+    // Country — default is US; select state
+    const countrySelect = page.locator('select[name="country_id"]');
+    await countrySelect.selectOption('US');
+
+    // Region/state
+    const regionSelect = page.locator('select[name="region_id"]');
+    if (await regionSelect.isVisible()) {
+      await regionSelect.selectOption({ label: 'Texas' });
+    } else {
+      await page.locator('input[name="region"]').fill('TX');
+    }
+
+    await page.locator('input[name="postcode"]').fill('78701');
+    await page.locator('input[name="telephone"]').fill('5125550100');
+
+    // ── Shipping method ─────────────────────────────────────────────────────
+    // Wait for shipping methods to load and select the first available
+    const shippingMethods = page.locator('.table-checkout-shipping-method .col-method input[type="radio"]');
+    await expect(shippingMethods.first()).toBeVisible({ timeout: 20_000 });
+    await shippingMethods.first().check();
+
+    // Next: go to payment
+    const nextButton = page.locator('button.button.action.continue.primary');
+    await nextButton.click();
+
+    // ── Step 2: Payment ─────────────────────────────────────────────────────
+    const placeOrderButton = page.locator('button.action.primary.checkout');
+    await expect(placeOrderButton).toBeVisible({ timeout: 20_000 });
+    await placeOrderButton.click();
+
+    // ── Order success page ───────────────────────────────────────────────────
+    await page.waitForURL(/checkout\/onepage\/success|checkout\/success/, {
+      timeout: 30_000,
+    });
+
+    const successHeading = page.locator(
+      '.page-title, h1, .checkout-success',
+    );
+    await expect(successHeading).toContainText(/(thank you|order)/i);
+  });
+});

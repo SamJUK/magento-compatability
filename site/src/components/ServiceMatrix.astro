@@ -1,0 +1,60 @@
+---
+// ServiceMatrix.astro — compatibility matrix for a single Magento version
+import type { ServiceRowGroup } from '@lib/types.js';
+
+interface Props {
+  rows: ServiceRowGroup[];
+  product: string;
+  version: string;
+}
+
+const { rows, product, version } = Astro.props;
+
+const cellBg: Record<string, string> = {
+  pass:    'bg-emerald-500 hover:bg-emerald-600',
+  fail:    'bg-rose-500 hover:bg-rose-600',
+  partial: 'bg-amber-400 hover:bg-amber-500',
+  unknown: 'bg-zinc-400 hover:bg-zinc-500',
+};
+---
+
+<div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800">
+        <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300 w-40">Service</th>
+        <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Versions tested</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+      {rows.map((row) => (
+        <tr class="group hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+          <td class="px-4 py-3 font-medium text-zinc-700 dark:text-zinc-200 whitespace-nowrap">
+            {row.label}
+          </td>
+          <td class="px-4 py-3">
+            <div class="flex flex-wrap gap-2">
+              {row.entries.map((entry) => {
+                const href = `/software/${entry.key}/${entry.type}-${entry.version}`;
+                const bg = cellBg[entry.aggregate.status] ?? cellBg.unknown;
+                const versionLabel = entry.label.replace(/^(php|varnish|webserver)\s*/i, '');
+                const title = entry.aggregate.status === 'partial'
+                  ? `${entry.aggregate.passed}/${entry.aggregate.total} pass`
+                  : entry.aggregate.status;
+                return (
+                  <a
+                    href={href}
+                    title={title}
+                    class={`${bg} transition-colors rounded-md px-3 py-2 min-w-[3.5rem] text-center block`}
+                  >
+                    <span class="font-bold text-white text-sm leading-none">{versionLabel}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
