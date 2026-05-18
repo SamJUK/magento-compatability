@@ -4,6 +4,8 @@ Installs every combination of Magento 2 / MageOS versions with supported service
 runs smoke tests + Playwright E2E tests, and writes structured JSON results.
 Results are rendered by an Astro static site.
 
+> 🚧 This is currently in a early stage, Alpha release. Data may be incomplete and/or inaccurate. Use with caution. 🚧
+
 ---
 
 ## Requirements
