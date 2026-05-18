@@ -1,0 +1,38 @@
+{
+  "id": "magento-244-p4-php81-mariadb104-elasticsearch7163-redis6222-rabbitmq42-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.4-p4",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 1.866796125,
+      "log": "time=\"2026-05-18T10:08:51+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-18T10:08:51+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-db-1 Running \n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-search-1 Running \n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-queue-1 Recreate \n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-cache-1 Recreate \n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-cache-1 Recreated \n Container m2test-magento-244-p4-php81-mariadb104-elasticsearch7163-redis6-queue-1 Error response from daemon: removal of container f9df0ce76116647b967844c4ea300f24b2ef287974a5e0d20029aa793d311cd4 is already in progress \nError response from daemon: removal of container f9df0ce76116647b967844c4ea300f24b2ef287974a5e0d20029aa793d311cd4 is already in progress\n"
+    }
+  },
+  "container_logs": {
+    "db": "db-1  | 2026-05-18T09:08:50.179822641Z 2026-05-18 09:08:50+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\ndb-1  | 2026-05-18T09:08:50.290874523Z 2026-05-18 09:08:50+00:00 [Note] [Entrypoint]: Switching to dedicated user 'mysql'\ndb-1  | 2026-05-18T09:08:50.295084105Z 2026-05-18 09:08:50+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\ndb-1  | 2026-05-18T09:08:50.411266401Z 2026-05-18 09:08:50+00:00 [Note] [Entrypoint]: Initializing database files\n"
+  },
+  "timestamp": "2026-05-18T09:08:53Z"
+}

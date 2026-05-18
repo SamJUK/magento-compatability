@@ -1,0 +1,35 @@
+{
+  "id": "magento-246-p9-php82-mariadb104-opensearch2195-valkey8-rabbitmq42-apache-varnish80",
+  "product": "magento",
+  "version": "2.4.6-p9",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.2",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "8.0"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.143916333,
+      "log": " Network m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Network m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_magento Created \ntime=\"2026-05-15T21:17:46+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_db-data Creating \n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_db-data Created \n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_search-data Creating \n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_search-data Created \n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Volume m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r_magento Created \ntime=\"2026-05-15T21:17:46+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-search-1 Creating \n Container m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Creating \n Container m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-cache-1 Creating \n Container m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-db-1 Creating \n Container m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-search-1 Error response from daemon: Conflict. The container name \"/m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-search-1\" is already in use by container \"b4c575c8e7a68b64166fb711da92a43996be22002c1044ee9e8cc36fa9de8e0d\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-246-p9-php82-mariadb104-opensearch2195-valkey8-r-search-1\" is already in use by container \"b4c575c8e7a68b64166fb711da92a43996be22002c1044ee9e8cc36fa9de8e0d\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-15T20:17:46Z"
+}

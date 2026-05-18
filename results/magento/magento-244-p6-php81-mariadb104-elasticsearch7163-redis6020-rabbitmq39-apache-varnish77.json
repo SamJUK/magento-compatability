@@ -1,0 +1,40 @@
+{
+  "id": "magento-244-p6-php81-mariadb104-elasticsearch7163-redis6020-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.4-p6",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.0.20"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 4.120676083,
+      "log": " Network m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_magento Creating \n Network m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_magento Created \n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_magento Creating \n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_magento Created \ntime=\"2026-05-18T09:48:28+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-18T09:48:28+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_db-data Creating \n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_db-data Created \n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_search-data Creating \n Volume m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6_search-data Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-php-fpm-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-php-fpm-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-webserver-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-webserver-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-varnish-1 Creating \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-varnish-1 Created \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Starting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Starting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Starting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Starting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Started \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Started \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Started \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Started \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Waiting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Waiting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Waiting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Waiting \n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-cache-1 Error dependency cache failed to start\n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-queue-1 Error dependency queue failed to start\n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-db-1 Error dependency db failed to start\n Container m2test-magento-244-p6-php81-mariadb104-elasticsearch7163-redis6-search-1 Error dependency search failed to start\ndependency failed to start: Error response from daemon: No such container: 7d224bd6c15a5ffad07155b90b677390357096289aabb7b553defc15edd8a094\n"
+    }
+  },
+  "container_logs": {
+    "db": "db-1  | 2026-05-18T08:48:31.796613129Z 2026-05-18 08:48:31+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\ndb-1  | 2026-05-18T08:48:32.033434915Z 2026-05-18 08:48:32+00:00 [Note] [Entrypoint]: Switching to dedicated user 'mysql'\ndb-1  | 2026-05-18T08:48:32.082895248Z 2026-05-18 08:48:32+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\ndb-1  | 2026-05-18T08:48:32.189264718Z 2026-05-18 08:48:32+00:00 [Note] [Entrypoint]: Initializing database files\n",
+    "queue": "queue-1  | 2026-05-18T08:48:32.483565938Z =INFO REPORT==== 18-May-2026::08:48:32.472063 ===\nqueue-1  | 2026-05-18T08:48:32.483577980Z SIGTERM received - shutting down\nqueue-1  | 2026-05-18T08:48:32.483583105Z \n",
+    "search": ""
+  },
+  "timestamp": "2026-05-18T08:48:33Z"
+}

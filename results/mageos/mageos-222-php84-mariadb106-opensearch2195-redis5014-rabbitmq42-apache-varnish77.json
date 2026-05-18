@@ -1,0 +1,35 @@
+{
+  "id": "mageos-222-php84-mariadb106-opensearch2195-redis5014-rabbitmq42-apache-varnish77",
+  "product": "mageos",
+  "version": "2.2.2",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.6"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "5.0.14"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.15604975,
+      "log": " Network m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento Creating \n Network m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento Created \ntime=\"2026-05-15T04:32:56+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento Creating \n Volume m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento Error Error response from daemon: create m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento': mkdir /var/lib/docker/volumes/m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento: no space left on device\nError response from daemon: create m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento': mkdir /var/lib/docker/volumes/m2test-mageos-222-php84-mariadb106-opensearch2195-redis5014-rab_magento: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-15T03:32:56Z"
+}

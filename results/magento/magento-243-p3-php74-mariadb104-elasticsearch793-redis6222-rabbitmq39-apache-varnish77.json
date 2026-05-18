@@ -1,0 +1,38 @@
+{
+  "id": "magento-243-p3-php74-mariadb104-elasticsearch793-redis6222-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.3-p3",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 16.7672085,
+      "log": "time=\"2026-05-18T10:27:51+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-18T10:27:51+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-db-1 Running \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-php-fpm-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-php-fpm-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-varnish-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-varnish-1 Created \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Starting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Starting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Starting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Started \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Started \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Started \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Waiting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-db-1 Waiting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Waiting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Waiting \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Healthy \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-cache-1 Healthy \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-db-1 Healthy \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 Error dependency search failed to start\ndependency failed to start: container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-search-1 is unhealthy\n"
+    }
+  },
+  "container_logs": {
+    "queue": "queue-1  | 2026-05-18T09:28:07.608685775Z WARNING: 'docker-entrypoint.sh' generated/modified the RabbitMQ configuration file, which will no longer happen in 3.9 and later! (https://github.com/docker-library/rabbitmq/pull/424)\nqueue-1  | 2026-05-18T09:28:07.608696900Z \nqueue-1  | 2026-05-18T09:28:07.608702983Z Generated end result, for reference:\nqueue-1  | 2026-05-18T09:28:07.608704317Z ------------------------------------\nqueue-1  | 2026-05-18T09:28:07.608998026Z loopback_users.guest = false\nqueue-1  | 2026-05-18T09:28:07.609009526Z \nqueue-1  | 2026-05-18T09:28:07.609011109Z listeners.tcp.default = 5672\nqueue-1  | 2026-05-18T09:28:07.609012234Z \nqueue-1  | 2026-05-18T09:28:07.609013109Z default_pass = magento\nqueue-1  | 2026-05-18T09:28:07.609013984Z \nqueue-1  | 2026-05-18T09:28:07.609014859Z default_user = magento\nqueue-1  | 2026-05-18T09:28:07.609015734Z \nqueue-1  | 2026-05-18T09:28:07.609016526Z default_vhost = /\nqueue-1  | 2026-05-18T09:28:07.609019776Z ------------------------------------\n"
+  },
+  "timestamp": "2026-05-18T09:28:07Z"
+}

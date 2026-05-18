@@ -1,0 +1,35 @@
+{
+  "id": "magento-242-p2-php74-mariadb104-elasticsearch793-redis6222-rabbitmq38-apache-varnish80",
+  "product": "magento",
+  "version": "2.4.2-p2",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "8.0"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.798848666,
+      "log": " Network m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62_magento Creating \n Network m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62_magento Created \ntime=\"2026-05-18T10:39:19+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-18T10:39:19+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreate \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreated \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-webserver-1 Creating \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-webserver-1 Created \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-varnish-1 Creating \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-varnish-1 Created \n Container m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62-queue-1 Starting \nError response from daemon: failed to set up container networking: network m2test-magento-242-p2-php74-mariadb104-elasticsearch793-redis62_magento not found\n"
+    }
+  },
+  "timestamp": "2026-05-18T09:39:19Z"
+}

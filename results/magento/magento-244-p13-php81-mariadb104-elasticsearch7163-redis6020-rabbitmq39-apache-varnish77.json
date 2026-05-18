@@ -1,0 +1,35 @@
+{
+  "id": "magento-244-p13-php81-mariadb104-elasticsearch7163-redis6020-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.4-p13",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.0.20"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 81.808239,
+      "log": "time=\"2026-05-17T23:22:27+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-17T23:22:27+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis-queue-1 Running \n Container m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis-search-1 Running \n Container m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis-db-1 Running \n Container m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis-cache-1 Recreate \n Container m2test-magento-244-p13-php81-mariadb104-elasticsearch7163-redis-cache-1 Error response from daemon: removal of container 5e5374cf6bb4c53d159dcf22d271406a820f577800995491dbaa6b6d71b4aad5 is already in progress \nError response from daemon: removal of container 5e5374cf6bb4c53d159dcf22d271406a820f577800995491dbaa6b6d71b4aad5 is already in progress\n"
+    }
+  },
+  "timestamp": "2026-05-17T22:23:48Z"
+}

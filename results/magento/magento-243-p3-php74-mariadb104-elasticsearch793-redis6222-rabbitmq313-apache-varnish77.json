@@ -1,0 +1,41 @@
+{
+  "id": "magento-243-p3-php74-mariadb104-elasticsearch793-redis6222-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.3-p3",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 1.088965458,
+      "log": "time=\"2026-05-18T10:27:47+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-18T10:27:47+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreate \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreated \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1 Creating \n Container m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1 Error response from daemon: Conflict. The container name \"/m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1\" is already in use by container \"d1120cbb671ce47349131f83303aad8251b6bceb8cad8122d9481f4b9cd3f04d\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-243-p3-php74-mariadb104-elasticsearch793-redis62-webserver-1\" is already in use by container \"d1120cbb671ce47349131f83303aad8251b6bceb8cad8122d9481f4b9cd3f04d\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "container_logs": {
+    "cache": "cache-1  | 2026-05-18T09:27:48.593514543Z 1:C 18 May 2026 09:27:48.590 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\ncache-1  | 2026-05-18T09:27:48.593541001Z 1:C 18 May 2026 09:27:48.590 # Redis version=6.2.22, bits=64, commit=00000000, modified=0, pid=1, just started\ncache-1  | 2026-05-18T09:27:48.593548876Z 1:C 18 May 2026 09:27:48.590 # Configuration loaded\ncache-1  | 2026-05-18T09:27:48.593550126Z 1:M 18 May 2026 09:27:48.590 * monotonic clock: POSIX clock_gettime\ncache-1  | 2026-05-18T09:27:48.593551251Z 1:M 18 May 2026 09:27:48.591 * Running mode=standalone, port=6379.\ncache-1  | 2026-05-18T09:27:48.593552168Z 1:M 18 May 2026 09:27:48.591 # Server initialized\ncache-1  | 2026-05-18T09:27:48.596386550Z 1:M 18 May 2026 09:27:48.596 * Ready to accept connections\n",
+    "db": "db-1  | 2026-05-18T09:27:48.541696621Z 2026-05-18 09:27:48+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\ndb-1  | 2026-05-18T09:27:48.749134266Z 2026-05-18 09:27:48+00:00 [Note] [Entrypoint]: Switching to dedicated user 'mysql'\ndb-1  | 2026-05-18T09:27:48.764379304Z 2026-05-18 09:27:48+00:00 [Note] [Entrypoint]: Entrypoint script for MariaDB Server 1:10.4.34+maria~ubu2004 started.\n",
+    "queue": "",
+    "search": ""
+  },
+  "timestamp": "2026-05-18T09:27:49Z"
+}

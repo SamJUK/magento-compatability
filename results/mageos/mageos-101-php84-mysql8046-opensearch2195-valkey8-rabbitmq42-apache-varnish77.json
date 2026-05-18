@@ -1,0 +1,35 @@
+{
+  "id": "mageos-101-php84-mysql8046-opensearch2195-valkey8-rabbitmq42-apache-varnish77",
+  "product": "mageos",
+  "version": "1.0.1",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mysql",
+      "version": "8.0.46"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.065336833,
+      "log": " Network m2test-mageos-101-php84-mysql8046-opensearch2195-valkey8-rabbit_magento Creating \n Network m2test-mageos-101-php84-mysql8046-opensearch2195-valkey8-rabbit_magento Error Error response from daemon: all predefined address pools have been fully subnetted\nfailed to create network m2test-mageos-101-php84-mysql8046-opensearch2195-valkey8-rabbit_magento: Error response from daemon: all predefined address pools have been fully subnetted\n"
+    }
+  },
+  "timestamp": "2026-05-15T03:33:30Z"
+}

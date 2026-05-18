@@ -1,0 +1,35 @@
+{
+  "id": "magento-245-p7-php81-mariadb104-elasticsearch71728-redis6222-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.5-p7",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.17.28"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.176032417,
+      "log": " Network m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Network m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-16T08:58:56+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-16T08:58:56+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_db-data Creating \n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_db-data Created \n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_search-data Creating \n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_search-data Created \n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Volume m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis_magento Created \n Container m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-db-1 Creating \n Container m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-search-1 Creating \n Container m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-queue-1 Creating \n Container m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-cache-1 Creating \n Container m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-search-1 Error response from daemon: Conflict. The container name \"/m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-search-1\" is already in use by container \"3157fa43e34a46c5cb8b6a4d575051a10ad15992b3517d1237b492add019feba\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-245-p7-php81-mariadb104-elasticsearch71728-redis-search-1\" is already in use by container \"3157fa43e34a46c5cb8b6a4d575051a10ad15992b3517d1237b492add019feba\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-16T07:58:56Z"
+}

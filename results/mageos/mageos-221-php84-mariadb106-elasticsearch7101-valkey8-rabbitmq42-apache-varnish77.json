@@ -1,0 +1,35 @@
+{
+  "id": "mageos-221-php84-mariadb106-elasticsearch7101-valkey8-rabbitmq42-apache-varnish77",
+  "product": "mageos",
+  "version": "2.2.1",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.6"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.10.1"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.221789459,
+      "log": " Network m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_magento Creating \n Network m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_magento Created \n Volume m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data Creating \n Volume m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data Error Error response from daemon: create m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data': mkdir /var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data: no space left on device\nError response from daemon: create m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data': mkdir /var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7101-valkey8-ra_search-data: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-15T03:32:59Z"
+}

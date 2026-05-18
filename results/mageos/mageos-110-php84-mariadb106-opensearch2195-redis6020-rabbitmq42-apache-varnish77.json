@@ -1,0 +1,35 @@
+{
+  "id": "mageos-110-php84-mariadb106-opensearch2195-redis6020-rabbitmq42-apache-varnish77",
+  "product": "mageos",
+  "version": "1.1.0",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.6"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.0.20"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.079684208,
+      "log": " Network m2test-mageos-110-php84-mariadb106-opensearch2195-redis6020-rab_magento Creating \n Network m2test-mageos-110-php84-mariadb106-opensearch2195-redis6020-rab_magento Error Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\nfailed to create network m2test-mageos-110-php84-mariadb106-opensearch2195-redis6020-rab_magento: Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-15T03:33:18Z"
+}

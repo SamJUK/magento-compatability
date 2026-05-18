@@ -1,0 +1,35 @@
+{
+  "id": "magento-248-p5-php84-mariadb114-opensearch2195-valkey8-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.8-p5",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "11.4"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.116879833,
+      "log": "time=\"2026-05-15T18:51:56+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T18:51:56+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-queue-1 Creating \n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-search-1 Creating \n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-db-1 Creating \n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-cache-1 Creating \n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-search-1 Error response from daemon: Conflict. The container name \"/m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-search-1\" is already in use by container \"0f1f41fea0e6a57e0d3b34856d90a4c3a1280ecb0a5943f2ce11ef9da86771e8\". You have to remove (or rename) that container to be able to reuse that name. \n Container m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-db-1 Error response from daemon: Conflict. The container name \"/m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-db-1\" is already in use by container \"993809fd9798d1851c7c864516e6c735a311d4f02a295e73096da846998f26b5\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-248-p5-php84-mariadb114-opensearch2195-valkey8-r-search-1\" is already in use by container \"0f1f41fea0e6a57e0d3b34856d90a4c3a1280ecb0a5943f2ce11ef9da86771e8\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-15T17:51:56Z"
+}

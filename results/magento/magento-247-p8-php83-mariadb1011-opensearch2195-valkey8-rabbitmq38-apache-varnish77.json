@@ -1,0 +1,38 @@
+{
+  "id": "magento-247-p8-php83-mariadb1011-opensearch2195-valkey8-rabbitmq38-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.7-p8",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.3",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.11"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 4.58206275,
+      "log": "time=\"2026-05-15T19:13:33+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8-\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T19:13:33+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8-\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--cache-1 Running \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--db-1 Running \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--search-1 Running \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Recreate \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Recreated \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Starting \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Started \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--cache-1 Waiting \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Waiting \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--db-1 Waiting \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--search-1 Waiting \n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--db-1 Error dependency db failed to start\n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--queue-1 Error dependency queue failed to start\n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--search-1 Error dependency search failed to start\n Container m2test-magento-247-p8-php83-mariadb1011-opensearch2195-valkey8--cache-1 Error dependency cache failed to start\ndependency failed to start: Error response from daemon: No such container: 233f30516f87e6fba8135ea3f31751315e51ce14a085cf474b87b09f366d57ae\n"
+    }
+  },
+  "container_logs": {
+    "queue": ""
+  },
+  "timestamp": "2026-05-15T18:13:37Z"
+}

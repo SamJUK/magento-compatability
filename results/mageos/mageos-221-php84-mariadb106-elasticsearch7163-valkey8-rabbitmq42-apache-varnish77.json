@@ -1,0 +1,35 @@
+{
+  "id": "mageos-221-php84-mariadb106-elasticsearch7163-valkey8-rabbitmq42-apache-varnish77",
+  "product": "mageos",
+  "version": "2.2.1",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.6"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.158740625,
+      "log": " Network m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_magento Creating \n Network m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_magento Created \ntime=\"2026-05-15T04:32:58+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T04:32:58+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data Creating \n Volume m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data Error Error response from daemon: create m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data': mkdir /var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data: no space left on device\nError response from daemon: create m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data: error while creating volume root path '/var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data': mkdir /var/lib/docker/volumes/m2test-mageos-221-php84-mariadb106-elasticsearch7163-valkey8-ra_db-data: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-15T03:32:58Z"
+}

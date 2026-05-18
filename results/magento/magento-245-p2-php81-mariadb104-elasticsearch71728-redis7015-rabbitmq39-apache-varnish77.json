@@ -1,0 +1,35 @@
+{
+  "id": "magento-245-p2-php81-mariadb104-elasticsearch71728-redis7015-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.5-p2",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.17.28"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "7.0.15"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.387133959,
+      "log": " Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_db-data Creating \n Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_db-data Created \n Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_search-data Creating \n Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_search-data Created \n Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Volume m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-17T22:46:16+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-17T22:46:16+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-db-1 Creating \n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-search-1 Creating \n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-queue-1 Creating \n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-cache-1 Recreate \n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-db-1 Created \n Container m2test-magento-245-p2-php81-mariadb104-elasticsearch71728-redis-cache-1 Error response from daemon: No such container: d88244232ab0dd1dfda15d2074ffe0716cb194ad2702edc7b07f53d501bb4455 \nError response from daemon: No such container: d88244232ab0dd1dfda15d2074ffe0716cb194ad2702edc7b07f53d501bb4455\n"
+    }
+  },
+  "timestamp": "2026-05-17T21:46:16Z"
+}

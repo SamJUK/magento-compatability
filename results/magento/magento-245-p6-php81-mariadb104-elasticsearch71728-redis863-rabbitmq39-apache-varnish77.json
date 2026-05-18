@@ -1,0 +1,35 @@
+{
+  "id": "magento-245-p6-php81-mariadb104-elasticsearch71728-redis863-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.5-p6",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.17.28"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "8.6.3"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 21.139952625,
+      "log": " Network m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Network m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-17T22:12:25+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_db-data Creating \n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_db-data Created \n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_search-data Creating \n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_search-data Created \n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Volume m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-17T22:12:26+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-cache-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-db-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-queue-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-search-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-cache-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-search-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-queue-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-db-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-php-fpm-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-php-fpm-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-webserver-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-webserver-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-varnish-1 Creating \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-varnish-1 Created \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-db-1 Starting \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-queue-1 Starting \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-search-1 Starting \n Container m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis-cache-1 Starting \nError response from daemon: failed to set up container networking: network m2test-magento-245-p6-php81-mariadb104-elasticsearch71728-redis_magento not found\n"
+    }
+  },
+  "timestamp": "2026-05-17T21:12:47Z"
+}

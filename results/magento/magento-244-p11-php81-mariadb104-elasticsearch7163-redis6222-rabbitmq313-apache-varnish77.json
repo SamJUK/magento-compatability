@@ -1,0 +1,35 @@
+{
+  "id": "magento-244-p11-php81-mariadb104-elasticsearch7163-redis6222-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.4-p11",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.211192917,
+      "log": " Network m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis_magento Creating \n Network m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis_magento Error Error response from daemon: network with name m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis_magento already exists\n Volume m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis_magento Creating \n Volume m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis_magento Created \ntime=\"2026-05-17T23:38:04+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-17T23:38:04+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-search-1 Creating \n Container m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-cache-1 Creating \n Container m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-queue-1 Creating \n Container m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-db-1 Creating \n Container m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-queue-1 Error response from daemon: Conflict. The container name \"/m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-queue-1\" is already in use by container \"39f01efd4fd8c54cb39a1b009dbc3ba32bb980cf11f94da8cf3164408b541370\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-244-p11-php81-mariadb104-elasticsearch7163-redis-queue-1\" is already in use by container \"39f01efd4fd8c54cb39a1b009dbc3ba32bb980cf11f94da8cf3164408b541370\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-17T22:38:04Z"
+}

@@ -1,0 +1,38 @@
+{
+  "id": "magento-247-p4-php83-mariadb104-opensearch2195-valkey8-rabbitmq42-apache-varnish80",
+  "product": "magento",
+  "version": "2.4.7-p4",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.3",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "8.0"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 4.964951959,
+      "log": "time=\"2026-05-15T19:22:38+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T19:22:38+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r-db-1 Running \n Container m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r-search-1 Running \n Container m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r-queue-1 Recreate \n Container m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r-cache-1 Running \n Container m2test-magento-247-p4-php83-mariadb104-opensearch2195-valkey8-r-queue-1 Error response from daemon: No such container: 6213583a7495f8be014c0fa2458fb2efcaaa122ce375bcac6c123ebd725d58c8 \nError response from daemon: No such container: 6213583a7495f8be014c0fa2458fb2efcaaa122ce375bcac6c123ebd725d58c8\n"
+    }
+  },
+  "container_logs": {
+    "db": "Error response from daemon: can not get logs from container which is dead or marked for removal\n"
+  },
+  "timestamp": "2026-05-15T18:22:44Z"
+}

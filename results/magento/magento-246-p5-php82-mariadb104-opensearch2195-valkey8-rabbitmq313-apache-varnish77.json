@@ -1,0 +1,35 @@
+{
+  "id": "magento-246-p5-php82-mariadb104-opensearch2195-valkey8-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.6-p5",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.2",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.23342225,
+      "log": " Network m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Network m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_magento Created \n Volume m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_db-data Creating \n Volume m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_db-data Created \n Volume m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Volume m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r_magento Created \ntime=\"2026-05-15T22:15:05+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T22:15:05+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-db-1 Creating \n Container m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Creating \n Container m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-cache-1 Creating \n Container m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-search-1 Creating \n Container m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Error response from daemon: Conflict. The container name \"/m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-queue-1\" is already in use by container \"13dc283b3add6db1a1b014f20a7391494bf3088e95162ad98293c13e2112c3a5\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-246-p5-php82-mariadb104-opensearch2195-valkey8-r-queue-1\" is already in use by container \"13dc283b3add6db1a1b014f20a7391494bf3088e95162ad98293c13e2112c3a5\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-15T21:15:05Z"
+}

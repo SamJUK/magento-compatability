@@ -1,0 +1,35 @@
+{
+  "id": "magento-246-p8-php82-mariadb104-opensearch2195-valkey8-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.6-p8",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.2",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 45.129711958,
+      "log": " Network m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Network m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_magento Created \n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_search-data Creating \n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_search-data Created \n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_magento Creating \n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_magento Created \ntime=\"2026-05-15T21:30:51+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-15T21:30:51+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_db-data Creating \n Volume m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_db-data Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-db-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-search-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-cache-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-search-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-cache-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-db-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-php-fpm-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-php-fpm-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-webserver-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-webserver-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-varnish-1 Creating \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-varnish-1 Created \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-cache-1 Starting \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-db-1 Starting \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-search-1 Starting \n Container m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r-queue-1 Starting \nError response from daemon: failed to set up container networking: network m2test-magento-246-p8-php82-mariadb104-opensearch2195-valkey8-r_magento not found\n"
+    }
+  },
+  "timestamp": "2026-05-15T20:31:36Z"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "magento-245-p5-php81-mariadb104-elasticsearch71728-redis6222-rabbitmq313-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.5-p5",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.17.28"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.13"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.000074125,
+      "log": ""
+    }
+  },
+  "timestamp": "2026-05-16T08:03:58Z"
+}

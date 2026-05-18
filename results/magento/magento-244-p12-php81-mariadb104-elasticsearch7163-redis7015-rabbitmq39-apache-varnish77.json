@@ -1,0 +1,35 @@
+{
+  "id": "magento-244-p12-php81-mariadb104-elasticsearch7163-redis7015-rabbitmq39-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.4-p12",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.1",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.16.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "7.0.15"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.9"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 63.4701585,
+      "log": "time=\"2026-05-17T23:30:43+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-17T23:30:43+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis-db-1 Running \n Container m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis-cache-1 Recreate \n Container m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis-search-1 Running \n Container m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis-queue-1 Running \n Container m2test-magento-244-p12-php81-mariadb104-elasticsearch7163-redis-cache-1 Error response from daemon: No such container: 205dd7cc892a74738da1a8392310ff8efdeb73b98ca1866f74c268b41d3e3ec8 \nError response from daemon: No such container: 205dd7cc892a74738da1a8392310ff8efdeb73b98ca1866f74c268b41d3e3ec8\n"
+    }
+  },
+  "timestamp": "2026-05-17T22:31:47Z"
+}

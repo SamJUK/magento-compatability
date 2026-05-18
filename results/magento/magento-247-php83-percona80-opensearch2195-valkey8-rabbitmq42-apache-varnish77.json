@@ -1,0 +1,40 @@
+{
+  "id": "magento-247-php83-percona80-opensearch2195-valkey8-rabbitmq42-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.7",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.3",
+    "webserver": "apache",
+    "db": {
+      "type": "percona",
+      "version": "8.0"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "4.2"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 5.085620625,
+      "log": " Network m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi_magento Creating \n Network m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi_magento Created \ntime=\"2026-05-15T19:32:31+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi_magento Creating \n Volume m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi_magento Created \ntime=\"2026-05-15T19:32:31+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-magento-248-p4-php84-percona80-opensearch3-valkey8-rabbi\\\" (expected \\\"m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-queue-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-cache-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-search-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-search-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-cache-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-queue-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-php-fpm-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-php-fpm-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-webserver-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-webserver-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-varnish-1 Creating \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-varnish-1 Created \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Starting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-cache-1 Starting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-queue-1 Starting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-search-1 Starting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Started \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-cache-1 Started \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-search-1 Started \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-queue-1 Started \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Waiting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-search-1 Waiting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-cache-1 Waiting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-queue-1 Waiting \n Container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 Error dependency db failed to start\ndependency failed to start: container m2test-magento-247-php83-percona80-opensearch2195-valkey8-rabbi-db-1 exited (1)\n"
+    }
+  },
+  "container_logs": {
+    "cache": "cache-1  | 2026-05-15T18:32:35.680335878Z 1:M 15 May 2026 18:32:35.680 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo\ncache-1  | 2026-05-15T18:32:35.680397295Z 1:M 15 May 2026 18:32:35.680 * Valkey version=8.1.7, bits=64, commit=00000000, modified=0, pid=1, just started\ncache-1  | 2026-05-15T18:32:35.680426670Z 1:M 15 May 2026 18:32:35.680 * Configuration loaded\ncache-1  | 2026-05-15T18:32:35.680641128Z 1:M 15 May 2026 18:32:35.680 * monotonic clock: POSIX clock_gettime\ncache-1  | 2026-05-15T18:32:35.681031336Z 1:M 15 May 2026 18:32:35.681 * Running mode=standalone, port=6379.\ncache-1  | 2026-05-15T18:32:35.681227420Z 1:M 15 May 2026 18:32:35.681 * Server initialized\ncache-1  | 2026-05-15T18:32:35.681295503Z 1:M 15 May 2026 18:32:35.681 * Ready to accept connections tcp\n",
+    "queue": "",
+    "search": "search-1  | 2026-05-15T18:32:35.683485337Z Disabling OpenSearch Security Plugin\nsearch-1  | 2026-05-15T18:32:35.683512920Z Enabling execution of OPENSEARCH_HOME/bin/opensearch-performance-analyzer/performance-analyzer-agent-cli for OpenSearch Performance Analyzer Plugin\nsearch-1  | 2026-05-15T18:32:36.492600313Z WARNING: Using incubator modules: jdk.incubator.vector\nsearch-1  | 2026-05-15T18:32:36.530455153Z WARNING: A terminally deprecated method in java.lang.System has been called\nsearch-1  | 2026-05-15T18:32:36.530469028Z WARNING: System::setSecurityManager has been called by org.opensearch.bootstrap.OpenSearch (file:/usr/share/opensearch/lib/opensearch-2.19.5.jar)\nsearch-1  | 2026-05-15T18:32:36.530470903Z WARNING: Please consider reporting this to the maintainers of org.opensearch.bootstrap.OpenSearch\nsearch-1  | 2026-05-15T18:32:36.530472070Z WARNING: System::setSecurityManager will be removed in a future release\n"
+  },
+  "timestamp": "2026-05-15T18:32:37Z"
+}
