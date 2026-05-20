@@ -1,7 +1,6 @@
 services:
   search:
-    image: "elasticsearch:${SEARCH_VERSION:-7.17.28}"
-    platform: linux/amd64
+    image: "docker.elastic.co/elasticsearch/elasticsearch:${SEARCH_VERSION:-7.17.28}"
     environment:
       discovery.type: single-node
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
