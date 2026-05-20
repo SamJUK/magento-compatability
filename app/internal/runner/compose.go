@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -40,20 +41,13 @@ type Compose struct {
 	env         []string // KEY=VALUE pairs passed to the subprocess environment
 }
 
-// sanitiseProjectName converts a combination ID into a valid Docker Compose
-// project name: alphanumeric, hyphens, and underscores only, max 63 chars.
+// sanitiseProjectName derives a unique Docker Compose project name from a
+// combination ID. A SHA-256 hash of the ID is used so that long combination
+// names never collide after truncation — which caused "endpoint already exists"
+// errors when running multiple combinations in parallel.
 func sanitiseProjectName(id string) string {
-	s := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '-' || r == '_' {
-			return r
-		}
-		return -1
-	}, "m2test-"+id)
-	if len(s) > 63 {
-		s = s[:63]
-	}
-	return s
+	sum := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("m2test-%x", sum[:8]) // 23 chars, well within the 63-char Docker limit
 }
 
 // parseHostPort extracts the port number from docker compose port output.
