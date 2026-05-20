@@ -56,6 +56,16 @@ import Base from '../layouts/Base.astro';
         },
         {
           method: 'GET',
+          path: '/api/v1/[product]/github-matrix.json',
+          desc: 'Returns a GitHub Actions compatible matrix definition for all product versions, to be used in CI workflows.',
+        },
+        {
+          method: 'GET',
+          path: '/api/v1/[product]/[version]/github-matrix.json',
+          desc: 'Returns a GitHub Actions compatible matrix definition for a specific product version, to be used in CI workflows.',
+        },
+        {
+          method: 'GET',
           path: '/api/v1/software/[service]/[version].json',
           desc: 'Returns aggregated compatibility for a specific service version across all product versions.',
         },
@@ -77,8 +87,8 @@ import Base from '../layouts/Base.astro';
   </section>
 
   <!-- ── MCP ──────────────────────────────────────────────────────────────── -->
-  <section class="mb-12">
-    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-2">MCP Server</h2>
+  <section class="mb-12 opacity-30">
+    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-2">MCP Server (coming soon)</h2>
     <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-6">
       An MCP (Model Context Protocol) server is available for AI coding agents such as GitHub Copilot and Claude. It wraps the REST API and provides 5 tools your agent can call.
     </p>
