@@ -23,7 +23,7 @@ services:
       - vendor-cache:/vendor-cache
       - ../scripts:/scripts:ro
     environment:
-      COMPOSER_HOME: /composer-cache
+      COMPOSER_CACHE_DIR: /composer-cache
       MAGENTO_DIR: /var/www/html
     networks:
       - magento

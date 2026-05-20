@@ -56,11 +56,18 @@ RUN --mount=type=cache,target=/tmp/composer-download \
     chmod 755 /usr/local/bin/composer && \
     composer --version
 
+# Bake global Composer config into the image so concurrent containers don't
+# race to write the same shared config.json on the mounted cache volume.
+RUN composer config --global audit.abandoned ignore && \
+    composer config --global audit.block-insecure false && \
+    composer config --global allow-plugins true
+
 # Working directory — Magento is installed here by install.sh
 WORKDIR /var/www/html
 
-# Composer cache is mounted as a volume from the host (see compose/base.yml)
-ENV COMPOSER_HOME=/composer-cache
+# Separate config home (image-internal, baked above) from download cache
+# (shared named volume mounted at runtime — see compose/base.yml).
+ENV COMPOSER_CACHE_DIR=/composer-cache
 
 EXPOSE 9000
 

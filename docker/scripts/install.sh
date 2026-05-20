@@ -102,11 +102,6 @@ _pkg_slug="${_pkg_slug// /-}"
 VENDOR_CACHE_KEY="${PHP_VERSION:-8.3}-${_pkg_slug}-${PRODUCT_VERSION}"
 VENDOR_CACHE_PATH="${VENDOR_CACHE_DIR}/${VENDOR_CACHE_KEY}"
 
-# ─── Composer global config ───────────────────────────────────────────────────
-composer config --global audit.abandoned ignore 2>/dev/null || true
-composer config --global audit.block-insecure false 2>/dev/null || true
-composer config --global allow-plugins true 2>/dev/null || true
-
 rm -rf "${MAGENTO_DIR:?}/"*
 
 # ─── Composer create-project ──────────────────────────────────────────────────
