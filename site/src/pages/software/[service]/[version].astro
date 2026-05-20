@@ -17,8 +17,11 @@ const { key, type, version, label } = Astro.props;
 const summary = getSoftwareVersionSummary(key, type, version);
 const products = getProducts();
 
-function statusOrder(s: ServiceStatus) {
-  return s === 'pass' ? 0 : s === 'partial' ? 1 : s === 'fail' ? 2 : 3;
+
+function semanticOrder(s: string) { 
+  const [main, patch] = s.split('-');
+  const parts = main.split('.').map(Number);
+  return parts[0] * 1_000_000 + parts[1] * 1_000 + (parts[2] || 0) + (patch ? -1 : 0);  
 }
 ---
 
@@ -56,7 +59,7 @@ function statusOrder(s: ServiceStatus) {
         const entry = summary.compatibility[`${product.name}/${ver}`];
         return { ver, agg: entry?.aggregate ?? { status: 'unknown' as ServiceStatus, passed: 0, failed: 0, total: 0, resultIds: [] } };
       })
-      .sort((a, b) => statusOrder(a.agg.status) - statusOrder(b.agg.status));
+      .sort((a, b) => semanticOrder(b.ver) - semanticOrder(a.ver));
 
     return (
       <section class="mb-10">
