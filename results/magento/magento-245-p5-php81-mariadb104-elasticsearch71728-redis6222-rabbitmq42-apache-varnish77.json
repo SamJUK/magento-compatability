@@ -27,9 +27,9 @@
   "steps": {
     "stack_up": {
       "status": "fail",
-      "duration_s": 0.0001455,
-      "log": ""
+      "duration_s": 0.736726375,
+      "log": " Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_db-data Creating \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_db-data Created \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_search-data Creating \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_search-data Created \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-20T17:42:53+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-20T17:42:53+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-search-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-cache-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-queue-1 Recreate \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-search-1 Created \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-cache-1 Created \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1 Created \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-queue-1 Error response from daemon: removal of container b6178d7d47ea994efb655e1e90498cdb187720d649ef07b1c306a8139c44010b is already in progress \nError response from daemon: removal of container b6178d7d47ea994efb655e1e90498cdb187720d649ef07b1c306a8139c44010b is already in progress\n"
     }
   },
-  "timestamp": "2026-05-16T08:03:58Z"
+  "timestamp": "2026-05-20T16:42:54Z"
 }

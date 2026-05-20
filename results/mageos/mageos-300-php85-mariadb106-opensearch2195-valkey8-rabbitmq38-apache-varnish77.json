@@ -1,0 +1,35 @@
+{
+  "id": "mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbitmq38-apache-varnish77",
+  "product": "mageos",
+  "version": "3.0.0",
+  "overall_status": "fail",
+  "services": {
+    "php": "8.5",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.6"
+    },
+    "search": {
+      "type": "opensearch",
+      "version": "2.19.5"
+    },
+    "cache": {
+      "type": "valkey",
+      "version": "8"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 8.493028916,
+      "log": " Image rabbitmq:3.8-alpine Pulling \n b3c136eddcbf Pulling fs layer 0B\n e2cf3ff4d161 Pulling fs layer 0B\n 0d0bf26627f5 Pulling fs layer 0B\n a2e0b8db2386 Pulling fs layer 0B\n 6668d495183f Pulling fs layer 0B\n 6d66cb489dfb Pulling fs layer 0B\n d6592529d17b Pulling fs layer 0B\n 86318d41da69 Pulling fs layer 0B\n 6668d495183f Waiting 0B\n 6d66cb489dfb Waiting 0B\n d6592529d17b Waiting 0B\n 86318d41da69 Waiting 0B\n a2e0b8db2386 Waiting 0B\n b3c136eddcbf Downloading 32.77kB\n b3c136eddcbf Downloading 1.14MB\n e2cf3ff4d161 Downloading 16.38kB\n b3c136eddcbf Download complete 0B\n b3c136eddcbf Extracting 32.77kB\n e2cf3ff4d161 Downloading 348.9kB\n 0d0bf26627f5 Downloading 408.4kB\n e2cf3ff4d161 Verifying Checksum 0B\n e2cf3ff4d161 Download complete 0B\n b3c136eddcbf Extracting 262.1kB\n a2e0b8db2386 Downloading 1.42kB\n a2e0b8db2386 Verifying Checksum 0B\n a2e0b8db2386 Download complete 0B\n 0d0bf26627f5 Downloading 2.396MB\n b3c136eddcbf Extracting 1.343MB\n b3c136eddcbf Extracting 2.694MB\n 0d0bf26627f5 Downloading 5.163MB\n 6668d495183f Downloading 193.8kB\n 6d66cb489dfb Downloading 274B\n 6d66cb489dfb Verifying Checksum 0B\n 6d66cb489dfb Download complete 0B\n 0d0bf26627f5 Downloading 7.18MB\n 6668d495183f Downloading 750.8kB\n 0d0bf26627f5 Downloading 9.18MB\n 6668d495183f Downloading 2.204MB\n d6592529d17b Downloading 107B\n d6592529d17b Verifying Checksum 0B\n d6592529d17b Download complete 0B\n 0d0bf26627f5 Downloading 11.16MB\n b3c136eddcbf Pull complete 0B\n e2cf3ff4d161 Extracting 32.77kB\n 6668d495183f Downloading 3.157MB\n 0d0bf26627f5 Downloading 13.16MB\n e2cf3ff4d161 Extracting 884.7kB\n e2cf3ff4d161 Extracting 1.079MB\n e2cf3ff4d161 Extracting 1.079MB\n 6668d495183f Downloading 4.07MB\n 0d0bf26627f5 Downloading 15.17MB\n 86318d41da69 Downloading 3.536kB\n 86318d41da69 Downloading 4.984kB\n 86318d41da69 Verifying Checksum 0B\n 86318d41da69 Download complete 0B\n 6668d495183f Downloading 4.804MB\n e2cf3ff4d161 Pull complete 0B\n 0d0bf26627f5 Downloading 17.17MB\n 6668d495183f Downloading 5.902MB\n 0d0bf26627f5 Downloading 19.18MB\n 6668d495183f Downloading 6.988MB\n 0d0bf26627f5 Downloading 21.16MB\n 6668d495183f Downloading 8.118MB\n 0d0bf26627f5 Downloading 23.16MB\n 6668d495183f Downloading 9.033MB\n 0d0bf26627f5 Downloading 24.75MB\n 6668d495183f Downloading 9.964MB\n 0d0bf26627f5 Downloading 26.35MB\n 6668d495183f Downloading 10.88MB\n 0d0bf26627f5 Downloading 28.34MB\n 6668d495183f Downloading 11.98MB\n 0d0bf26627f5 Downloading 30.35MB\n 6668d495183f Downloading 13.24MB\n 0d0bf26627f5 Downloading 32.75MB\n 6668d495183f Downloading 14.2MB\n 0d0bf26627f5 Downloading 34.74MB\n 6668d495183f Downloading 15.12MB\n 0d0bf26627f5 Downloading 36.73MB\n 6668d495183f Downloading 16.03MB\n 0d0bf26627f5 Downloading 38.32MB\n 0d0bf26627f5 Verifying Checksum 0B\n 0d0bf26627f5 Download complete 0B\n 6668d495183f Downloading 17.3MB\n 6668d495183f Verifying Checksum 0B\n 6668d495183f Download complete 0B\n 0d0bf26627f5 Extracting 393.2kB\n 0d0bf26627f5 Extracting 1.573MB\n 0d0bf26627f5 Extracting 5.505MB\n 0d0bf26627f5 Extracting 10.22MB\n 0d0bf26627f5 Extracting 11.8MB\n 0d0bf26627f5 Extracting 14.55MB\n 0d0bf26627f5 Extracting 17.3MB\n 0d0bf26627f5 Extracting 21.23MB\n 0d0bf26627f5 Extracting 23.59MB\n 0d0bf26627f5 Extracting 24.38MB\n 0d0bf26627f5 Extracting 26.74MB\n 0d0bf26627f5 Extracting 30.67MB\n 0d0bf26627f5 Extracting 35MB\n 0d0bf26627f5 Extracting 39.28MB\n 0d0bf26627f5 Pull complete 0B\n a2e0b8db2386 Extracting 1.42kB\n a2e0b8db2386 Extracting 1.42kB\n a2e0b8db2386 Pull complete 0B\n 6668d495183f Extracting 196.6kB\n 6668d495183f Extracting 14.35MB\n 6668d495183f Extracting 17.91MB\n 6668d495183f Pull complete 0B\n 6d66cb489dfb Extracting 274B\n 6d66cb489dfb Extracting 274B\n 6d66cb489dfb Pull complete 0B\n d6592529d17b Extracting 107B\n d6592529d17b Pull complete 0B\n 86318d41da69 Extracting 4.984kB\n 86318d41da69 Extracting 4.984kB\n 86318d41da69 Pull complete 0B\n Image rabbitmq:3.8-alpine Pulled \ntime=\"2026-05-20T16:23:36+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Container m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Recreate \n Container m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Recreated \n Container m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-php-fpm-1 Creating \n Container m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-php-fpm-1 Error response from daemon: Conflict. The container name \"/m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-php-fpm-1\" is already in use by container \"8251e8989cab6ee129fe3edcd790cf724b23fe918e1b180abc2eed3a3b32209e\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi-php-fpm-1\" is already in use by container \"8251e8989cab6ee129fe3edcd790cf724b23fe918e1b180abc2eed3a3b32209e\". You have to remove (or rename) that container to be able to reuse that name.\n"
+    }
+  },
+  "timestamp": "2026-05-20T15:23:37Z"
+}

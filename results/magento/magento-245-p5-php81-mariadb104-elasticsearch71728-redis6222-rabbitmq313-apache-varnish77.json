@@ -27,9 +27,9 @@
   "steps": {
     "stack_up": {
       "status": "fail",
-      "duration_s": 0.000074125,
-      "log": ""
+      "duration_s": 0.120866209,
+      "log": " Network m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Network m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Created \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Creating \n Volume m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis_magento Created \ntime=\"2026-05-20T17:42:54+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-20T17:42:54+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-search-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-queue-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-cache-1 Creating \n Container m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1 Error response from daemon: Conflict. The container name \"/m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1\" is already in use by container \"81d3a85bf510960c4dd89b79671ca4f10270e833924e41265622744c8ba048dd\". You have to remove (or rename) that container to be able to reuse that name. \nError response from daemon: Conflict. The container name \"/m2test-magento-245-p5-php81-mariadb104-elasticsearch71728-redis-db-1\" is already in use by container \"81d3a85bf510960c4dd89b79671ca4f10270e833924e41265622744c8ba048dd\". You have to remove (or rename) that container to be able to reuse that name.\n"
     }
   },
-  "timestamp": "2026-05-16T08:03:58Z"
+  "timestamp": "2026-05-20T16:42:54Z"
 }

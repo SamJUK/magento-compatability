@@ -1,0 +1,35 @@
+{
+  "id": "magento-242-php74-mariadb104-elasticsearch793-redis7015-rabbitmq38-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.2",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "7.0.15"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.145231958,
+      "log": " Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis7015-_magento Creating \n Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis7015-_magento Error Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\nfailed to create network m2test-magento-242-php74-mariadb104-elasticsearch793-redis7015-_magento: Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-20T17:48:20Z"
+}

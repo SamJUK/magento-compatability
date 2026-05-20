@@ -1,0 +1,35 @@
+{
+  "id": "magento-242-php74-mariadb104-elasticsearch793-redis5014-rabbitmq38-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.2",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "5.0.14"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.183260542,
+      "log": " Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_magento Creating \n Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_magento Created \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_magento Creating \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_magento Created \ntime=\"2026-05-20T18:48:21+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-20T18:48:21+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-\\\"). Use `external: true` to use an existing volume\"\n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_db-data Creating \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_db-data Created \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_search-data Creating \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014-_search-data Created \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--queue-1 Creating \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--db-1 Creating \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--cache-1 Creating \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--search-1 Creating \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--queue-1 Error response from daemon: chmod /var/lib/docker/overlay2/f1cac896073ad8e8878508db4fc7d16e1604fe01196135e6a0aaf3766b1e3d92/.tmp-committed1294653932: no space left on device \n Container m2test-magento-242-php74-mariadb104-elasticsearch793-redis5014--search-1 Error response from daemon: write /var/lib/docker/overlay2/eeebe4a7867d7df626f1092715d3874058cb2d93d88b1151da00907e019a57a4-init/.tmp-link3457021387: no space left on device \nError response from daemon: chmod /var/lib/docker/overlay2/f1cac896073ad8e8878508db4fc7d16e1604fe01196135e6a0aaf3766b1e3d92/.tmp-committed1294653932: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-20T17:48:21Z"
+}

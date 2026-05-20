@@ -1,0 +1,35 @@
+{
+  "id": "magento-243-p1-php74-mariadb104-elasticsearch793-redis6222-rabbitmq38-apache-varnish80",
+  "product": "magento",
+  "version": "2.4.3-p1",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "6.2.22"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "8.0"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 10.792556458,
+      "log": "time=\"2026-05-20T18:32:22+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-20T18:32:22+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-300-php85-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62\\\"). Use `external: true` to use an existing volume\"\n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-db-1 Running \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-cache-1 Running \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-search-1 Running \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreate \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Recreated \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-php-fpm-1 Running \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-webserver-1 Running \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-varnish-1 Creating \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-varnish-1 Created \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Starting \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Started \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-db-1 Waiting \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-search-1 Waiting \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-cache-1 Waiting \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Waiting \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-cache-1 Healthy \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-db-1 Healthy \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-search-1 Healthy \n Container m2test-magento-243-p1-php74-mariadb104-elasticsearch793-redis62-queue-1 Error dependency queue failed to start\ndependency failed to start: Error response from daemon: No such container: b8df1352a0fea4176d1678f01038f6e8893c299206fca442017445d6cf5b03e4\n"
+    }
+  },
+  "timestamp": "2026-05-20T17:32:32Z"
+}

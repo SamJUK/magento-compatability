@@ -1,0 +1,35 @@
+{
+  "id": "magento-242-php74-mariadb104-elasticsearch793-redis806-rabbitmq38-apache-varnish77",
+  "product": "magento",
+  "version": "2.4.2",
+  "overall_status": "fail",
+  "services": {
+    "php": "7.4",
+    "webserver": "apache",
+    "db": {
+      "type": "mariadb",
+      "version": "10.4"
+    },
+    "search": {
+      "type": "elasticsearch",
+      "version": "7.9.3"
+    },
+    "cache": {
+      "type": "redis",
+      "version": "8.0.6"
+    },
+    "queue": {
+      "type": "rabbitmq",
+      "version": "3.8"
+    },
+    "varnish": "7.7"
+  },
+  "steps": {
+    "stack_up": {
+      "status": "fail",
+      "duration_s": 0.195114458,
+      "log": " Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_magento Creating \n Network m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_magento Created \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data Creating \n Volume m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data Error Error response from daemon: create m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data: error while creating volume root path '/var/lib/docker/volumes/m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data': mkdir /var/lib/docker/volumes/m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data: no space left on device\nError response from daemon: create m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data: error while creating volume root path '/var/lib/docker/volumes/m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data': mkdir /var/lib/docker/volumes/m2test-magento-242-php74-mariadb104-elasticsearch793-redis806-r_search-data: no space left on device\n"
+    }
+  },
+  "timestamp": "2026-05-20T17:48:20Z"
+}
