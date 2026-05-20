@@ -1,0 +1,76 @@
+name: Compare Results
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run compare script
+        id: compare
+        run: |
+          set +e
+          python3 scripts/compare-results.py \
+            --mode commit \
+            --base origin/master \
+            --format markdown \
+            --all > /tmp/compare-output.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Build comment body
+        run: |
+          {
+            echo "<!-- compare-results -->"
+            echo "## Result Comparison"
+            echo ""
+            if [ "${{ steps.compare.outputs.exit_code }}" = "1" ]; then
+              echo "> [!CAUTION]"
+              echo "> Regressions detected."
+              echo ""
+            fi
+            echo "<details>"
+            echo "<summary>Full diff</summary>"
+            echo ""
+            cat /tmp/compare-output.md
+            echo ""
+            echo "</details>"
+          } > /tmp/comment-body.md
+
+      - name: Find existing comment
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: '<!-- compare-results -->'
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body-file: /tmp/comment-body.md
+
+      - name: Fail on regressions
+        if: steps.compare.outputs.exit_code == '1'
+        run: |
+          echo "Regressions detected. See PR comment for details."
+          exit 1
