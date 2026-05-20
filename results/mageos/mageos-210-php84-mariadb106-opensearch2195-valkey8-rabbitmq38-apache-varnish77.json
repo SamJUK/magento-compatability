@@ -27,9 +27,9 @@
   "steps": {
     "stack_up": {
       "status": "fail",
-      "duration_s": 0.076191208,
-      "log": " Network m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Creating \n Network m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Error Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\nfailed to create network m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi_magento: Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\n"
+      "duration_s": 13.836717083,
+      "log": "time=\"2026-05-19T18:02:51+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-19T18:02:51+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Container m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi-db-1 Running \n Container m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi-cache-1 Running \n Container m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Recreate \n Container m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi-search-1 Running \n Container m2test-mageos-210-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Error response from daemon: removal of container 6a875d45b8a1819ec2459d83bb9fd9ef2366295fe982b798b35e6f56130c3d1e is already in progress \nError response from daemon: removal of container 6a875d45b8a1819ec2459d83bb9fd9ef2366295fe982b798b35e6f56130c3d1e is already in progress\n"
     }
   },
-  "timestamp": "2026-05-15T03:33:05Z"
+  "timestamp": "2026-05-19T17:03:05Z"
 }

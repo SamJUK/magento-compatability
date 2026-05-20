@@ -27,9 +27,9 @@
   "steps": {
     "stack_up": {
       "status": "fail",
-      "duration_s": 0.065804875,
-      "log": " Network m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Creating \n Network m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Error Error response from daemon: all predefined address pools have been fully subnetted\nfailed to create network m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi_magento: Error response from daemon: all predefined address pools have been fully subnetted\n"
+      "duration_s": 6.451632334,
+      "log": "time=\"2026-05-19T19:44:00+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-19T19:44:00+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Container m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi-db-1 Running \n Container m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi-search-1 Running \n Container m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Recreate \n Container m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi-cache-1 Running \n Container m2test-mageos-102-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Error response from daemon: removal of container d08a64935463803d024ce542cb6ba0c86cda2d33f1a271266efaca12f1eb2133 is already in progress \nError response from daemon: removal of container d08a64935463803d024ce542cb6ba0c86cda2d33f1a271266efaca12f1eb2133 is already in progress\n"
     }
   },
-  "timestamp": "2026-05-15T03:33:29Z"
+  "timestamp": "2026-05-19T18:44:06Z"
 }

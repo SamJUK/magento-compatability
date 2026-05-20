@@ -27,9 +27,9 @@
   "steps": {
     "stack_up": {
       "status": "fail",
-      "duration_s": 0.078974375,
-      "log": " Network m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Creating \n Network m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi_magento Error Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\nfailed to create network m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi_magento: Error response from daemon: failed to update bridge store for object type *bridge.networkConfiguration: write /var/lib/docker/network/files/local-kv.db: no space left on device\n"
+      "duration_s": 22.751866875,
+      "log": "time=\"2026-05-19T18:49:54+01:00\" level=warning msg=\"volume \\\"m2test-vendor-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\ntime=\"2026-05-19T18:49:54+01:00\" level=warning msg=\"volume \\\"m2test-composer-cache\\\" already exists but was created for project \\\"m2test-mageos-221-php84-mariadb106-opensearch2195-valkey8-rabbi\\\" (expected \\\"m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi\\\"). Use `external: true` to use an existing volume\"\n Container m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi-cache-1 Running \n Container m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi-search-1 Running \n Container m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi-db-1 Running \n Container m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Recreate \n Container m2test-mageos-120-php84-mariadb106-opensearch2195-valkey8-rabbi-queue-1 Error response from daemon: No such container: 90932fc1a5722bfb5e84b5c307fe409c76fd56b42d4ca97d86b24ea64ef70e46 \nError response from daemon: No such container: 90932fc1a5722bfb5e84b5c307fe409c76fd56b42d4ca97d86b24ea64ef70e46\n"
     }
   },
-  "timestamp": "2026-05-15T03:33:14Z"
+  "timestamp": "2026-05-19T17:50:17Z"
 }
