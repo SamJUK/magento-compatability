@@ -327,6 +327,14 @@ def run_ref_diff(root: Path, results_dir: str, base: str, head: str) -> list[Res
 # Output formatters
 # ──────────────────────────────────────────────────────────────────────────────
 
+step_sort_order = {
+    "overall": 1,
+    "stack_up": 2,
+    "install": 3,
+    "smoke": 4,
+    "playwright": 5,
+}
+
 def status_icon(status: str, use_color: bool) -> str:
     icons = {
         STATUS_PASS: c("✓ pass", "green", use_color=use_color),
@@ -383,7 +391,9 @@ def format_terminal(
 
         lines.append(f"{badge} {c(ch.result_id, 'bold', use_color=use_color)}{overall_part}")
 
-        for sc in ch.step_changes:
+        sorted_steps = sorted(ch.step_changes, key=lambda sc: step_sort_order.get(sc.step.lower(), 100))
+        
+        for sc in sorted_steps:
             if not show_all and not sc.changed:
                 continue
             arrow = f"{status_icon(sc.before, use_color)} → {status_icon(sc.after, use_color)}"
@@ -472,7 +482,8 @@ def format_markdown(
         for sc in ch.step_changes:
             if sc.step not in all_steps:
                 all_steps.append(sc.step)
-    all_steps = sorted(all_steps)
+
+    all_steps = sorted(all_steps, key=lambda s: step_sort_order.get(s.lower(), 100))
 
     # Table header
     header = "| Result ID | Overall |" + "".join(f" {s} |" for s in all_steps)
