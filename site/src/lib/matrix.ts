@@ -26,6 +26,10 @@ export function getMatrix(): MatrixDefinition {
   return _matrix;
 }
 
+export function resetCache(): void {
+  _matrix = null;
+}
+
 // ─── Accessors ───────────────────────────────────────────────────────────────
 
 export function getProducts(): ProductDefinition[] {

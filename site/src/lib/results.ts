@@ -34,6 +34,10 @@ const RESULTS_BASE = resolve(__dirname, '../../../results');
 
 let _allResults: TestResult[] | null = null;
 
+export function resetCache(): void {
+  _allResults = null;
+}
+
 export function getAllResults(): TestResult[] {
   if (_allResults) return _allResults;
   const results: TestResult[] = [];
