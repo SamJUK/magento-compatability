@@ -16,7 +16,13 @@ export const GET: APIRoute = ({ params }) => {
   const { product, version } = params;
   const results = getResultsForVersion(product!, version!);
   const summary = getVersionSummary(product!, version!);
-  return new Response(JSON.stringify({ product, version, summary, results }, null, 2), {
+
+  const strippedResults = results.map((r) => {
+    const { steps, container_logs, ...rest } = r;
+    return rest;
+  });
+
+  return new Response(JSON.stringify({ product, version, summary, strippedResults }, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
 };
