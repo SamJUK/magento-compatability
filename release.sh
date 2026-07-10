@@ -115,6 +115,8 @@ fi
 
 gh_args=(--title "${tag}" --notes "$notes" --target master)
 [[ "$publish" == false ]] && gh_args+=(--draft)
+# 0.x.y is initial-development semver — mark it pre-release until 1.0.0.
+[[ "$tag" =~ ^v0\. ]] && gh_args+=(--prerelease)
 
 gh release create "${tag}" "${gh_args[@]}"
 
