@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +30,101 @@ type RunConfig struct {
 }
 
 // searchConfigFlag returns the search type identifier for the Magento install
-// command. Elasticsearch requires its major version as a suffix (e.g. "elasticsearch8").
-func searchConfigFlag(searchType, searchVersion string) string {
-	if searchType == "elasticsearch" && len(searchVersion) > 0 {
-		return searchType + string(searchVersion[0])
+// command. Elasticsearch requires its major version as a suffix (e.g.
+// "elasticsearch8"), and some Magento OpenSearch releases still expect the
+// legacy "elasticsearch7" identifier.
+func searchConfigFlag(c matrix.Combination) string {
+	if usesLegacyMagentoOpenSearchInstall(c) {
+		return "elasticsearch7"
 	}
-	return searchType
+	if c.SearchType == "elasticsearch" && len(c.SearchVersion) > 0 {
+		return c.SearchType + string(c.SearchVersion[0])
+	}
+	return c.SearchType
+}
+
+// searchHostFlagStyle selects which setup:install host/port option family to
+// use. Some Magento 2.4.4/2.4.5 OpenSearch releases still require the legacy
+// --elasticsearch-host/port flags even when search-engine=opensearch.
+func searchHostFlagStyle(c matrix.Combination) string {
+	if c.SearchType != "opensearch" {
+		return "elasticsearch"
+	}
+	if usesLegacyMagentoOpenSearchInstall(c) {
+		return "elasticsearch"
+	}
+	return "opensearch"
+}
+
+func usesLegacyMagentoOpenSearchInstall(c matrix.Combination) bool {
+	return c.Package == "magento/project-community-edition" &&
+		c.SearchType == "opensearch" &&
+		magentoVersionBetween(c.Version, "2.4.4-p4", "2.4.5-p11")
+}
+
+func magentoVersionBetween(version, minVersion, maxVersion string) bool {
+	return compareMagentoVersion(version, minVersion) >= 0 && compareMagentoVersion(version, maxVersion) <= 0
+}
+
+func compareMagentoVersion(a, b string) int {
+	av, ok := parseMagentoVersion(a)
+	if !ok {
+		return strings.Compare(a, b)
+	}
+	bv, ok := parseMagentoVersion(b)
+	if !ok {
+		return strings.Compare(a, b)
+	}
+
+	switch {
+	case av.major != bv.major:
+		if av.major < bv.major {
+			return -1
+		}
+	case av.minor != bv.minor:
+		if av.minor < bv.minor {
+			return -1
+		}
+	case av.patch != bv.patch:
+		if av.patch < bv.patch {
+			return -1
+		}
+	case av.patchLevel != bv.patchLevel:
+		if av.patchLevel < bv.patchLevel {
+			return -1
+		}
+	default:
+		return 0
+	}
+	return 1
+}
+
+type magentoVersion struct {
+	major      int
+	minor      int
+	patch      int
+	patchLevel int
+}
+
+func parseMagentoVersion(version string) (magentoVersion, bool) {
+	base := version
+	patchLevel := 0
+
+	if idx := strings.Index(version, "-p"); idx >= 0 {
+		base = version[:idx]
+		n, err := strconv.Atoi(version[idx+2:])
+		if err != nil {
+			return magentoVersion{}, false
+		}
+		patchLevel = n
+	}
+
+	var parsed magentoVersion
+	if _, err := fmt.Sscanf(base, "%d.%d.%d", &parsed.major, &parsed.minor, &parsed.patch); err != nil {
+		return magentoVersion{}, false
+	}
+	parsed.patchLevel = patchLevel
+	return parsed, true
 }
 
 // buildMagentoEnv returns the KEY=VALUE environment pairs consumed by
@@ -51,6 +141,7 @@ func buildMagentoEnv(c matrix.Combination, searchFlag string) []string {
 		"DB_USER=magento",
 		"DB_PASSWORD=magento",
 		"SEARCH_TYPE=" + searchFlag,
+		"SEARCH_HOST_FLAG_STYLE=" + searchHostFlagStyle(c),
 		"SEARCH_HOST=search",
 		"SEARCH_PORT=9200",
 		"CACHE_HOST=cache",
@@ -107,7 +198,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
-	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c.SearchType, c.SearchVersion))
+	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c))
 
 	cp, err := newCompose(c, cfg.ComposeDir, magentoEnv)
 	if err != nil {

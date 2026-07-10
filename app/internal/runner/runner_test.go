@@ -114,19 +114,81 @@ func TestComposeFileMap_AllKnownTypes(t *testing.T) {
 
 func TestSearchConfigFlag(t *testing.T) {
 	cases := []struct {
-		searchType    string
-		searchVersion string
-		want          string
+		c    matrix.Combination
+		want string
 	}{
-		{"opensearch", "2", "opensearch"},
-		{"elasticsearch", "8.11", "elasticsearch8"},
-		{"elasticsearch", "7.17", "elasticsearch7"},
-		{"elasticsearch", "", "elasticsearch"}, // empty version: no suffix
+		{
+			c: matrix.Combination{SearchType: "opensearch", SearchVersion: "2"},
+			want: "opensearch",
+		},
+		{
+			c: matrix.Combination{SearchType: "elasticsearch", SearchVersion: "8.11"},
+			want: "elasticsearch8",
+		},
+		{
+			c: matrix.Combination{SearchType: "elasticsearch", SearchVersion: "7.17"},
+			want: "elasticsearch7",
+		},
+		{
+			c: matrix.Combination{SearchType: "elasticsearch"},
+			want: "elasticsearch", // empty version: no suffix
+		},
+		{
+			c: matrix.Combination{
+				Package:       "magento/project-community-edition",
+				Version:       "2.4.5-p9",
+				SearchType:    "opensearch",
+				SearchVersion: "2.19.5",
+			},
+			want: "elasticsearch7",
+		},
 	}
 	for _, tc := range cases {
-		got := searchConfigFlag(tc.searchType, tc.searchVersion)
+		got := searchConfigFlag(tc.c)
 		if got != tc.want {
-			t.Errorf("searchConfigFlag(%q, %q) = %q, want %q", tc.searchType, tc.searchVersion, got, tc.want)
+			t.Errorf("searchConfigFlag(...) = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestSearchHostFlagStyle(t *testing.T) {
+	cases := []struct {
+		name string
+		c    matrix.Combination
+		want string
+	}{
+		{
+			name: "legacy magento opensearch uses elasticsearch flags",
+			c: matrix.Combination{
+				Package:    "magento/project-community-edition",
+				Version:    "2.4.5-p9",
+				SearchType: "opensearch",
+			},
+			want: "elasticsearch",
+		},
+		{
+			name: "modern magento opensearch uses opensearch flags",
+			c: matrix.Combination{
+				Package:    "magento/project-community-edition",
+				Version:    "2.4.6",
+				SearchType: "opensearch",
+			},
+			want: "opensearch",
+		},
+		{
+			name: "elasticsearch always uses elasticsearch flags",
+			c: matrix.Combination{
+				Package:    "magento/project-community-edition",
+				Version:    "2.4.8",
+				SearchType: "elasticsearch",
+			},
+			want: "elasticsearch",
+		},
+	}
+
+	for _, tc := range cases {
+		if got := searchHostFlagStyle(tc.c); got != tc.want {
+			t.Errorf("%s: searchHostFlagStyle(...) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
@@ -140,7 +202,7 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 		SearchType:    "opensearch",
 		SearchVersion: "2",
 	}
-	env := buildMagentoEnv(c, searchConfigFlag(c.SearchType, c.SearchVersion))
+	env := buildMagentoEnv(c, searchConfigFlag(c))
 
 	required := []string{
 		"PRODUCT_PACKAGE=magento/project-community-edition",
@@ -148,6 +210,7 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 		"PHP_VERSION=8.3",
 		"MIRROR_URL=https://mirror.example.com/",
 		"SEARCH_TYPE=opensearch",
+		"SEARCH_HOST_FLAG_STYLE=opensearch",
 		"INSTALL_SAMPLE_DATA=0",
 	}
 	envSet := make(map[string]bool, len(env))
