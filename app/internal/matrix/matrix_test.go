@@ -121,6 +121,74 @@ func TestBuildCombinations_BaselineFirst(t *testing.T) {
 	}
 }
 
+func TestBuildCombinations_SkipsUnsupportedSearchDeviations(t *testing.T) {
+	m, err := matrix.Load(filepath.Join(repoRoot(t), "matrix.yml"))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		filter matrix.Filter
+		want   int
+	}{
+		{
+			name: "mageos rejects elasticsearch7 deviations",
+			filter: matrix.Filter{
+				Product: "mageos",
+				Version: "2.2.2",
+				Search:  "elasticsearch:7.16.3",
+			},
+			want: 0,
+		},
+		{
+			name: "mageos keeps elasticsearch8 deviations",
+			filter: matrix.Filter{
+				Product: "mageos",
+				Version: "2.2.2",
+				Search:  "elasticsearch:8.19.15",
+			},
+			want: 1,
+		},
+		{
+			name: "magento 2.4.5 rejects elasticsearch8 deviations",
+			filter: matrix.Filter{
+				Product: "magento",
+				Version: "2.4.5-p14",
+				Search:  "elasticsearch:8.11.4",
+			},
+			want: 0,
+		},
+		{
+			name: "magento 2.4.7 keeps elasticsearch7 deviations",
+			filter: matrix.Filter{
+				Product: "magento",
+				Version: "2.4.7-p10",
+				Search:  "elasticsearch:7.16.3",
+			},
+			want: 1,
+		},
+		{
+			name: "magento 2.4.8 rejects elasticsearch7 deviations",
+			filter: matrix.Filter{
+				Product: "magento",
+				Version: "2.4.8-p5",
+				Search:  "elasticsearch:7.16.3",
+			},
+			want: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			combos := matrix.BuildCombinations(m, tc.filter)
+			if len(combos) != tc.want {
+				t.Fatalf("BuildCombinations(%+v) = %d combos, want %d", tc.filter, len(combos), tc.want)
+			}
+		})
+	}
+}
+
 // countMinExpected returns the minimum combination count: at least one
 // (the baseline) per product version that has a baseline defined.
 // Actual counts are higher because each non-baseline option in every

@@ -6,6 +6,7 @@ package matrix
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -223,6 +224,9 @@ func BuildCombinations(m *Matrix, f Filter) []Combination {
 				}
 			}
 			add := func(c Combination) {
+				if !supportsCombination(c) {
+					return
+				}
 				if passesFilter(f, c) {
 					out = append(out, c)
 				}
@@ -277,6 +281,116 @@ func BuildCombinations(m *Matrix, f Filter) []Combination {
 	}
 
 	return out
+}
+
+func supportsCombination(c Combination) bool {
+	return supportsSearch(c)
+}
+
+func supportsSearch(c Combination) bool {
+	if c.SearchType != "elasticsearch" {
+		return true
+	}
+
+	searchMajor, ok := majorVersion(c.SearchVersion)
+	if !ok {
+		return true
+	}
+
+	switch c.Product {
+	case "mageos":
+		// MageOS releases in this matrix expose OpenSearch and Elasticsearch 8,
+		// but not the legacy Elasticsearch 7 engine identifier.
+		return searchMajor >= 8
+	case "magento":
+		if compareProductVersion(c.Version, "2.4.8") >= 0 {
+			return searchMajor >= 8
+		}
+		if compareProductVersion(c.Version, "2.4.6") < 0 {
+			return searchMajor <= 7
+		}
+	}
+
+	return true
+}
+
+func majorVersion(version string) (int, bool) {
+	if version == "" {
+		return 0, false
+	}
+
+	major := version
+	if idx := strings.Index(version, "."); idx >= 0 {
+		major = version[:idx]
+	}
+
+	n, err := strconv.Atoi(major)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func compareProductVersion(a, b string) int {
+	av, ok := parseProductVersion(a)
+	if !ok {
+		return strings.Compare(a, b)
+	}
+	bv, ok := parseProductVersion(b)
+	if !ok {
+		return strings.Compare(a, b)
+	}
+
+	switch {
+	case av.major != bv.major:
+		if av.major < bv.major {
+			return -1
+		}
+	case av.minor != bv.minor:
+		if av.minor < bv.minor {
+			return -1
+		}
+	case av.patch != bv.patch:
+		if av.patch < bv.patch {
+			return -1
+		}
+	case av.patchLevel != bv.patchLevel:
+		if av.patchLevel < bv.patchLevel {
+			return -1
+		}
+	default:
+		return 0
+	}
+
+	return 1
+}
+
+type productVersion struct {
+	major      int
+	minor      int
+	patch      int
+	patchLevel int
+}
+
+func parseProductVersion(version string) (productVersion, bool) {
+	base := version
+	patchLevel := 0
+
+	if idx := strings.Index(version, "-p"); idx >= 0 {
+		base = version[:idx]
+		n, err := strconv.Atoi(version[idx+2:])
+		if err != nil {
+			return productVersion{}, false
+		}
+		patchLevel = n
+	}
+
+	var parsed productVersion
+	if _, err := fmt.Sscanf(base, "%d.%d.%d", &parsed.major, &parsed.minor, &parsed.patch); err != nil {
+		return productVersion{}, false
+	}
+	parsed.patchLevel = patchLevel
+	return parsed, true
 }
 
 // BuildBaselineCombinations returns exactly one combination per product version:
