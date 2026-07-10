@@ -11,7 +11,7 @@ services:
 
   varnish:
     build:
-      context: ../docker/varnish
+      context: ../varnish
       dockerfile: Dockerfile
     image: "m2test/varnish:${VARNISH_VERSION:-7.7}"
     ports:
