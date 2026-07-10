@@ -10,6 +10,63 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Build cli binary
+        working-directory: app
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags="-s -w" \
+            -o ../dist/magento-compatibility-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            ./cmd/cli
+
+      - name: Build builder binary
+        working-directory: app
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags="-s -w" \
+            -o ../dist/magento-compatibility-builder-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            ./cmd/builder
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
