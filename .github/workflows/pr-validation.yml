@@ -9,6 +9,9 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+  push:
+    branches:
+      - master
 
 concurrency:
   group: pr-validation-${{ github.event.pull_request.number || github.ref }}
@@ -80,6 +83,7 @@ jobs:
 
   smoke-test:
     name: Baseline Smoke Test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
