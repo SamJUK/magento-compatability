@@ -58,8 +58,9 @@ RUN --mount=type=cache,target=/tmp/composer-download \
 
 # Bake global Composer config into the image so concurrent containers don't
 # race to write the same shared config.json on the mounted cache volume.
-RUN composer config --global audit.abandoned ignore && \
-    composer config --global audit.block-insecure false && \
+RUN if composer config --global audit.abandoned ignore >/dev/null 2>&1; then \
+        composer config --global audit.block-insecure false; \
+    fi && \
     composer config --global allow-plugins true
 
 # Working directory — Magento is installed here by install.sh
