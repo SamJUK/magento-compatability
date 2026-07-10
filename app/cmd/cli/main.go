@@ -9,7 +9,7 @@
 //	magento-compatibility 2.4.8
 //	magento-compatibility --product mageos 1.3.3
 //	magento-compatibility --format json 2.4.8 | jq '.results[0]'
-//	MCOMPAT_URL=https://m2compat.example.com magento-compatibility 2.4.8
+//	magento-compatibility --url https://staging.example.com 2.4.8
 package main
 
 import (
@@ -86,13 +86,13 @@ Flags:`)
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, `
 Environment:
-  MCOMPAT_URL   Base URL of the deployed compatibility site (overridden by --url)
+  MCOMPAT_URL   Base URL of the deployed compatibility site (overrides default, overridden by --url)
 
 Examples:
   magento-compatibility 2.4.8
   magento-compatibility --format json 2.4.8 | jq '.summary'
   magento-compatibility --product mageos 1.3.3
-  MCOMPAT_URL=https://m2compat.example.com magento-compatibility 2.4.8-p4`)
+  magento-compatibility --url https://staging.example.com 2.4.8`)
 	}
 
 	flagURL     := fs.String("url", "", "Base URL of the compatibility site (e.g. https://m2compat.example.com)")
@@ -110,13 +110,14 @@ Examples:
 	}
 	version := fs.Arg(0)
 
+	const defaultURL = "https://m2-compatability.sdj.pw"
+
 	baseURL := *flagURL
 	if baseURL == "" {
 		baseURL = os.Getenv("MCOMPAT_URL")
 	}
 	if baseURL == "" {
-		fmt.Fprintln(os.Stderr, "error: no site URL provided — set --url or MCOMPAT_URL environment variable")
-		os.Exit(1)
+		baseURL = defaultURL
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
