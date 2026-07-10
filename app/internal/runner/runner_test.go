@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -13,24 +14,20 @@ func TestSanitiseProjectName(t *testing.T) {
 		want string
 	}{
 		{
-			// short ID — no truncation
 			id:   "magento-248-php83-mariadb114-apache",
-			want: "m2test-magento-248-php83-mariadb114-apache",
+			want: "m2test-f4d35bf7e3b05aca",
 		},
 		{
-			// special chars stripped
 			id:   "foo!bar@baz#qux",
-			want: "m2test-foobarbazqux",
+			want: "m2test-5c7bca84a9cd5955",
 		},
 		{
-			// underscores and hyphens kept
 			id:   "foo_bar-baz",
-			want: "m2test-foo_bar-baz",
+			want: "m2test-e0542b6ce78fe203",
 		},
 		{
-			// uppercase kept
 			id:   "FooBar",
-			want: "m2test-FooBar",
+			want: "m2test-0d749abe13775734",
 		},
 	}
 
@@ -43,11 +40,19 @@ func TestSanitiseProjectName(t *testing.T) {
 }
 
 func TestSanitiseProjectName_Truncates(t *testing.T) {
-	// ID long enough to push past 63 chars after "m2test-" prefix.
 	id := strings.Repeat("a", 60)
 	got := sanitiseProjectName(id)
 	if len(got) > 63 {
 		t.Errorf("sanitiseProjectName: len=%d, want ≤63", len(got))
+	}
+}
+
+func TestSanitiseProjectName_Format(t *testing.T) {
+	got := sanitiseProjectName("magento-248-php83-mariadb114-apache")
+	if ok, err := regexp.MatchString(`^m2test-[0-9a-f]{16}$`, got); err != nil {
+		t.Fatalf("regexp failed: %v", err)
+	} else if !ok {
+		t.Fatalf("sanitiseProjectName(%q) = %q, want m2test-<16 hex chars>", "magento-248-php83-mariadb114-apache", got)
 	}
 }
 
