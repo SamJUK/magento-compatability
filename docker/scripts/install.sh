@@ -50,6 +50,16 @@ php -v
 : "${MAGENTO_ADMIN_EMAIL:=admin@example.com}"
 : "${INSTALL_SAMPLE_DATA:=0}"
 
+CREATE_PROJECT_DIR=""
+
+cleanup_create_project_dir() {
+  if [[ -n "${CREATE_PROJECT_DIR}" && -d "${CREATE_PROJECT_DIR}" ]]; then
+    rm -rf "${CREATE_PROJECT_DIR}"
+  fi
+}
+
+trap cleanup_create_project_dir EXIT
+
 # ─── Version-specific Composer constraint fixes ───────────────────────────────
 # Some releases ship with broken package version constraints that prevent clean
 # installs. These composer require aliases pin the correct versions before
@@ -104,10 +114,15 @@ _pkg_slug="${_pkg_slug// /-}"
 VENDOR_CACHE_KEY="${PHP_VERSION:-8.3}-${_pkg_slug}-${PRODUCT_VERSION}"
 VENDOR_CACHE_PATH="${VENDOR_CACHE_DIR}/${VENDOR_CACHE_KEY}"
 
-rm -rf "${MAGENTO_DIR:?}/"*
+# Clear both normal files and dotfiles from previous runs before create-project.
+find "${MAGENTO_DIR:?}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 
 # ─── Composer create-project ──────────────────────────────────────────────────
-cd "${MAGENTO_DIR}"
+# Create the project in a fresh temporary directory, then move it into the
+# shared web root. Some Composer/project package combinations populate the
+# target directory before the create-project flow completes, which makes "."
+# look non-empty and aborts the install on re-runs.
+CREATE_PROJECT_DIR="$(mktemp -d /tmp/magento-create-project.XXXXXX)"
 
 # Get composer.json + lock without downloading vendor so we can inject
 # version fixes before the first composer install.
@@ -117,8 +132,15 @@ composer create-project \
   --no-progress \
   --no-install \
   "${PRODUCT_PACKAGE}:${PRODUCT_VERSION}" \
-  . \
+  "${CREATE_PROJECT_DIR}" \
   2>&1
+
+find "${MAGENTO_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+find "${CREATE_PROJECT_DIR}" -mindepth 1 -maxdepth 1 -exec mv -- {} "${MAGENTO_DIR}/" \;
+rmdir "${CREATE_PROJECT_DIR}"
+CREATE_PROJECT_DIR=""
+
+cd "${MAGENTO_DIR}"
 
 apply_version_fixes
 
