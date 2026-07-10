@@ -738,6 +738,16 @@ products:
           queue: { type: rabbitmq, version: "4.2" }
           varnish: "7.7"
 
+      - version: "2.3.0"
+        baseline:
+          php: "8.4"
+          webserver: apache
+          db: { type: mariadb, version: "10.6" }
+          search: { type: opensearch, version: "2.19.5" }
+          cache: { type: valkey, version: "8" }
+          queue: { type: rabbitmq, version: "4.2" }
+          varnish: "7.7"
+
       - version: "2.2.2"
         baseline:
           php: "8.4"
