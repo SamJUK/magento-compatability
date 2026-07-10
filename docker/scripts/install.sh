@@ -11,6 +11,7 @@
 #   PHP_VERSION      — e.g. 8.3 (for Composer version selection)
 #   DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD
 #   SEARCH_TYPE      — opensearch | elasticsearch7
+#   SEARCH_HOST_FLAG_STYLE — opensearch | elasticsearch
 #   SEARCH_HOST / SEARCH_PORT
 #   CACHE_HOST / CACHE_PORT
 #   QUEUE_HOST / QUEUE_PORT / QUEUE_USER / QUEUE_PASSWORD
@@ -34,6 +35,7 @@ php -v
 : "${DB_USER:=magento}"
 : "${DB_PASSWORD:=magento}"
 : "${SEARCH_TYPE:=opensearch}"
+: "${SEARCH_HOST_FLAG_STYLE:=}"
 : "${SEARCH_HOST:=search}"
 : "${SEARCH_PORT:=9200}"
 : "${CACHE_HOST:=cache}"
@@ -144,13 +146,21 @@ apply_patch_files
 echo "[OK] Composer install complete"
 
 # ─── setup:install ────────────────────────────────────────────────────────────
-# Magento 2.4.4+ uses --opensearch-host/--opensearch-port when search engine is
-# opensearch; earlier versions and elasticsearch use --elasticsearch-host/port.
+# Some Magento releases expose OpenSearch via the opensearch search engine but
+# still require the legacy --elasticsearch-host/port options.
 
 echo ""
 echo "=== Running setup:install ==="
 
-if [[ "${SEARCH_TYPE}" == opensearch* ]]; then
+if [[ -z "${SEARCH_HOST_FLAG_STYLE}" ]]; then
+  if [[ "${SEARCH_TYPE}" == opensearch* ]]; then
+    SEARCH_HOST_FLAG_STYLE="opensearch"
+  else
+    SEARCH_HOST_FLAG_STYLE="elasticsearch"
+  fi
+fi
+
+if [[ "${SEARCH_HOST_FLAG_STYLE}" == "opensearch" ]]; then
   SEARCH_HOST_FLAG="--opensearch-host=${SEARCH_HOST}"
   SEARCH_PORT_FLAG="--opensearch-port=${SEARCH_PORT}"
 else
