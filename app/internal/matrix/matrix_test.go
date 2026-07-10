@@ -169,6 +169,15 @@ func TestBuildCombinations_SkipsUnsupportedSearchDeviations(t *testing.T) {
 			want: 1,
 		},
 		{
+			name: "magento 2.4.7 rejects elasticsearch8 deviations",
+			filter: matrix.Filter{
+				Product: "magento",
+				Version: "2.4.7-p10",
+				Search:  "elasticsearch:8.11.4",
+			},
+			want: 0,
+		},
+		{
 			name: "magento 2.4.8 rejects elasticsearch7 deviations",
 			filter: matrix.Filter{
 				Product: "magento",

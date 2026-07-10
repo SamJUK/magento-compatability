@@ -306,7 +306,7 @@ func supportsSearch(c Combination) bool {
 		if compareProductVersion(c.Version, "2.4.8") >= 0 {
 			return searchMajor >= 8
 		}
-		if compareProductVersion(c.Version, "2.4.6") < 0 {
+		if compareProductVersion(c.Version, "2.4.8") < 0 {
 			return searchMajor <= 7
 		}
 	}
