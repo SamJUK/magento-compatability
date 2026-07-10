@@ -21,8 +21,8 @@ for arg in "$@"; do
   esac
 done
 
-if [[ ! -d ".git" ]]; then
-  echo "Run this from the repo root." >&2
+if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  echo "Run this from inside a git repo." >&2
   exit 1
 fi
 
