@@ -19,6 +19,18 @@ import (
 
 const defaultMaxLogBytes int64 = 1 << 20 // 1 MiB per service
 
+const (
+	installRetryAttempts = 3
+	installRetryDelay    = 5 * time.Second
+)
+
+var transientComposerCurlErrors = []string{
+	"curl error 6",
+	"curl error 7",
+	"curl error 28",
+	"curl error 56",
+}
+
 // RunConfig holds configuration for a single combination run.
 type RunConfig struct {
 	ResultsDir    string
@@ -90,6 +102,65 @@ func buildInstallArgs(env []string, baseURL string) []string {
 	return args
 }
 
+func isTransientComposerNetworkFailure(log string) bool {
+	log = strings.ToLower(log)
+	for _, sig := range transientComposerCurlErrors {
+		if strings.Contains(log, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func runInstallWithRetries(
+	ctx context.Context,
+	execInstall func() (string, error),
+	sleep func(context.Context, time.Duration) error,
+) (string, error) {
+	var combined strings.Builder
+
+	for attempt := 1; attempt <= installRetryAttempts; attempt++ {
+		if attempt > 1 {
+			fmt.Fprintf(&combined, "\n=== Install retry attempt %d/%d ===\n", attempt, installRetryAttempts)
+		}
+
+		out, err := execInstall()
+		combined.WriteString(out)
+		if err == nil {
+			return combined.String(), nil
+		}
+		if !isTransientComposerNetworkFailure(out) || attempt == installRetryAttempts {
+			return combined.String(), err
+		}
+
+		delay := installRetryDelay * time.Duration(attempt)
+		fmt.Fprintf(
+			&combined,
+			"\n[WARN] Transient Composer network failure detected; retrying install in %s (attempt %d/%d)\n",
+			delay,
+			attempt+1,
+			installRetryAttempts,
+		)
+		if err := sleep(ctx, delay); err != nil {
+			return combined.String(), err
+		}
+	}
+
+	return combined.String(), nil
+}
+
 // Run executes the full test pipeline for one combination and writes a result
 // JSON file.  It returns (true, nil) when the result was written, (false, nil)
 // when skipped (already exists and Force=false).
@@ -145,9 +216,16 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	recordStep("stack_up", result.StatusPass, dur, upLog)
 
 	baseURL := resolveBaseURL(ctx, c, cp)
+	installArgs := buildInstallArgs(magentoEnv, baseURL)
 
 	t = time.Now()
-	installLog, installErr := cp.Exec(ctx, "php-fpm", buildInstallArgs(magentoEnv, baseURL)...)
+	installLog, installErr := runInstallWithRetries(
+		ctx,
+		func() (string, error) {
+			return cp.Exec(ctx, "php-fpm", installArgs...)
+		},
+		sleepWithContext,
+	)
 	dur = time.Since(t).Seconds()
 	if installErr != nil {
 		recordStep("install", result.StatusFail, dur, installLog)

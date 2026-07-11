@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samjuk/magento-compatability/internal/matrix"
 )
@@ -181,5 +184,128 @@ func TestBuildInstallArgs(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("buildInstallArgs: missing %q", wantURL)
+	}
+}
+
+func TestIsTransientComposerNetworkFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		log  string
+		want bool
+	}{
+		{name: "curl 6", log: "curl error 6 while downloading packages.json", want: true},
+		{name: "curl 7", log: "curl error 7 while downloading packages.json", want: true},
+		{name: "curl 28", log: "curl error 28 while downloading packages.json", want: true},
+		{name: "curl 56", log: "curl error 56 while downloading packages.json", want: true},
+		{name: "different failure", log: "PHP Fatal error: something else", want: false},
+	}
+
+	for _, tc := range cases {
+		if got := isTransientComposerNetworkFailure(tc.log); got != tc.want {
+			t.Errorf("%s: isTransientComposerNetworkFailure(%q) = %v, want %v", tc.name, tc.log, got, tc.want)
+		}
+	}
+}
+
+func TestRunInstallWithRetries_RetriesTransientFailureThenSucceeds(t *testing.T) {
+	t.Setenv("TZ", "UTC")
+
+	var attempts int
+	var sleeps []time.Duration
+
+	log, err := runInstallWithRetries(
+		context.Background(),
+		func() (string, error) {
+			attempts++
+			if attempts == 1 {
+				return "curl error 28 while downloading packages.json\n", errors.New("transient")
+			}
+			return "[OK] Installation complete\n", nil
+		},
+		func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runInstallWithRetries returned err = %v, want nil", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if len(sleeps) != 1 || sleeps[0] != 5*time.Second {
+		t.Fatalf("sleeps = %v, want [5s]", sleeps)
+	}
+	if !strings.Contains(log, "Transient Composer network failure detected") {
+		t.Fatalf("log missing retry warning: %q", log)
+	}
+	if !strings.Contains(log, "=== Install retry attempt 2/3 ===") {
+		t.Fatalf("log missing retry attempt header: %q", log)
+	}
+	if !strings.Contains(log, "[OK] Installation complete") {
+		t.Fatalf("log missing successful retry output: %q", log)
+	}
+}
+
+func TestRunInstallWithRetries_DoesNotRetryNonTransientFailure(t *testing.T) {
+	var attempts int
+	var slept bool
+	wantErr := errors.New("fatal")
+
+	log, err := runInstallWithRetries(
+		context.Background(),
+		func() (string, error) {
+			attempts++
+			return "PHP Fatal error: broken install\n", wantErr
+		},
+		func(context.Context, time.Duration) error {
+			slept = true
+			return nil
+		},
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runInstallWithRetries err = %v, want %v", err, wantErr)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+	if slept {
+		t.Fatal("sleep called for non-transient failure")
+	}
+	if strings.Contains(log, "Transient Composer network failure detected") {
+		t.Fatalf("log unexpectedly contains retry warning: %q", log)
+	}
+}
+
+func TestRunInstallWithRetries_StopsAfterMaxAttempts(t *testing.T) {
+	var attempts int
+	var sleeps []time.Duration
+	wantErr := errors.New("still failing")
+
+	log, err := runInstallWithRetries(
+		context.Background(),
+		func() (string, error) {
+			attempts++
+			return "curl error 56 while downloading packages.json\n", wantErr
+		},
+		func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			return nil
+		},
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runInstallWithRetries err = %v, want %v", err, wantErr)
+	}
+	if attempts != installRetryAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, installRetryAttempts)
+	}
+	if len(sleeps) != installRetryAttempts-1 {
+		t.Fatalf("sleep count = %d, want %d", len(sleeps), installRetryAttempts-1)
+	}
+	if sleeps[0] != 5*time.Second || sleeps[1] != 10*time.Second {
+		t.Fatalf("sleeps = %v, want [5s 10s]", sleeps)
+	}
+	if strings.Contains(log, "=== Install retry attempt 4/3 ===") {
+		t.Fatalf("log shows impossible extra retry: %q", log)
 	}
 }
