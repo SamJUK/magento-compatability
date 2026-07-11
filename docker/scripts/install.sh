@@ -20,6 +20,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/vendor-cache.sh"
 
 composer --version
 php -v
@@ -58,7 +59,12 @@ cleanup_create_project_dir() {
   fi
 }
 
-trap cleanup_create_project_dir EXIT
+cleanup() {
+  vendor_cache_release_lock
+  cleanup_create_project_dir
+}
+
+trap cleanup EXIT
 
 # ─── Version-specific Composer constraint fixes ───────────────────────────────
 # Some releases ship with broken package version constraints that prevent clean
@@ -149,10 +155,18 @@ if [[ -d "${VENDOR_CACHE_PATH}/vendor" ]]; then
   echo "=== Vendor cache hit — ${VENDOR_CACHE_KEY} ==="
 
   echo "[INFO] Restoring vendor from cache"
-  cp -a "${VENDOR_CACHE_PATH}/vendor" "${MAGENTO_DIR}/vendor"
+  if ! vendor_cache_restore "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then
+    restore_status=$?
+    if [[ "${restore_status}" -ne 1 ]]; then
+      echo "[ERROR] Failed to restore vendor cache (${restore_status})" >&2
+      exit "${restore_status}"
+    fi
+  fi
 
-  rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
-         "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
+  if [[ -d "${MAGENTO_DIR}/vendor" ]]; then
+    rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
+           "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
+  fi
 else
   echo ""
   echo "=== Installing ${PRODUCT_PACKAGE}:${PRODUCT_VERSION} (no vendor cache) ==="
@@ -242,10 +256,17 @@ bin/magento module:disable Magento_TwoFactorAuth --no-interaction 2>/dev/null ||
 if [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
-  mkdir -p "${VENDOR_CACHE_PATH}"
-  cp -a "${MAGENTO_DIR}/vendor" "${VENDOR_CACHE_PATH}/vendor.tmp"
-  mv "${VENDOR_CACHE_PATH}/vendor.tmp" "${VENDOR_CACHE_PATH}/vendor"
-  echo "[OK] Vendor cache saved"
+  if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then
+    echo "[OK] Vendor cache saved"
+  else
+    save_status=$?
+    if [[ "${save_status}" -eq 2 ]]; then
+      echo "[INFO] Vendor cache already populated by another run"
+    else
+      echo "[ERROR] Failed to save vendor cache (${save_status})" >&2
+      exit "${save_status}"
+    fi
+  fi
 fi
 
 # ─── Sample data ──────────────────────────────────────────────────────────────
