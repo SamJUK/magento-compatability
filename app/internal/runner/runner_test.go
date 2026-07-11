@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/samjuk/magento-compatability/internal/matrix"
+	"github.com/samjuk/magento-compatability/internal/result"
 )
 
 func TestSanitiseProjectName(t *testing.T) {
@@ -121,19 +122,19 @@ func TestSearchConfigFlag(t *testing.T) {
 		want string
 	}{
 		{
-			c: matrix.Combination{SearchType: "opensearch", SearchVersion: "2"},
+			c:    matrix.Combination{SearchType: "opensearch", SearchVersion: "2"},
 			want: "opensearch",
 		},
 		{
-			c: matrix.Combination{SearchType: "elasticsearch", SearchVersion: "8.11"},
+			c:    matrix.Combination{SearchType: "elasticsearch", SearchVersion: "8.11"},
 			want: "elasticsearch8",
 		},
 		{
-			c: matrix.Combination{SearchType: "elasticsearch", SearchVersion: "7.17"},
+			c:    matrix.Combination{SearchType: "elasticsearch", SearchVersion: "7.17"},
 			want: "elasticsearch7",
 		},
 		{
-			c: matrix.Combination{SearchType: "elasticsearch"},
+			c:    matrix.Combination{SearchType: "elasticsearch"},
 			want: "elasticsearch", // empty version: no suffix
 		},
 		{
@@ -370,5 +371,105 @@ func TestRunInstallWithRetries_StopsAfterMaxAttempts(t *testing.T) {
 	}
 	if strings.Contains(log, "=== Install retry attempt 4/3 ===") {
 		t.Fatalf("log shows impossible extra retry: %q", log)
+	}
+}
+
+func TestClassifyStepFailure(t *testing.T) {
+	cases := []struct {
+		name     string
+		stepName string
+		log      string
+		want     *result.Failure
+	}{
+		{
+			name:     "composer network",
+			stepName: "install",
+			log:      "curl error 28 while downloading packages.json",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "composer_network",
+				Summary:     "Composer download failed with a transient curl/network error.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "disk full",
+			stepName: "install",
+			log:      "write /tmp/cache: no space left on device",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "disk_space",
+				Summary:     "The run exhausted host or Docker disk space.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "cleanup race",
+			stepName: "stack_up",
+			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "docker_cleanup_race",
+				Summary:     "Docker Compose hit a cleanup/startup race with stale containers, networks, or volumes.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "service startup exit",
+			stepName: "stack_up",
+			log:      "dependency failed to start: container m2test-queue-1 exited (0)",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "service_startup",
+				Summary:     "A dependency container exited during stack startup before Magento install began.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "allow plugins",
+			stepName: "install",
+			log:      "PluginBlockedException: package contains a Composer plugin which is blocked by your allow-plugins config",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "composer_allow_plugins",
+				Summary:     "Composer plugin execution was blocked by harness configuration.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "audit policy",
+			stepName: "install",
+			log:      "found 1 security vulnerability advisory affecting 1 package; run composer audit for a full list of advisories",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "composer_audit_policy",
+				Summary:     "Composer audit policy blocked the install in the harness.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "unknown failure remains unclassified",
+			stepName: "smoke",
+			log:      "Current version of RDBMS is not supported",
+			want:     nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyStepFailure(tc.stepName, tc.log)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("classifyStepFailure(...) = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("classifyStepFailure(...) = nil, want classification")
+			}
+			if *got != *tc.want {
+				t.Fatalf("classifyStepFailure(...) = %#v, want %#v", *got, *tc.want)
+			}
+		})
 	}
 }

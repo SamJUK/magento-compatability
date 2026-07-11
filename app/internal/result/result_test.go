@@ -50,28 +50,33 @@ func TestWrite_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 
 	c := matrix.Combination{
-		Product:       "magento",
-		Package:       "magento/project-community-edition",
-		Mirror:        "https://example.com/",
-		Version:       "2.4.8",
-		PHP:           "8.3",
-		WebserverType: "apache",
+		Product:          "magento",
+		Package:          "magento/project-community-edition",
+		Mirror:           "https://example.com/",
+		Version:          "2.4.8",
+		PHP:              "8.3",
+		WebserverType:    "apache",
 		WebserverVersion: "2.4",
-		DBType:        "mariadb",
-		DBVersion:     "11.4",
-		SearchType:    "opensearch",
-		SearchVersion: "3",
-		CacheType:     "valkey",
-		CacheVersion:  "8",
-		QueueType:     "rabbitmq",
-		QueueVersion:  "4.2",
-		Varnish:       "7.7",
+		DBType:           "mariadb",
+		DBVersion:        "11.4",
+		SearchType:       "opensearch",
+		SearchVersion:    "3",
+		CacheType:        "valkey",
+		CacheVersion:     "8",
+		QueueType:        "rabbitmq",
+		QueueVersion:     "4.2",
+		Varnish:          "7.7",
 	}
 
 	steps := map[string]result.Step{
 		"stack_up": {Status: result.StatusPass, DurationS: 12.5, Log: "All services healthy"},
-		"install":  {Status: result.StatusPass, DurationS: 180.2, Log: "Installation complete"},
-		"smoke":    {Status: result.StatusPass, DurationS: 45.0, Log: "Smoke passed"},
+		"install": {Status: result.StatusFail, DurationS: 180.2, Log: "curl error 28 while downloading packages.json", Failure: &result.Failure{
+			Category:    "infrastructure",
+			Code:        "composer_network",
+			Summary:     "Composer download failed with a transient curl/network error.",
+			LikelyFlaky: true,
+		}},
+		"smoke":      {Status: result.StatusPass, DurationS: 45.0, Log: "Smoke passed"},
 		"playwright": {Status: result.StatusSkip, DurationS: 0, Log: "Playwright disabled"},
 	}
 
@@ -112,11 +117,17 @@ func TestWrite_RoundTrip(t *testing.T) {
 	if got.ID != r.ID {
 		t.Errorf("ID mismatch: got %q want %q", got.ID, r.ID)
 	}
-	if got.OverallStatus != result.StatusPass {
-		t.Errorf("expected pass, got %q", got.OverallStatus)
+	if got.OverallStatus != result.StatusFail {
+		t.Errorf("expected fail, got %q", got.OverallStatus)
 	}
 	if got.ContainerLogs["php-fpm"] != "PHP started OK" {
 		t.Errorf("container log not preserved")
+	}
+	if got.Steps["install"].Failure == nil {
+		t.Fatal("expected install failure metadata to round-trip")
+	}
+	if got.Steps["install"].Failure.Code != "composer_network" {
+		t.Fatalf("unexpected failure code: %q", got.Steps["install"].Failure.Code)
 	}
 }
 
