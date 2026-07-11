@@ -4,12 +4,20 @@ export type ServiceStatus = 'pass' | 'fail' | 'partial' | 'unknown';
 
 export type StepStatus = 'pass' | 'fail' | 'skip' | 'error';
 
+export interface FailureInfo {
+  category: 'harness' | 'infrastructure' | 'compatibility' | 'unknown' | string;
+  code: string;
+  summary: string;
+  likely_flaky?: boolean;
+}
+
 // ─── Raw result JSON schema (mirrors results/*.json files) ───────────────────
 
 export interface StepResult {
   status: StepStatus;
   duration_s: number;
   log: string;
+  failure?: FailureInfo;
 }
 
 export interface ServiceInfo {

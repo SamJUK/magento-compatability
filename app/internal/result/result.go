@@ -26,9 +26,20 @@ const (
 
 // Step holds the outcome of one orchestration step.
 type Step struct {
-	Status    string  `json:"status"`
-	DurationS float64 `json:"duration_s"`
-	Log       string  `json:"log"`
+	Status    string   `json:"status"`
+	DurationS float64  `json:"duration_s"`
+	Log       string   `json:"log"`
+	Failure   *Failure `json:"failure,omitempty"`
+}
+
+// Failure captures a known classified failure signature for a failed step.
+// Additional fields can be added over time without breaking older result
+// consumers because the field is optional and additive.
+type Failure struct {
+	Category    string `json:"category"`
+	Code        string `json:"code"`
+	Summary     string `json:"summary"`
+	LikelyFlaky bool   `json:"likely_flaky,omitempty"`
 }
 
 // DBService describes a typed service (db, search, cache, queue).

@@ -32,6 +32,64 @@ var transientComposerCurlErrors = []string{
 	"curl error 56",
 }
 
+func classifyStepFailure(stepName, log string) *result.Failure {
+	text := strings.ToLower(log)
+
+	switch {
+	case stepName == "install" && isTransientComposerNetworkFailure(text):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "composer_network",
+			Summary:     "Composer download failed with a transient curl/network error.",
+			LikelyFlaky: true,
+		}
+	case (stepName == "stack_up" || stepName == "install") && strings.Contains(text, "no space left on device"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "disk_space",
+			Summary:     "The run exhausted host or Docker disk space.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && (strings.Contains(text, "no such container") ||
+		strings.Contains(text, "network has active endpoints") ||
+		strings.Contains(text, "resource is still in use") ||
+		(strings.Contains(text, "container ") && strings.Contains(text, " is not running"))):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "docker_cleanup_race",
+			Summary:     "Docker Compose hit a cleanup/startup race with stale containers, networks, or volumes.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && strings.Contains(text, "failed to start") && strings.Contains(text, "exited (0)"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "service_startup",
+			Summary:     "A dependency container exited during stack startup before Magento install began.",
+			LikelyFlaky: true,
+		}
+	case stepName == "install" && (strings.Contains(text, "pluginblockedexception") ||
+		strings.Contains(text, "allow-plugins") ||
+		strings.Contains(text, "contains a composer plugin which is blocked")):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "composer_allow_plugins",
+			Summary:     "Composer plugin execution was blocked by harness configuration.",
+			LikelyFlaky: true,
+		}
+	case stepName == "install" && (strings.Contains(text, "block-insecure") ||
+		strings.Contains(text, "security vulnerability advis") ||
+		strings.Contains(text, "run composer audit")):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "composer_audit_policy",
+			Summary:     "Composer audit policy blocked the install in the harness.",
+			LikelyFlaky: true,
+		}
+	default:
+		return nil
+	}
+}
+
 // RunConfig holds configuration for a single combination run.
 type RunConfig struct {
 	ResultsDir    string
@@ -280,7 +338,11 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	overallStatus := result.StatusPass
 
 	recordStep := func(name, status string, dur float64, log string) {
-		steps[name] = result.Step{Status: status, DurationS: dur, Log: log}
+		step := result.Step{Status: status, DurationS: dur, Log: log}
+		if status == result.StatusFail || status == result.StatusError {
+			step.Failure = classifyStepFailure(name, log)
+		}
+		steps[name] = step
 		if status != result.StatusPass && status != result.StatusSkip {
 			overallStatus = result.StatusFail
 		}
