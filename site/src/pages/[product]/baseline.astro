@@ -1,8 +1,10 @@
 ---
 import Base from '../../layouts/Base.astro';
 import StatusBadge from '../../components/StatusBadge.astro';
+import FailureBadge from '../../components/FailureBadge.astro';
+import FailureOverview from '../../components/FailureOverview.astro';
 import { getProducts, getProductVersions } from '@lib/matrix.js';
-import { getResultsForVersion } from '@lib/results.js';
+import { getFailureOverview, getPrimaryFailure, getResultsForVersion } from '@lib/results.js';
 import type { TestResult, Baseline, ProductVersion } from '@lib/types.js';
 
 export async function getStaticPaths() {
@@ -51,6 +53,12 @@ const rows: BaselineRow[] = productVersions
     pv,
     result: findBaselineResult(pv.version, pv.baseline!),
   }));
+
+const baselineResults = rows
+  .map((row) => row.result)
+  .filter((result): result is TestResult => result != null);
+
+const failureOverview = getFailureOverview(baselineResults);
 
 // Sort newest version first (semantic descending)
 rows.sort((a, b) => {
@@ -150,6 +158,12 @@ const unknownCount = rows.filter((r) => r.result == null).length;
     </div>
   </div>
 
+  <FailureOverview
+    overview={failureOverview}
+    title="Baseline failure breakdown"
+    description={`Known failure signatures for ${product.name} baseline runs. These are the recommended stacks, so harness failures and genuine compatibility regressions are easiest to spot here.`}
+  />
+
   <!-- Table -->
   <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
     <table class="w-full text-xs">
@@ -165,6 +179,7 @@ const unknownCount = rows.filter((r) => r.result == null).length;
           <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Webserver</th>
           <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Varnish</th>
           <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Steps</th>
+          <th class="px-3 py-3 text-left font-semibold text-zinc-500 dark:text-zinc-400">Failure</th>
           <th class="px-3 py-3"></th>
         </tr>
       </thead>
@@ -175,6 +190,7 @@ const unknownCount = rows.filter((r) => r.result == null).length;
           const overallStatus = result?.overall_status ?? 'unknown';
           const badgeStatus = overallStatus === 'pass' ? 'pass' : overallStatus === 'fail' ? 'fail' : 'unknown';
           const logIdx = result ? logIndexMap.get(result.id) : undefined;
+          const primaryFailure = result ? getPrimaryFailure(result) : null;
 
           return (
             <tr class={`transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${overallStatus === 'fail' ? 'bg-rose-50/30 dark:bg-rose-950/20' : ''}`}>
@@ -219,6 +235,30 @@ const unknownCount = rows.filter((r) => r.result == null).length;
                       ) : null;
                     })}
                   </div>
+                ) : (
+                  <span class="text-zinc-300 dark:text-zinc-700 text-xs">—</span>
+                )}
+              </td>
+
+              <td class="px-3 py-3 align-top">
+                {primaryFailure?.failure ? (
+                  <div class="max-w-sm space-y-1.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <FailureBadge
+                        category={primaryFailure.failure.category}
+                        likelyFlaky={primaryFailure.failure.likely_flaky}
+                        size="sm"
+                      />
+                      <code class="text-[11px] text-zinc-500 dark:text-zinc-400">{primaryFailure.failure.code}</code>
+                    </div>
+                    <p class="text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                      {primaryFailure.failure.summary}
+                    </p>
+                  </div>
+                ) : primaryFailure ? (
+                  <span class="text-xs text-zinc-400 dark:text-zinc-500">
+                    Failed in <span class="font-mono">{primaryFailure.stepName}</span> with no classification yet.
+                  </span>
                 ) : (
                   <span class="text-zinc-300 dark:text-zinc-700 text-xs">—</span>
                 )}
@@ -303,6 +343,7 @@ const unknownCount = rows.filter((r) => r.result == null).length;
   const dialogBody = document.getElementById('log-dialog-body');
   const closeBtn = document.getElementById('log-dialog-close');
   const tabs = document.querySelectorAll('.log-tab');
+  const logIndexMap = new Map(logData.map((entry, index) => [entry.id, index]));
 
   let activeTab = 'steps';
   let activeIndex = 0;
@@ -379,13 +420,24 @@ const unknownCount = rows.filter((r) => r.result == null).length;
 
   tabs.forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
 
+  function openLogEntry(index) {
+    if (Number.isNaN(index) || index < 0 || index >= logData.length) return;
+    activeIndex = index;
+    activeTab = 'steps';
+    setTab('steps');
+    dialog.showModal();
+  }
+
   document.querySelectorAll('.log-view-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      activeIndex = parseInt(btn.dataset.logIndex, 10);
-      activeTab = 'steps';
-      setTab('steps');
-      dialog.showModal();
+      openLogEntry(parseInt(btn.dataset.logIndex, 10));
     });
+  });
+
+  window.addEventListener('open-run-logs', (event) => {
+    const resultId = event.detail?.resultId;
+    if (!resultId || !logIndexMap.has(resultId)) return;
+    openLogEntry(logIndexMap.get(resultId));
   });
 
   closeBtn.addEventListener('click', () => dialog.close());

@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro';
 import ServiceMatrix from '../../components/ServiceMatrix.astro';
 import CombinationTable from '../../components/CombinationTable.astro';
 import StatusBadge from '../../components/StatusBadge.astro';
+import FailureOverview from '../../components/FailureOverview.astro';
 import { getProducts, getVersionsForProduct } from '@lib/matrix.js';
 import { getVersionSummary, getResultsForVersion } from '@lib/results.js';
 import type { ServiceStatus } from '@lib/types.js';
@@ -81,6 +82,11 @@ const passRate = tested > 0 ? Math.round((summary.passCount / tested) * 100) : n
     </p>
     <ServiceMatrix rows={summary.serviceRows} product={productName} version={version} />
   </section>
+
+  <FailureOverview
+    overview={summary.failureOverview}
+    description={`Known failure signatures for ${productName} ${version}. Compatibility buckets point to real product/runtime mismatches; harness buckets usually indicate the test rig or environment failed first.`}
+  />
 
   <!-- full combinations table -->
   {results.length > 0 && (

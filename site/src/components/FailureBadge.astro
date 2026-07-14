@@ -1,0 +1,33 @@
+---
+interface Props {
+  category: string;
+  likelyFlaky?: boolean;
+  size?: 'sm' | 'md';
+}
+
+const { category, likelyFlaky = false, size = 'md' } = Astro.props;
+
+const categoryLabel = category === 'compatibility'
+  ? 'Compatibility'
+  : category === 'harness'
+    ? 'Harness'
+    : category === 'infrastructure'
+      ? 'Infrastructure'
+      : 'Unknown';
+
+const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs';
+const toneClass = category === 'compatibility'
+  ? 'bg-rose-100 text-rose-800 ring-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:ring-rose-700'
+  : category === 'harness'
+    ? 'bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-700'
+    : category === 'infrastructure'
+      ? 'bg-blue-100 text-blue-800 ring-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:ring-blue-700'
+      : 'bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700';
+---
+
+<span class={`inline-flex items-center gap-1 rounded-full ring-1 ring-inset font-medium ${sizeClass} ${toneClass}`}>
+  <span>{categoryLabel}</span>
+  {likelyFlaky && (
+    <span class="rounded-full bg-white/70 dark:bg-black/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Flaky</span>
+  )}
+</span>
