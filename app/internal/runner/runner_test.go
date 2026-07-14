@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,6 +13,15 @@ import (
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/result"
 )
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
 
 func TestSanitiseProjectName(t *testing.T) {
 	cases := []struct {
@@ -57,6 +68,23 @@ func TestSanitiseProjectName_Format(t *testing.T) {
 		t.Fatalf("regexp failed: %v", err)
 	} else if !ok {
 		t.Fatalf("sanitiseProjectName(%q) = %q, want m2test-<16 hex chars>", "magento-248-php83-mariadb114-apache", got)
+	}
+}
+
+func TestUniqueProjectName_Format(t *testing.T) {
+	got := uniqueProjectName("magento-248-php83-mariadb114-apache")
+	if ok, err := regexp.MatchString(`^m2test-[0-9a-f]{16}-[0-9a-f]{8}$`, got); err != nil {
+		t.Fatalf("regexp failed: %v", err)
+	} else if !ok {
+		t.Fatalf("uniqueProjectName(...) = %q, want m2test-<16 hex chars>-<8 hex chars>", got)
+	}
+}
+
+func TestUniqueProjectName_DiffersBetweenRuns(t *testing.T) {
+	first := uniqueProjectName("magento-248-php83-mariadb114-apache")
+	second := uniqueProjectName("magento-248-php83-mariadb114-apache")
+	if first == second {
+		t.Fatalf("uniqueProjectName(...) returned %q twice, want distinct values", first)
 	}
 }
 
@@ -116,6 +144,138 @@ func TestComposeFileMap_AllKnownTypes(t *testing.T) {
 	}
 }
 
+func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T) {
+	c := matrix.Combination{
+		Product:       "magento",
+		Version:       "2.4.6-p11",
+		SearchType:    "elasticsearch",
+		SearchVersion: "8.11.4",
+	}
+
+	got := classifyStepFailureForCombination(
+		c,
+		"install",
+		"Could not validate a connection to the OpenSearch.\nNo alive nodes found in your cluster",
+	)
+	if got == nil {
+		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
+	}
+
+	want := result.Failure{
+		Category:    "compatibility",
+		Code:        "elasticsearch8_unsupported",
+		Summary:     "Magento 2.4.6 could not complete setup:install against Elasticsearch 8.x.",
+		LikelyFlaky: false,
+	}
+	if *got != want {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestClassifyStepFailureForCombination_PHPVersionUnsupported(t *testing.T) {
+	got := classifyStepFailureForCombination(
+		matrix.Combination{},
+		"install",
+		"Your requirements could not be resolved to an installable set of packages.\n"+
+			"your php version (8.3.32) does not satisfy that requirement.",
+	)
+	if got == nil {
+		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
+	}
+
+	want := result.Failure{
+		Category:    "compatibility",
+		Code:        "php_version_unsupported",
+		Summary:     "The product's Composer constraints do not allow this PHP version.",
+		LikelyFlaky: false,
+	}
+	if *got != want {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestClassifyStepFailureForCombination_LegacySearchFlagsHarnessIssue(t *testing.T) {
+	got := classifyStepFailureForCombination(
+		matrix.Combination{},
+		"install",
+		"The \"--opensearch-host\" option does not exist.",
+	)
+	if got == nil {
+		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
+	}
+
+	want := result.Failure{
+		Category:    "harness",
+		Code:        "legacy_search_flags",
+		Summary:     "The harness invoked setup:install with OpenSearch host flags that this Magento version does not support.",
+		LikelyFlaky: false,
+	}
+	if *got != want {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestComposeUpEnsuresSharedVolumes(t *testing.T) {
+	var calls [][]string
+	cp := &Compose{
+		projectName: "m2test-abcd",
+		files:       []string{"/tmp/base.yml"},
+		env:         []string{"COMPOSE_PROJECT_NAME=m2test-abcd"},
+		execCommand: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+
+	if _, err := cp.Up(context.Background()); err != nil {
+		t.Fatalf("Up() error = %v", err)
+	}
+
+	if len(calls) != 3 {
+		t.Fatalf("Up() made %d commands, want 3", len(calls))
+	}
+
+	if got, want := calls[0], []string{"docker", "volume", "create", "m2test-composer-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first command = %v, want %v", got, want)
+	}
+	if got, want := calls[1], []string{"docker", "volume", "create", "m2test-vendor-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second command = %v, want %v", got, want)
+	}
+	if got, want := calls[2], []string{"docker", "compose", "-f", "/tmp/base.yml", "up", "-d", "--wait", "--wait-timeout", "120"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("compose command = %v, want %v", got, want)
+	}
+}
+
+func TestNewComposeSetsComposeParallelLimit(t *testing.T) {
+	cp, err := newCompose(
+		matrix.Combination{
+			Product:       "magento",
+			Version:       "2.4.8-p5",
+			PHP:           "8.4",
+			WebserverType: "apache",
+			DBType:        "mariadb",
+			DBVersion:     "11.4",
+			SearchType:    "opensearch",
+			SearchVersion: "2.19.5",
+			CacheType:     "valkey",
+			CacheVersion:  "8",
+			QueueType:     "rabbitmq",
+			QueueVersion:  "4.2",
+			Varnish:       "7.7",
+		},
+		"/tmp/compose",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newCompose() error = %v", err)
+	}
+
+	if !containsString(cp.env, "COMPOSE_PARALLEL_LIMIT=1") {
+		t.Fatalf("compose env missing COMPOSE_PARALLEL_LIMIT=1: %v", cp.env)
+	}
+}
+
 func TestSearchConfigFlag(t *testing.T) {
 	cases := []struct {
 		c    matrix.Combination
@@ -136,6 +296,15 @@ func TestSearchConfigFlag(t *testing.T) {
 		{
 			c:    matrix.Combination{SearchType: "elasticsearch"},
 			want: "elasticsearch", // empty version: no suffix
+		},
+		{
+			c: matrix.Combination{
+				Package:       "magento/project-community-edition",
+				Version:       "2.4.2-p2",
+				SearchType:    "opensearch",
+				SearchVersion: "2.19.5",
+			},
+			want: "elasticsearch7",
 		},
 		{
 			c: matrix.Combination{
@@ -165,7 +334,7 @@ func TestSearchHostFlagStyle(t *testing.T) {
 			name: "legacy magento opensearch uses elasticsearch flags",
 			c: matrix.Combination{
 				Package:    "magento/project-community-edition",
-				Version:    "2.4.5-p9",
+				Version:    "2.4.2-p2",
 				SearchType: "opensearch",
 			},
 			want: "elasticsearch",
@@ -271,6 +440,55 @@ func TestIsTransientComposerNetworkFailure(t *testing.T) {
 	}
 }
 
+func TestIsRetryableInstallFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		log  string
+		want bool
+	}{
+		{name: "composer network", log: "curl error 28 while downloading packages.json", want: true},
+		{name: "queue not ready", log: "Could not connect to the Amqp Server.", want: true},
+		{name: "search not ready", log: "Could not validate a connection to the OpenSearch.\nNo alive nodes found in   your cluster", want: true},
+		{name: "corrupted composer zip", log: "corrupted zip archive (0 bytes), try again.", want: true},
+		{name: "invalid composer cache config", log: "\"/composer-cache/config.json\" does not contain valid JSON", want: true},
+		{name: "hard product failure", log: "Class \"Magento\\Framework\\Exception\\NotFoundException\" not found", want: false},
+	}
+
+	for _, tc := range cases {
+		if got := isRetryableInstallFailure(tc.log); got != tc.want {
+			t.Errorf("%s: isRetryableInstallFailure(%q) = %v, want %v", tc.name, tc.log, got, tc.want)
+		}
+	}
+}
+
+func TestFormatStackUpFailureLog(t *testing.T) {
+	t.Run("keeps original output and appends diagnostics", func(t *testing.T) {
+		got := formatStackUpFailureLog(
+			"m2test-abcd",
+			"dependency failed to start",
+			"NAME STATUS",
+			"db | booting",
+		)
+		for _, want := range []string{
+			"dependency failed to start",
+			"=== docker compose ps -a ===\nNAME STATUS",
+			"=== docker compose logs ===\ndb | booting",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("formatStackUpFailureLog(...) missing %q in %q", want, got)
+			}
+		}
+	})
+
+	t.Run("synthesises fallback when compose is silent", func(t *testing.T) {
+		got := formatStackUpFailureLog("m2test-abcd", "", "", "")
+		want := "[ERROR] docker compose up failed for project m2test-abcd but produced no stdout/stderr output"
+		if got != want {
+			t.Fatalf("formatStackUpFailureLog(...) = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestRunInstallWithRetries_RetriesTransientFailureThenSucceeds(t *testing.T) {
 	t.Setenv("TZ", "UTC")
 
@@ -300,7 +518,7 @@ func TestRunInstallWithRetries_RetriesTransientFailureThenSucceeds(t *testing.T)
 	if len(sleeps) != 1 || sleeps[0] != 5*time.Second {
 		t.Fatalf("sleeps = %v, want [5s]", sleeps)
 	}
-	if !strings.Contains(log, "Transient Composer network failure detected") {
+	if !strings.Contains(log, "Retryable install failure detected") {
 		t.Fatalf("log missing retry warning: %q", log)
 	}
 	if !strings.Contains(log, "=== Install retry attempt 2/3 ===") {
@@ -336,7 +554,7 @@ func TestRunInstallWithRetries_DoesNotRetryNonTransientFailure(t *testing.T) {
 	if slept {
 		t.Fatal("sleep called for non-transient failure")
 	}
-	if strings.Contains(log, "Transient Composer network failure detected") {
+	if strings.Contains(log, "Retryable install failure detected") {
 		t.Fatalf("log unexpectedly contains retry warning: %q", log)
 	}
 }
@@ -426,6 +644,39 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "service startup missing dependency",
+			stepName: "stack_up",
+			log:      "php-fpm is missing dependency search",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "service_startup",
+				Summary:     "A dependency container exited during stack startup before Magento install began.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "docker name conflict",
+			stepName: "stack_up",
+			log:      "Error response from daemon: Conflict. The container name \"/m2test-magento-db-1\" is already in use by container",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "docker_name_conflict",
+				Summary:     "Docker Compose found stale project resources with colliding container or network names.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "docker endpoint conflict",
+			stepName: "stack_up",
+			log:      "Error response from daemon: failed to set up container networking: endpoint with name m2test-abcd-varnish-1 already exists in network m2test-abcd_magento",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "docker_name_conflict",
+				Summary:     "Docker Compose found stale project resources with colliding container or network names.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "allow plugins",
 			stepName: "install",
 			log:      "PluginBlockedException: package contains a Composer plugin which is blocked by your allow-plugins config",
@@ -444,6 +695,39 @@ func TestClassifyStepFailure(t *testing.T) {
 				Category:    "harness",
 				Code:        "composer_audit_policy",
 				Summary:     "Composer audit policy blocked the install in the harness.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "queue not ready",
+			stepName: "install",
+			log:      "Could not connect to the Amqp Server.",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "queue_not_ready",
+				Summary:     "The queue service was reachable but not yet ready when Magento validated AMQP connectivity.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "search not ready",
+			stepName: "install",
+			log:      "Could not validate a connection to the OpenSearch.\nNo alive nodes found in   your cluster",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "search_not_ready",
+				Summary:     "The search service was reachable but not yet ready when Magento validated the search backend.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "composer cache corruption",
+			stepName: "install",
+			log:      "\"/composer-cache/config.json\" does not contain valid JSON",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "composer_cache_corruption",
+				Summary:     "Shared Composer cache state became corrupted during the harness run.",
 				LikelyFlaky: true,
 			},
 		},

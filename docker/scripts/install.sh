@@ -22,6 +22,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/vendor-cache.sh"
 
+ensure_composer_cache_health() {
+  local cache_dir="${COMPOSER_CACHE_DIR:-/composer-cache}"
+  local config_path="${cache_dir}/config.json"
+
+  mkdir -p "${cache_dir}"
+
+  if [[ -f "${config_path}" ]] && ! jq empty "${config_path}" >/dev/null 2>&1; then
+    echo "[WARN] Removing invalid Composer cache config: ${config_path}" >&2
+    rm -f -- "${config_path}"
+  fi
+}
+
+ensure_composer_cache_health
+
 composer --version
 php -v
 
@@ -185,8 +199,27 @@ echo "[OK] Composer install complete"
 # Some Magento releases expose OpenSearch via the opensearch search engine but
 # still require the legacy --elasticsearch-host/port options.
 
+uses_legacy_magento_opensearch_install() {
+  [[ "${PRODUCT_PACKAGE}" == "magento/project-community-edition" ]] || return 1
+  [[ "${SEARCH_TYPE}" == opensearch* ]] || return 1
+
+  case "${PRODUCT_VERSION}" in
+    2.4.2*|2.4.3*|2.4.4*|2.4.5*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 echo ""
 echo "=== Running setup:install ==="
+
+if uses_legacy_magento_opensearch_install; then
+  echo "[INFO] Using legacy Elasticsearch 7 install flags for ${PRODUCT_VERSION} with ${SEARCH_HOST}:${SEARCH_PORT}"
+  SEARCH_TYPE="elasticsearch7"
+  SEARCH_HOST_FLAG_STYLE="elasticsearch"
+fi
 
 if [[ -z "${SEARCH_HOST_FLAG_STYLE}" ]]; then
   if [[ "${SEARCH_TYPE}" == opensearch* ]]; then

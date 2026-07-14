@@ -61,13 +61,13 @@ volumes:
   # to avoid re-downloading packages for every run.
   composer-cache:
     name: m2test-composer-cache
-    external: false
+    external: true
 
   # Shared vendor cache — keyed by {php}-{package}-{version}, allows skipping
   # composer install entirely on repeated runs for the same combination.
   vendor-cache:
     name: m2test-vendor-cache
-    external: false
+    external: true
 
 networks:
   magento:

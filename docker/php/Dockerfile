@@ -58,9 +58,13 @@ RUN --mount=type=cache,target=/tmp/composer-download \
 
 # Bake global Composer config into the image so concurrent containers don't
 # race to write the same shared config.json on the mounted cache volume.
-RUN composer config --global audit.abandoned ignore && \
-    composer config --global audit.block-insecure false && \
-    composer config --global allow-plugins true
+# Composer 2.2.x (used for PHP 7.4) does not support the newer audit config
+# keys, so only apply those on the newer Composer line.
+RUN composer config --global allow-plugins true && \
+    if [[ "$PHP_VERSION" != 7.4* ]]; then \
+        composer config --global audit.block-insecure false && \
+        composer config --global audit.abandoned ignore; \
+    fi
 
 # Working directory — Magento is installed here by install.sh
 WORKDIR /var/www/html
