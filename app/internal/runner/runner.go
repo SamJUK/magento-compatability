@@ -61,11 +61,49 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The queue service was reachable but not yet ready when Magento validated AMQP connectivity.",
 			LikelyFlaky: true,
 		}
+	case stepName == "install" && strings.Contains(text, "search engine cluster not healthy"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "search_cluster_unhealthy",
+			Summary:     "The search service never reached cluster health before the harness timeout elapsed.",
+			LikelyFlaky: true,
+		}
+	case stepName == "install" && strings.Contains(text, "/usr/bin/unzip") &&
+		strings.Contains(text, "exceeded the timeout of 300 seconds"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "package_extract_timeout",
+			Summary:     "Composer package extraction exceeded the archive unzip timeout.",
+			LikelyFlaky: true,
+		}
 	case stepName == "install" && isKnownElasticsearch8CompatibilityFailure(c, text):
 		return &result.Failure{
 			Category:    "compatibility",
 			Code:        "elasticsearch8_unsupported",
-			Summary:     "Magento 2.4.6 could not complete setup:install against Elasticsearch 8.x.",
+			Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && strings.Contains(text, "search engine 'elasticsearch") &&
+		strings.Contains(text, "is not an available search engine"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "search_engine_unsupported",
+			Summary:     "This product version does not support the requested search engine identifier.",
+			LikelyFlaky: false,
+		}
+	case (stepName == "install" || stepName == "smoke") && strings.Contains(text, "current version of rdbms is not supported"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "db_version_unsupported",
+			Summary:     "The product version does not support the selected database version.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && strings.Contains(text, "your requirements could not be resolved to an installable set of packages") &&
+		strings.Contains(text, "sebastian/comparator"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "composer_dependency_conflict",
+			Summary:     "Unpinned Composer dependencies resolved to a set that conflicts with the harness root requirements.",
 			LikelyFlaky: false,
 		}
 	case stepName == "install" && strings.Contains(text, "your php version") &&
@@ -74,6 +112,23 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Category:    "compatibility",
 			Code:        "php_version_unsupported",
 			Summary:     "The product's Composer constraints do not allow this PHP version.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && strings.Contains(text, "glob_brace"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "glob_brace_unsupported",
+			Summary:     "The application references an undefined GLOB_BRACE constant during setup bootstrap.",
+			LikelyFlaky: false,
+		}
+	case (stepName == "install" || stepName == "smoke") && (strings.Contains(text, "could not scan for classes inside") &&
+		strings.Contains(text, "does not appear to be a file nor a folder") ||
+		strings.Contains(text, "failed to open stream: no such file or directory") ||
+		strings.Contains(text, "file doesn't exist")):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "package_layout_invalid",
+			Summary:     "Installed package contents were incomplete or inconsistent for this release.",
 			LikelyFlaky: false,
 		}
 	case stepName == "install" && (strings.Contains(text, "the \"--opensearch-host\" option does not exist") ||
@@ -126,11 +181,20 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			LikelyFlaky: true,
 		}
 	case stepName == "stack_up" && (strings.Contains(text, "php-fpm is missing dependency") ||
-		(strings.Contains(text, "failed to start") && strings.Contains(text, "exited ("))):
+		(strings.Contains(text, "failed to start") && strings.Contains(text, "exited (")) ||
+		strings.Contains(text, "container ") && strings.Contains(text, " exited (") ||
+		strings.Contains(text, "sigtrap")):
 		return &result.Failure{
 			Category:    "harness",
 			Code:        "service_startup",
 			Summary:     "A dependency container exited during stack startup before Magento install began.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && text == "":
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "stack_up_no_output",
+			Summary:     "Docker Compose stack startup failed before the harness captured a specific error message.",
 			LikelyFlaky: true,
 		}
 	case stepName == "install" && (strings.Contains(text, "pluginblockedexception") ||
@@ -151,18 +215,40 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Composer audit policy blocked the install in the harness.",
 			LikelyFlaky: true,
 		}
+	case stepName == "smoke" && strings.Contains(text, "implicitly marking parameter") &&
+		strings.Contains(text, "nullable type must be used instead"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "php84_nullable_deprecation",
+			Summary:     "The product code hits PHP 8.4 implicit-nullable deprecations during compilation.",
+			LikelyFlaky: false,
+		}
+	case (stepName == "install" || stepName == "smoke") && strings.Contains(text, "syntax error, unexpected"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "php_syntax_incompatible",
+			Summary:     "The product code uses PHP syntax unsupported by the selected PHP runtime.",
+			LikelyFlaky: false,
+		}
+	case (stepName == "install" || stepName == "smoke") &&
+		strings.Contains(text, "class \"") && strings.Contains(text, "\" not found"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "compile_class_missing",
+			Summary:     "The installed code references classes that are missing for this release combination.",
+			LikelyFlaky: false,
+		}
 	default:
 		return nil
 	}
 }
 
 func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string) bool {
-	return c.Product == "magento" &&
-		strings.HasPrefix(c.Version, "2.4.6") &&
-		c.SearchType == "elasticsearch" &&
+	return c.SearchType == "elasticsearch" &&
 		strings.HasPrefix(c.SearchVersion, "8.") &&
-		strings.Contains(log, "could not validate a connection to the opensearch") &&
-		strings.Contains(log, "no alive nodes found in your cluster")
+		strings.Contains(log, "could not validate a connection to") &&
+		strings.Contains(log, "no alive nodes found in") &&
+		strings.Contains(log, "cluster")
 }
 
 // RunConfig holds configuration for a single combination run.
