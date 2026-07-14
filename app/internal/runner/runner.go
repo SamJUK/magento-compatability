@@ -254,11 +254,12 @@ func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string)
 
 // RunConfig holds configuration for a single combination run.
 type RunConfig struct {
-	ResultsDir    string
-	ComposeDir    string
-	PlaywrightDir string // path to tests/playwright; empty = skip playwright
-	Force         bool
-	MaxLogBytes   int64 // bytes to tail per container log; 0 = use default (1 MiB)
+	ResultsDir        string
+	ComposeDir        string
+	PlaywrightDir     string // path to tests/playwright; empty = skip playwright
+	InstallSampleData bool
+	Force             bool
+	MaxLogBytes       int64 // bytes to tail per container log; 0 = use default (1 MiB)
 }
 
 // searchConfigFlag returns the search type identifier for the Magento install
@@ -361,7 +362,11 @@ func parseMagentoVersion(version string) (magentoVersion, bool) {
 
 // buildMagentoEnv returns the KEY=VALUE environment pairs consumed by
 // install.sh and the smoke / playwright test scripts.
-func buildMagentoEnv(c matrix.Combination, searchFlag string) []string {
+func buildMagentoEnv(c matrix.Combination, searchFlag string, installSampleData bool) []string {
+	sampleDataValue := "0"
+	if installSampleData {
+		sampleDataValue = "1"
+	}
 	return []string{
 		"PRODUCT_PACKAGE=" + c.Package,
 		"PRODUCT_VERSION=" + c.Version,
@@ -383,7 +388,7 @@ func buildMagentoEnv(c matrix.Combination, searchFlag string) []string {
 		"QUEUE_USER=magento",
 		"QUEUE_PASSWORD=magento",
 		"MAGENTO_BASE_URL=http://localhost",
-		"INSTALL_SAMPLE_DATA=0",
+		"INSTALL_SAMPLE_DATA=" + sampleDataValue,
 	}
 }
 
@@ -524,7 +529,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
-	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c))
+	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c), cfg.InstallSampleData)
 
 	cp, err := newCompose(c, cfg.ComposeDir, magentoEnv)
 	if err != nil {
@@ -603,7 +608,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		recordStep("playwright", result.StatusSkip, 0, "Playwright skipped — no playwright dir configured")
 	} else {
 		t = time.Now()
-		pwLog, pwErr := runPlaywright(ctx, cfg.PlaywrightDir, baseURL, c.ID())
+		pwLog, pwErr := runPlaywright(ctx, cfg.PlaywrightDir, baseURL, c.ID(), cfg.InstallSampleData)
 		dur = time.Since(t).Seconds()
 		if pwErr != nil {
 			recordStep("playwright", result.StatusFail, dur, pwLog)
@@ -668,25 +673,31 @@ func captureContainerLogs(ctx context.Context, cp *Compose, maxLog int64) map[st
 // playwrightEnv returns the subprocess environment for Playwright: the current
 // process env with MAGENTO_BASE_URL replaced so tests hit the right stack.
 // PLAYWRIGHT_BROWSERS_PATH is intentionally left alone — let it use the cache.
-func playwrightEnv(baseURL, reportFile string) []string {
+func playwrightEnv(baseURL, reportFile string, sampleDataEnabled bool) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "MAGENTO_BASE_URL=") &&
 			!strings.HasPrefix(kv, "PLAYWRIGHT_REPORT_FILE=") &&
+			!strings.HasPrefix(kv, "PLAYWRIGHT_SAMPLE_DATA=") &&
 			!strings.HasPrefix(kv, "FORCE_COLOR=") &&
 			!strings.HasPrefix(kv, "NO_COLOR=") {
 			env = append(env, kv)
 		}
 	}
+	sampleDataValue := "0"
+	if sampleDataEnabled {
+		sampleDataValue = "1"
+	}
 	return append(env,
 		"MAGENTO_BASE_URL="+baseURL,
 		"PLAYWRIGHT_REPORT_FILE="+reportFile,
+		"PLAYWRIGHT_SAMPLE_DATA="+sampleDataValue,
 	)
 }
 
 // runPlaywright executes the Playwright test suite on the host machine.
 // playwrightDir is the path to the tests/playwright directory.
-func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID string) (string, error) {
+func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID string, sampleDataEnabled bool) (string, error) {
 	npx, err := exec.LookPath("npx")
 	if err != nil {
 		return "npx not found in PATH — cannot run Playwright", fmt.Errorf("npx not found: %w", err)
@@ -696,7 +707,7 @@ func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID st
 	reportFile := filepath.Join("playwright-report", combinationID+".json")
 	cmd := exec.CommandContext(ctx, npx, "playwright", "test", "--project", "chromium", "--output", outputDir)
 	cmd.Dir = playwrightDir
-	cmd.Env = playwrightEnv(baseURL, reportFile)
+	cmd.Env = playwrightEnv(baseURL, reportFile, sampleDataEnabled)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
