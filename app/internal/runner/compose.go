@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -39,15 +40,33 @@ type Compose struct {
 	projectName string
 	files       []string // -f flags, pre-expanded
 	env         []string // KEY=VALUE pairs passed to the subprocess environment
+	execCommand func(context.Context, string, ...string) *exec.Cmd
 }
 
-// sanitiseProjectName derives a unique Docker Compose project name from a
-// combination ID. A SHA-256 hash of the ID is used so that long combination
-// names never collide after truncation — which caused "endpoint already exists"
-// errors when running multiple combinations in parallel.
+var sharedVolumeNames = []string{
+	"m2test-composer-cache",
+	"m2test-vendor-cache",
+}
+
+// sanitiseProjectName derives a stable Docker Compose project-name prefix from
+// a combination ID. A SHA-256 hash of the ID is used so that long combination
+// names never collide after truncation.
 func sanitiseProjectName(id string) string {
 	sum := sha256.Sum256([]byte(id))
 	return fmt.Sprintf("m2test-%x", sum[:8]) // 23 chars, well within the 63-char Docker limit
+}
+
+// uniqueProjectName appends a short random suffix so reruns do not reuse a
+// project name whose Docker network still carries ghost endpoints from an
+// earlier failed stack startup.
+func uniqueProjectName(id string) string {
+	base := sanitiseProjectName(id)
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s-%d", id, os.Getpid())))
+		copy(suffix[:], sum[:4])
+	}
+	return fmt.Sprintf("%s-%x", base, suffix)
 }
 
 // parseHostPort extracts the port number from docker compose port output.
@@ -90,12 +109,16 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		files = append(files, filepath.Join(composeDir, "services", "varnish.yml"))
 	}
 
-	projectName := sanitiseProjectName(c.ID())
+	projectName := uniqueProjectName(c.ID())
 
 	// Start from the current process environment so that PATH, HOME,
 	// DOCKER_CONFIG, credential helpers, etc. are all inherited.
 	env := append(os.Environ(),
 		"COMPOSE_PROJECT_NAME="+projectName,
+		// Serialise service creation within a single stack. This avoids
+		// Docker/Compose endpoint races while still allowing multiple builder
+		// combinations to run concurrently.
+		"COMPOSE_PARALLEL_LIMIT=1",
 		"PHP_VERSION="+c.PHP,
 		"WEBSERVER_TYPE="+c.WebserverType,
 		"DB_VERSION="+c.DBVersion,
@@ -123,10 +146,17 @@ func (cp *Compose) args(sub ...string) []string {
 	return append(a, sub...)
 }
 
+func (cp *Compose) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if cp.execCommand != nil {
+		return cp.execCommand(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...)
+}
+
 // run executes docker with the given arguments, capturing combined output.
 // It inherits cp.env for the subprocess environment.
 func (cp *Compose) run(ctx context.Context, sub ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", cp.args(sub...)...)
+	cmd := cp.command(ctx, "docker", cp.args(sub...)...)
 	cmd.Env = cp.env
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -135,10 +165,27 @@ func (cp *Compose) run(ctx context.Context, sub ...string) (string, error) {
 	return buf.String(), err
 }
 
+func (cp *Compose) ensureSharedVolumes(ctx context.Context) error {
+	for _, name := range sharedVolumeNames {
+		cmd := cp.command(ctx, "docker", "volume", "create", name)
+		cmd.Env = cp.env
+		var buf bytes.Buffer
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ensure shared volume %s: %w: %s", name, err, strings.TrimSpace(buf.String()))
+		}
+	}
+	return nil
+}
+
 // Up starts the stack with --wait (blocks until all healthchecks pass).
 // Images are pre-built per PHP version; re-run 'docker compose build' manually
 // after changing Dockerfiles.
 func (cp *Compose) Up(ctx context.Context) (string, error) {
+	if err := cp.ensureSharedVolumes(ctx); err != nil {
+		return "", err
+	}
 	return cp.run(ctx, "up", "-d", "--wait", "--wait-timeout", "120")
 }
 
@@ -149,7 +196,7 @@ func (cp *Compose) Up(ctx context.Context) (string, error) {
 func (cp *Compose) removeEphemeralVolumes() {
 	bg := context.Background()
 	for _, suffix := range []string{"_magento", "_db-data", "_search-data"} {
-		cmd := exec.CommandContext(bg, "docker", "volume", "rm", "--force", cp.projectName+suffix)
+		cmd := cp.command(bg, "docker", "volume", "rm", "--force", cp.projectName+suffix)
 		cmd.Env = cp.env
 		_ = cmd.Run()
 	}

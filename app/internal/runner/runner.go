@@ -32,8 +32,19 @@ var transientComposerCurlErrors = []string{
 	"curl error 56",
 }
 
+var retryableInstallFailureSignatures = []string{
+	"could not connect to the amqp server",
+	"no alive nodes found in your cluster",
+	"corrupted zip archive (0 bytes), try again",
+	"does not contain valid json",
+}
+
 func classifyStepFailure(stepName, log string) *result.Failure {
-	text := strings.ToLower(log)
+	return classifyStepFailureForCombination(matrix.Combination{}, stepName, log)
+}
+
+func classifyStepFailureForCombination(c matrix.Combination, stepName, log string) *result.Failure {
+	text := compactWhitespace(strings.ToLower(log))
 
 	switch {
 	case stepName == "install" && isTransientComposerNetworkFailure(text):
@@ -43,11 +54,65 @@ func classifyStepFailure(stepName, log string) *result.Failure {
 			Summary:     "Composer download failed with a transient curl/network error.",
 			LikelyFlaky: true,
 		}
+	case stepName == "install" && strings.Contains(text, "could not connect to the amqp server"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "queue_not_ready",
+			Summary:     "The queue service was reachable but not yet ready when Magento validated AMQP connectivity.",
+			LikelyFlaky: true,
+		}
+	case stepName == "install" && isKnownElasticsearch8CompatibilityFailure(c, text):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "elasticsearch8_unsupported",
+			Summary:     "Magento 2.4.6 could not complete setup:install against Elasticsearch 8.x.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && strings.Contains(text, "your php version") &&
+		strings.Contains(text, "does not satisfy that requirement"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "php_version_unsupported",
+			Summary:     "The product's Composer constraints do not allow this PHP version.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && (strings.Contains(text, "the \"--opensearch-host\" option does not exist") ||
+		strings.Contains(text, "the \"--opensearch-port\" option does not exist")):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "legacy_search_flags",
+			Summary:     "The harness invoked setup:install with OpenSearch host flags that this Magento version does not support.",
+			LikelyFlaky: false,
+		}
+	case stepName == "install" && strings.Contains(text, "no alive nodes found in your cluster"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "search_not_ready",
+			Summary:     "The search service was reachable but not yet ready when Magento validated the search backend.",
+			LikelyFlaky: true,
+		}
+	case stepName == "install" && (strings.Contains(text, "corrupted zip archive (0 bytes)") ||
+		strings.Contains(text, "does not contain valid json")):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "composer_cache_corruption",
+			Summary:     "Shared Composer cache state became corrupted during the harness run.",
+			LikelyFlaky: true,
+		}
 	case (stepName == "stack_up" || stepName == "install") && strings.Contains(text, "no space left on device"):
 		return &result.Failure{
 			Category:    "infrastructure",
 			Code:        "disk_space",
 			Summary:     "The run exhausted host or Docker disk space.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
+		strings.Contains(text, "endpoint with name") && strings.Contains(text, "already exists in network") ||
+		strings.Contains(text, "network with name") && strings.Contains(text, "already exists")):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "docker_name_conflict",
+			Summary:     "Docker Compose found stale project resources with colliding container or network names.",
 			LikelyFlaky: true,
 		}
 	case stepName == "stack_up" && (strings.Contains(text, "no such container") ||
@@ -60,7 +125,8 @@ func classifyStepFailure(stepName, log string) *result.Failure {
 			Summary:     "Docker Compose hit a cleanup/startup race with stale containers, networks, or volumes.",
 			LikelyFlaky: true,
 		}
-	case stepName == "stack_up" && strings.Contains(text, "failed to start") && strings.Contains(text, "exited (0)"):
+	case stepName == "stack_up" && (strings.Contains(text, "php-fpm is missing dependency") ||
+		(strings.Contains(text, "failed to start") && strings.Contains(text, "exited ("))):
 		return &result.Failure{
 			Category:    "harness",
 			Code:        "service_startup",
@@ -88,6 +154,15 @@ func classifyStepFailure(stepName, log string) *result.Failure {
 	default:
 		return nil
 	}
+}
+
+func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string) bool {
+	return c.Product == "magento" &&
+		strings.HasPrefix(c.Version, "2.4.6") &&
+		c.SearchType == "elasticsearch" &&
+		strings.HasPrefix(c.SearchVersion, "8.") &&
+		strings.Contains(log, "could not validate a connection to the opensearch") &&
+		strings.Contains(log, "no alive nodes found in your cluster")
 }
 
 // RunConfig holds configuration for a single combination run.
@@ -129,7 +204,7 @@ func searchHostFlagStyle(c matrix.Combination) string {
 func usesLegacyMagentoOpenSearchInstall(c matrix.Combination) bool {
 	return c.Package == "magento/project-community-edition" &&
 		c.SearchType == "opensearch" &&
-		magentoVersionBetween(c.Version, "2.4.4-p4", "2.4.5-p11")
+		compareMagentoVersion(c.Version, "2.4.6") < 0
 }
 
 func magentoVersionBetween(version, minVersion, maxVersion string) bool {
@@ -252,13 +327,48 @@ func buildInstallArgs(env []string, baseURL string) []string {
 }
 
 func isTransientComposerNetworkFailure(log string) bool {
-	log = strings.ToLower(log)
+	log = compactWhitespace(strings.ToLower(log))
 	for _, sig := range transientComposerCurlErrors {
 		if strings.Contains(log, sig) {
 			return true
 		}
 	}
 	return false
+}
+
+func isRetryableInstallFailure(log string) bool {
+	text := compactWhitespace(strings.ToLower(log))
+	if isTransientComposerNetworkFailure(text) {
+		return true
+	}
+	for _, sig := range retryableInstallFailureSignatures {
+		if strings.Contains(text, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+func compactWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func formatStackUpFailureLog(projectName, upLog, psLog, composeLogs string) string {
+	var parts []string
+
+	if trimmed := strings.TrimSpace(upLog); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if trimmed := strings.TrimSpace(psLog); trimmed != "" {
+		parts = append(parts, "=== docker compose ps -a ===\n"+trimmed)
+	}
+	if trimmed := strings.TrimSpace(composeLogs); trimmed != "" {
+		parts = append(parts, "=== docker compose logs ===\n"+trimmed)
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("[ERROR] docker compose up failed for project %s but produced no stdout/stderr output", projectName)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {
@@ -290,14 +400,14 @@ func runInstallWithRetries(
 		if err == nil {
 			return combined.String(), nil
 		}
-		if !isTransientComposerNetworkFailure(out) || attempt == installRetryAttempts {
+		if !isRetryableInstallFailure(out) || attempt == installRetryAttempts {
 			return combined.String(), err
 		}
 
 		delay := installRetryDelay * time.Duration(attempt)
 		fmt.Fprintf(
 			&combined,
-			"\n[WARN] Transient Composer network failure detected; retrying install in %s (attempt %d/%d)\n",
+			"\n[WARN] Retryable install failure detected; retrying install in %s (attempt %d/%d)\n",
 			delay,
 			attempt+1,
 			installRetryAttempts,
@@ -340,13 +450,17 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	recordStep := func(name, status string, dur float64, log string) {
 		step := result.Step{Status: status, DurationS: dur, Log: log}
 		if status == result.StatusFail || status == result.StatusError {
-			step.Failure = classifyStepFailure(name, log)
+			step.Failure = classifyStepFailureForCombination(c, name, log)
 		}
 		steps[name] = step
 		if status != result.StatusPass && status != result.StatusSkip {
 			overallStatus = result.StatusFail
 		}
 	}
+
+	// Reruns reuse the same deterministic project name, so clear any leftover
+	// resources from earlier failed attempts before bringing the stack up again.
+	_ = cp.Down(context.Background())
 
 	defer func() {
 		_ = cp.Down(context.Background())
@@ -363,6 +477,9 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	upLog, upErr := cp.Up(ctx)
 	dur := time.Since(t).Seconds()
 	if upErr != nil {
+		psLog, _ := cp.run(ctx, "ps", "-a")
+		composeLogs, _ := cp.run(ctx, "logs", "--no-color", "--timestamps")
+		upLog = formatStackUpFailureLog(cp.ProjectName(), upLog, psLog, composeLogs)
 		recordStep("stack_up", result.StatusFail, dur, upLog)
 		return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
 	}
