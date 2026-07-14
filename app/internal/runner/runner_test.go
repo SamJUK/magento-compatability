@@ -164,7 +164,35 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	want := result.Failure{
 		Category:    "compatibility",
 		Code:        "elasticsearch8_unsupported",
-		Summary:     "Magento 2.4.6 could not complete setup:install against Elasticsearch 8.x.",
+		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
+		LikelyFlaky: false,
+	}
+	if *got != want {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUsesElasticsearchMessage(t *testing.T) {
+	c := matrix.Combination{
+		Product:       "magento",
+		Version:       "2.4.7-p10",
+		SearchType:    "elasticsearch",
+		SearchVersion: "8.19.15",
+	}
+
+	got := classifyStepFailureForCombination(
+		c,
+		"install",
+		"Could not validate a connection to Elasticsearch.\nNo alive nodes found in your cluster",
+	)
+	if got == nil {
+		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
+	}
+
+	want := result.Failure{
+		Category:    "compatibility",
+		Code:        "elasticsearch8_unsupported",
+		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
@@ -732,9 +760,141 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "search cluster unhealthy",
+			stepName: "install",
+			log:      "[ERROR] Search engine cluster not healthy at http://search:9200/_cluster/health after 180s",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "search_cluster_unhealthy",
+				Summary:     "The search service never reached cluster health before the harness timeout elapsed.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "package extract timeout",
+			stepName: "install",
+			log:      "In Process.php line 1205: The process \"'/usr/bin/unzip' ...\" exceeded the timeout of 300 seconds.",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "package_extract_timeout",
+				Summary:     "Composer package extraction exceeded the archive unzip timeout.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "search engine unsupported",
+			stepName: "install",
+			log:      "Search engine 'elasticsearch8' is not an available search engine.",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "search_engine_unsupported",
+				Summary:     "This product version does not support the requested search engine identifier.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "db version unsupported",
+			stepName: "smoke",
+			log:      "Current version of RDBMS is not supported. Used Version: 10.11.16-MariaDB",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "db_version_unsupported",
+				Summary:     "The product version does not support the selected database version.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "composer dependency conflict",
+			stepName: "install",
+			log:      "Your requirements could not be resolved to an installable set of packages. phpunit/phpunit requires sebastian/comparator ^4.0.10 but it conflicts with your root composer.json require (<=4.0.6).",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "composer_dependency_conflict",
+				Summary:     "Unpinned Composer dependencies resolved to a set that conflicts with the harness root requirements.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "glob brace unsupported",
+			stepName: "install",
+			log:      "Undefined constant \"Magento\\\\Framework\\\\Setup\\\\Mvc\\\\GLOB_BRACE\"",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "glob_brace_unsupported",
+				Summary:     "The application references an undefined GLOB_BRACE constant during setup bootstrap.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "package layout invalid",
+			stepName: "install",
+			log:      "Could not scan for classes inside \"/var/www/html/vendor/dg/bypass-finals/src/\" which does not appear to be a file nor a folder",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "package_layout_invalid",
+				Summary:     "Installed package contents were incomplete or inconsistent for this release.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "smoke php84 nullable deprecation",
+			stepName: "smoke",
+			log:      "Implicitly marking parameter $scopeConfig as null able is deprecated, the explicit nullable type must be used instead",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "php84_nullable_deprecation",
+				Summary:     "The product code hits PHP 8.4 implicit-nullable deprecations during compilation.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "smoke php syntax incompatible",
+			stepName: "smoke",
+			log:      "syntax error, unexpected '|', expecting ';' or '{'",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "php_syntax_incompatible",
+				Summary:     "The product code uses PHP syntax unsupported by the selected PHP runtime.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "install php syntax incompatible",
+			stepName: "install",
+			log:      "syntax error, unexpected identifier \"TABLE_NAME\", expecting \"=\"",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "php_syntax_incompatible",
+				Summary:     "The product code uses PHP syntax unsupported by the selected PHP runtime.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "compile class missing",
+			stepName: "smoke",
+			log:      "Class \"Magento\\\\Framework\\\\Exception\\\\NotFoundException\" not found",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "compile_class_missing",
+				Summary:     "The installed code references classes that are missing for this release combination.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "stack up no output",
+			stepName: "stack_up",
+			log:      "",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "stack_up_no_output",
+				Summary:     "Docker Compose stack startup failed before the harness captured a specific error message.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "unknown failure remains unclassified",
 			stepName: "smoke",
-			log:      "Current version of RDBMS is not supported",
+			log:      "totally unknown failure signature",
 			want:     nil,
 		},
 	}
