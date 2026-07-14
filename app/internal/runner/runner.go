@@ -6,6 +6,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -667,14 +668,20 @@ func captureContainerLogs(ctx context.Context, cp *Compose, maxLog int64) map[st
 // playwrightEnv returns the subprocess environment for Playwright: the current
 // process env with MAGENTO_BASE_URL replaced so tests hit the right stack.
 // PLAYWRIGHT_BROWSERS_PATH is intentionally left alone — let it use the cache.
-func playwrightEnv(baseURL string) []string {
+func playwrightEnv(baseURL, reportFile string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "MAGENTO_BASE_URL=") {
+		if !strings.HasPrefix(kv, "MAGENTO_BASE_URL=") &&
+			!strings.HasPrefix(kv, "PLAYWRIGHT_REPORT_FILE=") &&
+			!strings.HasPrefix(kv, "FORCE_COLOR=") &&
+			!strings.HasPrefix(kv, "NO_COLOR=") {
 			env = append(env, kv)
 		}
 	}
-	return append(env, "MAGENTO_BASE_URL="+baseURL)
+	return append(env,
+		"MAGENTO_BASE_URL="+baseURL,
+		"PLAYWRIGHT_REPORT_FILE="+reportFile,
+	)
 }
 
 // runPlaywright executes the Playwright test suite on the host machine.
@@ -686,12 +693,126 @@ func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID st
 	}
 
 	outputDir := filepath.Join("test-results", combinationID)
+	reportFile := filepath.Join("playwright-report", combinationID+".json")
 	cmd := exec.CommandContext(ctx, npx, "playwright", "test", "--project", "chromium", "--output", outputDir)
 	cmd.Dir = playwrightDir
-	cmd.Env = playwrightEnv(baseURL)
+	cmd.Env = playwrightEnv(baseURL, reportFile)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
-	return buf.String(), cmd.Run()
+	err = cmd.Run()
+	return summarisePlaywrightRun(buf.String(), filepath.Join(playwrightDir, reportFile), baseURL), err
+}
+
+type playwrightReport struct {
+	Stats struct {
+		Expected   int `json:"expected"`
+		Skipped    int `json:"skipped"`
+		Unexpected int `json:"unexpected"`
+		Flaky      int `json:"flaky"`
+	} `json:"stats"`
+	Suites []playwrightSuite `json:"suites"`
+}
+
+type playwrightSuite struct {
+	Title  string            `json:"title"`
+	Specs  []playwrightSpec  `json:"specs"`
+	Suites []playwrightSuite `json:"suites"`
+}
+
+type playwrightSpec struct {
+	Title  string           `json:"title"`
+	Status string           `json:"status"`
+	Tests  []playwrightTest `json:"tests"`
+}
+
+type playwrightTest struct {
+	Results []playwrightResult `json:"results"`
+}
+
+type playwrightResult struct {
+	Status string `json:"status"`
+}
+
+func summarisePlaywrightRun(stdout, reportPath, baseURL string) string {
+	stdout = strings.TrimSpace(stdout)
+
+	reportSummary, err := readPlaywrightReportSummary(reportPath, baseURL)
+	switch {
+	case err != nil && stdout != "":
+		return stdout + "\n\n[WARN] Unable to read Playwright report: " + err.Error()
+	case err != nil:
+		return "[WARN] Unable to read Playwright report: " + err.Error()
+	case stdout == "":
+		return reportSummary
+	default:
+		return stdout + "\n\n" + reportSummary
+	}
+}
+
+func readPlaywrightReportSummary(reportPath, baseURL string) (string, error) {
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return "", err
+	}
+
+	var report playwrightReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return "", err
+	}
+
+	failed := collectFailedPlaywrightSpecs(report.Suites)
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "Playwright base URL: %s\n", baseURL)
+	fmt.Fprintf(&buf, "Playwright summary: expected=%d unexpected=%d flaky=%d skipped=%d\n",
+		report.Stats.Expected,
+		report.Stats.Unexpected,
+		report.Stats.Flaky,
+		report.Stats.Skipped,
+	)
+
+	if len(failed) == 0 {
+		buf.WriteString("Playwright failures: none")
+		return buf.String(), nil
+	}
+
+	buf.WriteString("Playwright failures:\n")
+	for _, title := range failed {
+		buf.WriteString(" - ")
+		buf.WriteString(title)
+		buf.WriteByte('\n')
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+func collectFailedPlaywrightSpecs(suites []playwrightSuite) []string {
+	var failed []string
+	var walk func([]playwrightSuite)
+	walk = func(suites []playwrightSuite) {
+		for _, suite := range suites {
+			for _, spec := range suite.Specs {
+				if playwrightSpecFailed(spec) {
+					failed = append(failed, spec.Title)
+				}
+			}
+			if len(suite.Suites) > 0 {
+				walk(suite.Suites)
+			}
+		}
+	}
+	walk(suites)
+	return failed
+}
+
+func playwrightSpecFailed(spec playwrightSpec) bool {
+	for _, test := range spec.Tests {
+		for _, result := range test.Results {
+			if result.Status == "failed" || result.Status == "timedOut" || result.Status == "interrupted" {
+				return true
+			}
+		}
+	}
+	return false
 }

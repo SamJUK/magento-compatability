@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.MAGENTO_BASE_URL ?? 'http://localhost';
+const reportFile = process.env.PLAYWRIGHT_REPORT_FILE ?? 'playwright-report/results.json';
 
 export default defineConfig({
   testDir: './tests',
@@ -12,7 +13,7 @@ export default defineConfig({
   workers: 1,          // single worker — only one Magento instance per run
   reporter: [
     ['line'],
-    ['json', { outputFile: 'playwright-report/results.json' }],
+    ['json', { outputFile: reportFile }],
   ],
   use: {
     baseURL,
