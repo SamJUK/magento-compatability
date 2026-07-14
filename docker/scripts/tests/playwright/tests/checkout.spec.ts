@@ -47,7 +47,7 @@ test.describe('Checkout', () => {
 
     // ── Step 1: Shipping ────────────────────────────────────────────────────
     // Wait for the shipping form
-    const emailField = page.locator('#customer-email');
+    const emailField = page.locator('#customer-email:visible').first();
     await expect(emailField).toBeVisible({ timeout: 20_000 });
     await emailField.fill('test@example.com');
 
