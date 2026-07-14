@@ -88,6 +88,7 @@ make build
 | `-dry-run` | `false` | Print matching combinations without running |
 | `-list-json` | `false` | Print combinations as JSON and exit |
 | `-playwright` | `true` | Run Playwright E2E tests after smoke |
+| `-sample-data` | `false` | Install Magento sample data before smoke / Playwright validation |
 | `-no-tui` | `false` | Disable TUI; plain log output suitable for CI |
 | `-max-log-bytes` | `1048576` | Max bytes captured per container log (`0` = unlimited) |
 | `-matrix` | _(auto)_ | Path to matrix.yml |
@@ -191,6 +192,27 @@ npx playwright install --with-deps chromium
 MAGENTO_BASE_URL=http://localhost:8080 npx playwright test
 ```
 
+To include the opt-in admin coverage against a known-good local install:
+
+```bash
+cd docker/scripts/tests/playwright
+MAGENTO_BASE_URL=http://localhost:8080 PLAYWRIGHT_ADMIN=1 npx playwright test tests/admin.spec.ts
+```
+
+To validate checkout flows that require Magento sample data through the builder
+without overwriting the canonical results directory:
+
+```bash
+./app/bin/magento-compatibility-builder test \
+  -baseline \
+  -product magento \
+  -version 2.4.8 \
+  -sample-data \
+  -results-dir /tmp/playwright-results \
+  -force \
+  -no-tui
+```
+
 ---
 
 ## Results Site
@@ -213,7 +235,7 @@ Pages:
 
 - **No Magento auth keys required** — packages served from Hypernode mirror; MageOS uses `https://mirror.mage-os.org/`
 - **Vendor cache** — Docker volume `m2test-vendor-cache` persists downloaded packages keyed by `{php}-{package}-{version}`; patches are applied on every install after `composer install`
-- **2FA** — disabled automatically during install so Playwright can log in
+- **Admin-only modules** — 2FA and admin analytics prompts are disabled automatically during install so Playwright can log in and reach the dashboard deterministically
 - **Sample data** — not installed by default; set `INSTALL_SAMPLE_DATA=1` to enable
 - **Varnish** — when enabled, webserver listens on 8080 internally; Varnish fronts on port 80
 - **CTRL+C** — cancels cleanly; partial results are not written to disk

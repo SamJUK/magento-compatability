@@ -284,9 +284,36 @@ echo "=== Post-install configuration ==="
 
 bin/magento deploy:mode:set developer --no-interaction
 
-bin/magento module:disable Magento_TwoFactorAuth --no-interaction 2>/dev/null || \
-  bin/magento module:disable MSP_TwoFactorAuth --no-interaction 2>/dev/null || \
-  echo "[WARN] 2FA module not found — skipping disable" >&2
+disable_optional_admin_modules() {
+  local modules=()
+
+  for module in \
+    Magento_AdminAdobeImsTwoFactorAuth \
+    Magento_AdminAnalytics \
+    Magento_PageBuilderAdminAnalytics \
+    Magento_TwoFactorAuth \
+    MSP_TwoFactorAuth
+  do
+    local status_output
+    status_output="$(bin/magento module:status "${module}" 2>&1 || true)"
+    if [[ "${status_output}" != *"does not exist"* ]]; then
+      modules+=("${module}")
+    fi
+  done
+
+  if [[ "${#modules[@]}" -eq 0 ]]; then
+    echo "[WARN] Optional admin modules not found — skipping disable" >&2
+    return 0
+  fi
+
+  # module:disable clears generated classes and can fail on partially populated
+  # trees, so clear them up front before disabling the known admin-only modules
+  # that interfere with deterministic local E2E flows.
+  rm -rf generated/code/* generated/metadata/* 2>/dev/null || true
+  bin/magento module:disable "${modules[@]}" --no-interaction
+}
+
+disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
 if [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
