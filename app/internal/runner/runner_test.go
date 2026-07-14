@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -422,6 +424,123 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 		if !envSet[want] {
 			t.Errorf("buildMagentoEnv: missing %q", want)
 		}
+	}
+}
+
+func TestPlaywrightEnv_ReplacesBaseURLAndReportFile(t *testing.T) {
+	t.Setenv("MAGENTO_BASE_URL", "http://stale.example")
+	t.Setenv("PLAYWRIGHT_REPORT_FILE", "old-report.json")
+	t.Setenv("FORCE_COLOR", "1")
+	t.Setenv("NO_COLOR", "1")
+
+	env := playwrightEnv("http://localhost:4321", "playwright-report/fresh.json")
+	envSet := make(map[string]bool, len(env))
+	for _, kv := range env {
+		envSet[kv] = true
+	}
+
+	if !envSet["MAGENTO_BASE_URL=http://localhost:4321"] {
+		t.Fatalf("playwrightEnv: missing updated base URL")
+	}
+	if !envSet["PLAYWRIGHT_REPORT_FILE=playwright-report/fresh.json"] {
+		t.Fatalf("playwrightEnv: missing updated report file")
+	}
+	if envSet["MAGENTO_BASE_URL=http://stale.example"] {
+		t.Fatalf("playwrightEnv: stale base URL leaked into subprocess environment")
+	}
+	if envSet["PLAYWRIGHT_REPORT_FILE=old-report.json"] {
+		t.Fatalf("playwrightEnv: stale report path leaked into subprocess environment")
+	}
+	if envSet["FORCE_COLOR=1"] {
+		t.Fatalf("playwrightEnv: FORCE_COLOR should not leak into subprocess environment")
+	}
+	if envSet["NO_COLOR=1"] {
+		t.Fatalf("playwrightEnv: NO_COLOR should not leak into subprocess environment")
+	}
+}
+
+func TestReadPlaywrightReportSummary(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "results.json")
+	report := `{
+  "stats": {
+    "expected": 3,
+    "unexpected": 1,
+    "flaky": 0,
+    "skipped": 1
+  },
+  "suites": [
+    {
+      "title": "storefront.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "Storefront",
+          "specs": [
+            {
+              "title": "homepage renders a real Magento storefront shell",
+              "tests": [
+                {
+                  "results": [
+                    { "status": "passed" }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "guest checkout places an order",
+              "tests": [
+                {
+                  "results": [
+                    { "status": "failed" }
+                  ]
+                }
+              ]
+            }
+          ],
+          "suites": []
+        }
+      ]
+    }
+  ]
+}`
+	if err := os.WriteFile(reportPath, []byte(report), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := readPlaywrightReportSummary(reportPath, "http://localhost:8080")
+	if err != nil {
+		t.Fatalf("readPlaywrightReportSummary: %v", err)
+	}
+
+	if !strings.Contains(got, "Playwright base URL: http://localhost:8080") {
+		t.Fatalf("summary missing base URL:\n%s", got)
+	}
+	if !strings.Contains(got, "expected=3 unexpected=1 flaky=0 skipped=1") {
+		t.Fatalf("summary missing stats:\n%s", got)
+	}
+	if !strings.Contains(got, "guest checkout places an order") {
+		t.Fatalf("summary missing failed spec title:\n%s", got)
+	}
+}
+
+func TestSummarisePlaywrightRun_FallsBackToReportWhenStdoutEmpty(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "results.json")
+	report := `{
+  "stats": {
+    "expected": 1,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0
+  },
+  "suites": []
+}`
+	if err := os.WriteFile(reportPath, []byte(report), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got := summarisePlaywrightRun("", reportPath, "http://localhost:8080")
+	if !strings.Contains(got, "Playwright summary: expected=1 unexpected=0 flaky=0 skipped=0") {
+		t.Fatalf("summary missing fallback report output:\n%s", got)
 	}
 }
 
