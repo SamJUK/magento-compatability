@@ -120,6 +120,7 @@ Flags:`)
 		flagResultsDir         = fs.String("results-dir", "", "Path to results directory (default: <repo-root>/results)")
 		flagComposeDir         = fs.String("compose-dir", "", "Path to compose directory (default: <repo-root>/docker/compose)")
 		flagPlaywright         = fs.Bool("playwright", true, "Run Playwright E2E tests after smoke tests")
+		flagSampleData         = fs.Bool("sample-data", false, "Install Magento sample data before smoke/Playwright validation")
 		flagBaselines          = fs.Bool("baseline", false, "Run only the baseline combination(s) and print a structured pass/fail summary")
 		flagNoTUI              = fs.Bool("no-tui", false, "Disable TUI — plain log output suitable for CI (also set by $CI env var)")
 		flagRetrySetupFailures = fs.Bool("retry-setup-failures", false, "Re-run only combinations whose stack_up step previously failed (implies -force)")
@@ -229,8 +230,9 @@ Flags:`)
 			}
 			return ""
 		}(),
-		Force:       *flagForce || *flagRetrySetupFailures,
-		MaxLogBytes: *flagMaxLogBytes,
+		InstallSampleData: *flagSampleData,
+		Force:             *flagForce || *flagRetrySetupFailures,
+		MaxLogBytes:       *flagMaxLogBytes,
 	}
 
 	// Auto-disable TUI in CI environments.

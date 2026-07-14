@@ -2,30 +2,29 @@ import { test, expect, Page } from '@playwright/test';
 
 /**
  * Checkout flow tests — add a product to cart and complete a guest checkout.
- * Requires sample data to be installed (orchestrate.sh sets INSTALL_SAMPLE_DATA=1).
+ * These assertions are opt-in because they require Magento sample data.
  */
+
+const sampleDataEnabled = process.env.PLAYWRIGHT_SAMPLE_DATA === '1';
 
 async function addProductToCart(page: Page): Promise<void> {
   // Use the Joust Duffle Bag (SKU 24-MB01) — a known simple product in Luma
   // sample data with no configurable options.
-  await page.goto('/joust-duffle-bag.html');
+  const response = await page.goto('/joust-duffle-bag.html', { waitUntil: 'domcontentloaded' });
+  expect(response?.ok(), 'sample-data product page should load successfully').toBeTruthy();
 
   // Wait for the server-rendered product form — no JS required.
   await page.waitForSelector('#product_addtocart_form', { timeout: 30_000 });
 
-  // In Magento 2 developer mode, the catalogAddToCart JS widget initialises
-  // slowly on cold Docker instances (RequireJS config generated on first hit).
-  // The button starts as `disabled` in HTML and is enabled by the widget.
-  // To avoid flaky 30-120 s waits, we submit the form directly via JS, which
-  // bypasses the disabled-button guard and triggers the server-side add-to-cart
-  // action (same PHP endpoint as the AJAX widget, but as a normal POST redirect).
-  await Promise.all([
-    page.waitForNavigation({ timeout: 30_000 }),
-    page.evaluate(() => {
-      const form = document.getElementById('product_addtocart_form') as HTMLFormElement;
-      form.submit();
-    }),
-  ]);
+  // Drive the real storefront interaction. On cold Magento instances the
+  // button can stay disabled until RequireJS finishes bootstrapping, so allow
+  // a generous timeout before failing.
+  const addToCartButton = page.locator('#product-addtocart-button, button.tocart').first();
+  await expect(addToCartButton).toBeEnabled({ timeout: 120_000 });
+  await addToCartButton.click();
+
+  const successMessage = page.locator('[data-ui-id="message-success"], .message-success').first();
+  await expect(successMessage).toContainText(/added/i, { timeout: 30_000 });
 
   // After Magento redirects back (usually to the product page), confirm the
   // cart now contains the item by navigating to the cart page.
@@ -35,23 +34,20 @@ async function addProductToCart(page: Page): Promise<void> {
 }
 
 test.describe('Checkout', () => {
-  test('add product to cart and proceed to checkout', async ({ page }) => {
-    await addProductToCart(page);
+  test.skip(!sampleDataEnabled, 'requires Magento sample data');
 
-    // Navigate directly to checkout
-    await page.goto('/checkout/');
-    await expect(page).toHaveURL(/\/checkout/);
-  });
+  test('guest can place an order with sample data installed', async ({ page }) => {
+    test.slow();
 
-  test('complete guest checkout with shipping and payment', async ({ page }) => {
     await addProductToCart(page);
 
     // Go to checkout
-    await page.goto('/checkout/');
+    await page.goto('/checkout/', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/\/checkout/);
 
     // ── Step 1: Shipping ────────────────────────────────────────────────────
     // Wait for the shipping form
-    const emailField = page.locator('#customer-email');
+    const emailField = page.locator('#customer-email:visible').first();
     await expect(emailField).toBeVisible({ timeout: 20_000 });
     await emailField.fill('test@example.com');
 
@@ -92,6 +88,7 @@ test.describe('Checkout', () => {
     // ── Step 2: Payment ─────────────────────────────────────────────────────
     const placeOrderButton = page.locator('button.action.primary.checkout');
     await expect(placeOrderButton).toBeVisible({ timeout: 20_000 });
+    await expect(placeOrderButton).toBeEnabled({ timeout: 20_000 });
     await placeOrderButton.click();
 
     // ── Order success page ───────────────────────────────────────────────────
@@ -99,9 +96,8 @@ test.describe('Checkout', () => {
       timeout: 30_000,
     });
 
-    const successHeading = page.locator(
-      '.page-title, h1, .checkout-success',
-    );
-    await expect(successHeading).toContainText(/(thank you|order)/i);
+    const successHeading = page.locator('h1.page-title, .page-title').first();
+    await expect(successHeading).toContainText(/thank you/i);
+    await expect(page.locator('.checkout-success')).toContainText(/order/i);
   });
 });
