@@ -202,12 +202,14 @@ func (cp *Compose) removeEphemeralVolumes() {
 	}
 }
 
-// Down tears down the stack. Per-run volumes (magento, db-data, search-data)
-// are removed to prevent disk accumulation. The shared composer-cache and
-// vendor-cache volumes are intentionally preserved so subsequent runs can
-// reuse them.
+// Down tears down the stack and removes both project volumes and any anonymous
+// volumes attached to the service containers. This is required because some
+// upstream images (for example Redis and RabbitMQ) declare data volumes in the
+// image metadata, and Docker will otherwise keep allocating anonymous volumes
+// across reruns. The shared composer-cache and vendor-cache volumes are
+// external, so Compose preserves them even with --volumes.
 func (cp *Compose) Down(ctx context.Context) error {
-	_, err := cp.run(ctx, "down", "--remove-orphans")
+	_, err := cp.run(ctx, "down", "--volumes", "--remove-orphans")
 	cp.removeEphemeralVolumes()
 	return err
 }
