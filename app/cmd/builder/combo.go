@@ -27,6 +27,24 @@ type baselineEntry struct {
 	failLog  string // last 20 lines of the first failed step log
 }
 
+func combinationFailureMessage(b *baselineEntry) string {
+	if b == nil {
+		return "result missing after run"
+	}
+	switch b.overall {
+	case result.StatusPass:
+		return ""
+	case "missing":
+		return "result missing after run"
+	case "error":
+		return "result unreadable after run"
+	}
+	if b.failStep != "" {
+		return fmt.Sprintf("%s failed", b.failStep)
+	}
+	return fmt.Sprintf("overall status %s", b.overall)
+}
+
 // readBaselineEntry reads a result JSON for one combination and returns a
 // baselineEntry. Safe to call when the file may not exist.
 func readBaselineEntry(c matrix.Combination, resultsDir string) *baselineEntry {
