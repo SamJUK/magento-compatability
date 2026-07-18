@@ -304,6 +304,14 @@ func TestNewComposeSetsComposeParallelLimit(t *testing.T) {
 	if !containsString(cp.env, "COMPOSE_PARALLEL_LIMIT=1") {
 		t.Fatalf("compose env missing COMPOSE_PARALLEL_LIMIT=1: %v", cp.env)
 	}
+
+	if !containsString(cp.env, "WEBSERVER_CONFIG_SOURCE=/tmp/apache/magento.conf") {
+		t.Fatalf("compose env missing apache config source: %v", cp.env)
+	}
+
+	if !containsString(cp.env, "WEBSERVER_CONFIG_TARGET=/usr/local/apache2/conf/extra/magento.conf") {
+		t.Fatalf("compose env missing apache config target: %v", cp.env)
+	}
 }
 
 func TestComposeDownRemovesProjectAndAnonymousVolumes(t *testing.T) {

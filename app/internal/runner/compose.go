@@ -48,6 +48,11 @@ var sharedVolumeNames = []string{
 	"m2test-vendor-cache",
 }
 
+type webserverConfigMount struct {
+	source string
+	target string
+}
+
 // sanitiseProjectName derives a stable Docker Compose project-name prefix from
 // a combination ID. A SHA-256 hash of the ID is used so that long combination
 // names never collide after truncation.
@@ -77,6 +82,25 @@ func parseHostPort(raw string) string {
 		return parts[1]
 	}
 	return strings.TrimSpace(raw)
+}
+
+func webserverConfigFor(kind, composeDir string) (webserverConfigMount, error) {
+	dockerDir := filepath.Dir(composeDir)
+
+	switch kind {
+	case "apache":
+		return webserverConfigMount{
+			source: filepath.Join(dockerDir, "apache", "magento.conf"),
+			target: "/usr/local/apache2/conf/extra/magento.conf",
+		}, nil
+	case "nginx":
+		return webserverConfigMount{
+			source: filepath.Join(dockerDir, "nginx", "magento.conf"),
+			target: "/etc/nginx/conf.d/magento.conf",
+		}, nil
+	default:
+		return webserverConfigMount{}, fmt.Errorf("compose: unknown webserver type %q", kind)
+	}
 }
 
 // newCompose builds a Compose from a Combination, pre-resolving all compose
@@ -109,6 +133,11 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		files = append(files, filepath.Join(composeDir, "services", "varnish.yml"))
 	}
 
+	webserverConfig, err := webserverConfigFor(c.WebserverType, composeDir)
+	if err != nil {
+		return nil, err
+	}
+
 	projectName := uniqueProjectName(c.ID())
 
 	// Start from the current process environment so that PATH, HOME,
@@ -127,6 +156,8 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		"QUEUE_VERSION="+c.QueueVersion,
 		"VARNISH_VERSION="+c.Varnish,
 		"WEBSERVER_PORT=0",
+		"WEBSERVER_CONFIG_SOURCE="+webserverConfig.source,
+		"WEBSERVER_CONFIG_TARGET="+webserverConfig.target,
 	)
 	env = append(env, extraEnv...)
 
@@ -180,8 +211,6 @@ func (cp *Compose) ensureSharedVolumes(ctx context.Context) error {
 }
 
 // Up starts the stack with --wait (blocks until all healthchecks pass).
-// Images are pre-built per PHP version; re-run 'docker compose build' manually
-// after changing Dockerfiles.
 func (cp *Compose) Up(ctx context.Context) (string, error) {
 	if err := cp.ensureSharedVolumes(ctx); err != nil {
 		return "", err
