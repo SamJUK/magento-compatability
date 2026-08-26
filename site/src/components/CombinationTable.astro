@@ -1,6 +1,7 @@
 ---
 // CombinationTable.astro — collapsible full list of tested combinations
 import StatusBadge from './StatusBadge.astro';
+import { getPrimaryFailure } from '@lib/results.js';
 import type { TestResult } from '@lib/types.js';
 
 interface Props {
@@ -17,23 +18,40 @@ const sortedResults = [...results].sort((a, b) =>
 type LogData = {
   id: string;
   label: string;
+  failure: {
+    stepName: string;
+    category?: string;
+    code?: string;
+    summary?: string;
+    likelyFlaky?: boolean;
+  } | null;
   steps: Array<{ name: string; status: string; duration_s: number; log: string }>;
   containerLogs: Array<{ name: string; log: string }>;
 };
 
-const logData: LogData[] = sortedResults.map((r) => ({
-  id: r.id,
-  label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
-  steps: (['stack_up', 'install', 'smoke', 'playwright'] as const)
-    .filter((s) => r.steps?.[s] != null)
-    .map((s) => ({
-      name: s,
-      status: r.steps![s].status,
-      duration_s: r.steps![s].duration_s,
-      log: r.steps![s].log,
-    })),
-  containerLogs: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
-}));
+const logData: LogData[] = sortedResults.map((r) => {
+  const primaryFailure = getPrimaryFailure(r);
+  return {
+    id: r.id,
+    label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
+    failure: primaryFailure ? {
+      stepName: primaryFailure.stepName,
+      category: primaryFailure.failure?.category,
+      code: primaryFailure.failure?.code,
+      summary: primaryFailure.failure?.summary,
+      likelyFlaky: primaryFailure.failure?.likely_flaky,
+    } : null,
+    steps: (['stack_up', 'install', 'smoke', 'playwright'] as const)
+      .filter((s) => r.steps?.[s] != null)
+      .map((s) => ({
+        name: s,
+        status: r.steps![s].status,
+        duration_s: r.steps![s].duration_s,
+        log: r.steps![s].log,
+      })),
+    containerLogs: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
+  };
+});
 ---
 
 <details class="group rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
@@ -66,27 +84,27 @@ const logData: LogData[] = sortedResults.map((r) => ({
           const status = r.overall_status === 'pass' ? 'pass' : 'fail';
           return (
             <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-              <td class="px-3 py-2">
+              <td class="px-3 py-2 align-top">
                 <StatusBadge status={status} size="sm" />
               </td>
-              <td class="px-3 py-2 font-mono text-zinc-700 dark:text-zinc-300">{r.services.php}</td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td class="px-3 py-2 align-top font-mono text-zinc-700 dark:text-zinc-300">{r.services.php}</td>
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
                 {r.services.db.type} {r.services.db.version}
               </td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
                 {r.services.search.type} {r.services.search.version}
               </td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
                 {r.services.cache.type} {r.services.cache.version}
               </td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
                 {r.services.queue.type} {r.services.queue.version}
               </td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">{r.services.webserver}</td>
-              <td class="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">{r.services.webserver}</td>
+              <td class="px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
                 {r.services.varnish === 'none' ? '–' : r.services.varnish}
               </td>
-              <td class="px-3 py-2">
+              <td class="px-3 py-2 align-top min-w-[18rem]">
                 <div class="flex gap-1">
                   {(['stack_up', 'install', 'smoke', 'playwright'] as const).map((step) => {
                     const s = r.steps?.[step];
@@ -100,7 +118,7 @@ const logData: LogData[] = sortedResults.map((r) => ({
                   })}
                 </div>
               </td>
-              <td class="px-3 py-2 text-right">
+              <td class="px-3 py-2 align-top text-right">
                 <button
                   type="button"
                   class="log-view-btn inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors"
@@ -174,6 +192,7 @@ const logData: LogData[] = sortedResults.map((r) => ({
   const dialogBody = document.getElementById('log-dialog-body');
   const closeBtn = document.getElementById('log-dialog-close');
   const tabs = document.querySelectorAll('.log-tab');
+  const logIndexMap = new Map(logData.map((entry, index) => [entry.id, index]));
 
   let activeTab = 'steps';
   let activeIndex = 0;
@@ -193,10 +212,11 @@ const logData: LogData[] = sortedResults.map((r) => ({
   }
 
   function renderStepsTab(entry) {
+    const failureCallout = renderFailureCallout(entry);
     if (!entry.steps.length) {
-      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No step data recorded.</p>';
+      return `${failureCallout}<p class="text-xs text-zinc-400 dark:text-zinc-500">No step data recorded.</p>`;
     }
-    return entry.steps.map((step) => {
+    return failureCallout + entry.steps.map((step) => {
       const color = STATUS_COLORS[step.status] ?? 'text-zinc-400';
       const dur = step.duration_s > 0 ? `${step.duration_s.toFixed(2)}s` : '';
       return `
@@ -212,16 +232,54 @@ const logData: LogData[] = sortedResults.map((r) => ({
   }
 
   function renderContainersTab(entry) {
+    const failureCallout = renderFailureCallout(entry);
     if (!entry.containerLogs.length) {
-      return '<p class="text-xs text-zinc-400 dark:text-zinc-500">No container logs recorded — results from older runs may not include them.</p>';
+      return `${failureCallout}<p class="text-xs text-zinc-400 dark:text-zinc-500">No container logs recorded — results from older runs may not include them.</p>`;
     }
-    return entry.containerLogs.map((c) => `
+    return failureCallout + entry.containerLogs.map((c) => `
       <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-2 bg-zinc-50 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
           <span class="font-mono font-semibold text-xs text-zinc-700 dark:text-zinc-200">${escapeHtml(c.name)}</span>
         </div>
         <pre class="px-4 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto bg-white dark:bg-zinc-950 max-h-72 overflow-y-auto leading-relaxed">${escapeHtml(c.log || '(no output)')}</pre>
       </div>`).join('');
+  }
+
+  function renderFailureCallout(entry) {
+    if (!entry.failure) return '';
+
+    const category = entry.failure.category || 'unclassified';
+    const categoryTone = category === 'compatibility'
+      ? 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-700'
+      : category === 'harness'
+        ? 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700'
+        : category === 'infrastructure'
+          ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-700'
+          : 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700';
+    const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+    const flaky = entry.failure.likelyFlaky
+      ? '<span class="rounded-full bg-white/70 dark:bg-black/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Flaky</span>'
+      : '';
+    const code = entry.failure.code
+      ? `<code class="text-[11px] text-zinc-500 dark:text-zinc-400">${escapeHtml(entry.failure.code)}</code>`
+      : '';
+    const summary = entry.failure.summary
+      ? `<p class="mt-2 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">${escapeHtml(entry.failure.summary)}</p>`
+      : '<p class="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">This run failed without a structured classification summary.</p>';
+
+    return `
+      <div class="rounded-lg border px-4 py-3 ${categoryTone}">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="inline-flex items-center gap-1 rounded-full border border-current/20 px-2 py-0.5 text-[11px] font-medium">
+            <span>${escapeHtml(categoryLabel)}</span>
+            ${flaky}
+          </span>
+          <span class="text-xs text-current/80">First failed step: <span class="font-mono">${escapeHtml(entry.failure.stepName)}</span></span>
+          ${code}
+        </div>
+        ${summary}
+      </div>
+    `;
   }
 
   function renderBody() {
@@ -252,13 +310,24 @@ const logData: LogData[] = sortedResults.map((r) => ({
 
   tabs.forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
 
+  function openLogEntry(index) {
+    if (Number.isNaN(index) || index < 0 || index >= logData.length) return;
+    activeIndex = index;
+    activeTab = 'steps';
+    setTab('steps');
+    dialog.showModal();
+  }
+
   document.querySelectorAll('.log-view-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      activeIndex = parseInt(btn.dataset.logIndex, 10);
-      activeTab = 'steps';
-      setTab('steps');
-      dialog.showModal();
+      openLogEntry(parseInt(btn.dataset.logIndex, 10));
     });
+  });
+
+  window.addEventListener('open-run-logs', (event) => {
+    const resultId = event.detail?.resultId;
+    if (!resultId || !logIndexMap.has(resultId)) return;
+    openLogEntry(logIndexMap.get(resultId));
   });
 
   closeBtn.addEventListener('click', () => dialog.close());

@@ -11,6 +11,34 @@ export interface FailureInfo {
   likely_flaky?: boolean;
 }
 
+export interface FailureCategorySummary {
+  category: string;
+  count: number;
+}
+
+export interface FailureBucketSummary {
+  category: string;
+  code: string;
+  summary: string;
+  count: number;
+  likelyFlakyCount: number;
+  stepNames: string[];
+  resultIds: string[];
+  variants: Array<{
+    id: string;
+    label: string;
+  }>;
+}
+
+export interface FailureOverview {
+  totalFailedRuns: number;
+  classifiedRuns: number;
+  unclassifiedRuns: number;
+  likelyFlakyRuns: number;
+  categoryCounts: FailureCategorySummary[];
+  buckets: FailureBucketSummary[];
+}
+
 // ─── Raw result JSON schema (mirrors results/*.json files) ───────────────────
 
 export interface StepResult {
@@ -153,6 +181,7 @@ export interface VersionSummary {
   totalCombinations: number;
   serviceRows: ServiceRowGroup[];
   lastTested: string | null;
+  failureOverview: FailureOverview;
 }
 
 export interface SoftwareVersionSummary {

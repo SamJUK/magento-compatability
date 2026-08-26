@@ -3,6 +3,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   TestResult,
+  StepResult,
+  FailureInfo,
   UntestedResult,
   AnyResult,
   AggregatedServiceStatus,
@@ -11,6 +13,7 @@ import type {
   ServiceVersionEntry,
   VersionSummary,
   SoftwareVersionSummary,
+  FailureOverview,
 } from './types.js';
 import {
   getMatrix,
@@ -33,6 +36,56 @@ const RESULTS_BASE = resolve(__dirname, '../../../results');
 // ─── Load all results from disk ──────────────────────────────────────────────
 
 let _allResults: TestResult[] | null = null;
+const STEP_ORDER = ['stack_up', 'install', 'smoke', 'playwright'] as const;
+
+function formatServiceDelta(key: string, type: string, version: string): string {
+  switch (key) {
+    case 'php':
+      return `PHP ${version}`;
+    case 'webserver':
+      return type;
+    case 'db':
+    case 'search':
+    case 'cache':
+    case 'queue':
+      return `${type} ${version}`;
+    case 'varnish':
+      return version === 'none' ? 'No Varnish' : `Varnish ${version}`;
+    default:
+      return [type, version].filter(Boolean).join(' ');
+  }
+}
+
+function buildVariantLabel(result: TestResult): string {
+  const baseline = getProductVersions(result.product).find((pv) => pv.version === result.version)?.baseline;
+  if (!baseline) {
+    return result.version;
+  }
+
+  if (result.services.php !== baseline.php) {
+    return formatServiceDelta('php', 'php', result.services.php);
+  }
+  if (result.services.webserver !== baseline.webserver) {
+    return formatServiceDelta('webserver', result.services.webserver, '');
+  }
+  if (result.services.db.type !== baseline.db.type || result.services.db.version !== baseline.db.version) {
+    return formatServiceDelta('db', result.services.db.type, result.services.db.version);
+  }
+  if (result.services.search.type !== baseline.search.type || result.services.search.version !== baseline.search.version) {
+    return formatServiceDelta('search', result.services.search.type, result.services.search.version);
+  }
+  if (result.services.cache.type !== baseline.cache.type || result.services.cache.version !== baseline.cache.version) {
+    return formatServiceDelta('cache', result.services.cache.type, result.services.cache.version);
+  }
+  if (result.services.queue.type !== baseline.queue.type || result.services.queue.version !== baseline.queue.version) {
+    return formatServiceDelta('queue', result.services.queue.type, result.services.queue.version);
+  }
+  if (result.services.varnish !== baseline.varnish) {
+    return formatServiceDelta('varnish', 'varnish', result.services.varnish);
+  }
+
+  return result.version;
+}
 
 export function resetCache(): void {
   _allResults = null;
@@ -130,6 +183,86 @@ export function aggregateByServiceVersion(
   return aggregateResults(matching);
 }
 
+export function getPrimaryFailure(result: TestResult): {
+  stepName: typeof STEP_ORDER[number];
+  step: StepResult;
+  failure: FailureInfo | null;
+} | null {
+  for (const stepName of STEP_ORDER) {
+    const step = result.steps?.[stepName];
+    if (!step || step.status !== 'fail') {
+      continue;
+    }
+    return {
+      stepName,
+      step,
+      failure: step.failure ?? null,
+    };
+  }
+  return null;
+}
+
+export function getFailureOverview(results: TestResult[]): FailureOverview {
+  const failedRuns = results.filter((result) => result.overall_status === 'fail');
+  const categoryCounts = new Map<string, number>();
+  const buckets = new Map<string, FailureOverview['buckets'][number]>();
+
+  let classifiedRuns = 0;
+  let unclassifiedRuns = 0;
+  let likelyFlakyRuns = 0;
+
+  for (const result of failedRuns) {
+    const primaryFailure = getPrimaryFailure(result);
+    if (!primaryFailure?.failure) {
+      unclassifiedRuns++;
+      continue;
+    }
+
+    classifiedRuns++;
+    const { stepName, failure } = primaryFailure;
+    categoryCounts.set(failure.category, (categoryCounts.get(failure.category) ?? 0) + 1);
+    if (failure.likely_flaky) {
+      likelyFlakyRuns++;
+    }
+
+    const bucketKey = `${failure.category}\u0000${failure.code}\u0000${failure.summary}`;
+    const existing = buckets.get(bucketKey);
+    if (existing) {
+      existing.count++;
+      existing.likelyFlakyCount += failure.likely_flaky ? 1 : 0;
+      if (!existing.stepNames.includes(stepName)) {
+        existing.stepNames.push(stepName);
+      }
+      existing.resultIds.push(result.id);
+      existing.variants.push({ id: result.id, label: buildVariantLabel(result) });
+      continue;
+    }
+
+    buckets.set(bucketKey, {
+      category: failure.category,
+      code: failure.code,
+      summary: failure.summary,
+      count: 1,
+      likelyFlakyCount: failure.likely_flaky ? 1 : 0,
+      stepNames: [stepName],
+      resultIds: [result.id],
+      variants: [{ id: result.id, label: buildVariantLabel(result) }],
+    });
+  }
+
+  return {
+    totalFailedRuns: failedRuns.length,
+    classifiedRuns,
+    unclassifiedRuns,
+    likelyFlakyRuns,
+    categoryCounts: [...categoryCounts.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category)),
+    buckets: [...buckets.values()]
+      .sort((a, b) => b.count - a.count || a.summary.localeCompare(b.summary)),
+  };
+}
+
 // ─── Version summary (for the /[product]/[version] page) ─────────────────────
 
 export function getVersionSummary(product: string, version: string): VersionSummary {
@@ -223,6 +356,7 @@ export function getVersionSummary(product: string, version: string): VersionSumm
 
   const timestamps = results.map((r) => r.timestamp).filter(Boolean).sort();
   const lastTested = timestamps.length > 0 ? timestamps[timestamps.length - 1] : null;
+  const failureOverview = getFailureOverview(results);
 
   return {
     product,
@@ -233,6 +367,7 @@ export function getVersionSummary(product: string, version: string): VersionSumm
     totalCombinations: totalExpected,
     serviceRows,
     lastTested,
+    failureOverview,
   };
 }
 
@@ -321,5 +456,6 @@ export function getGlobalStats() {
   const failed = results.filter((r) => r.overall_status === 'fail').length;
   const timestamps = results.map((r) => r.timestamp).filter(Boolean).sort();
   const lastRun = timestamps.length > 0 ? timestamps[timestamps.length - 1] : null;
-  return { total: results.length, passed, failed, lastRun };
+  const failureOverview = getFailureOverview(results);
+  return { total: results.length, passed, failed, lastRun, failureOverview };
 }
