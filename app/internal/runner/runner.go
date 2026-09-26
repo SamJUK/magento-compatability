@@ -529,6 +529,10 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
+	if ctx.Err() != nil {
+		return false, nil
+	}
+
 	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c), cfg.InstallSampleData)
 
 	cp, err := newCompose(c, cfg.ComposeDir, magentoEnv)
@@ -556,10 +560,8 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 
 	defer func() {
 		_ = cp.Down(context.Background())
-		// Don't persist a partial result from a cancelled run — it would
-		// block re-runs without --force.
+		// A cancelled run leaves any previous result untouched.
 		if ctx.Err() != nil {
-			os.Remove(resultPath)
 			ran = false
 			err = nil
 		}
@@ -651,6 +653,9 @@ func writeResult(
 		Timestamp:     result.Now(),
 	}
 
+	if ctx.Err() != nil {
+		return nil
+	}
 	return result.Write(path, r)
 }
 
