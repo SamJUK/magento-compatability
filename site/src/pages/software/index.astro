@@ -1,56 +1,35 @@
 ---
 import Base from '../../layouts/Base.astro';
-import StatusBadge from '../../components/StatusBadge.astro';
-import { getAllServicePaths } from '@lib/results.js';
-import { SERVICE_GROUP_LABELS } from '@lib/matrix.js';
+import { getDimensions, PRODUCT_LABELS } from '@lib/compat.js';
+import { newestPerProduct } from '@lib/service.js';
 
-const allPaths = getAllServicePaths();
-
-// Group by key (php, db, search, etc.)
-const groups = new Map<string, typeof allPaths>();
-for (const p of allPaths) {
-  if (!groups.has(p.key)) groups.set(p.key, []);
-  groups.get(p.key)!.push(p);
-}
-
-const keyOrder = ['php', 'db', 'search', 'cache', 'queue', 'webserver', 'varnish'];
+const dims = getDimensions().map((d) => ({
+  ...d,
+  options: d.options.map((o) => ({ ...o, newest: newestPerProduct(o) })),
+}));
 ---
 
-<Base title="Software compatibility" description="Browse all service and software versions to see which Magento versions they work with.">
+<Base title="Services" description="Pick the PHP, database, search, cache, queue, web server or Varnish version your host runs and see which Magento and Mage-OS releases install on it.">
+  <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Start from your server</h1>
+  <p class="mt-3 text-lg text-muted max-w-3xl">
+    Pick what your host runs. Each card shows the newest release that installs on it.
+  </p>
 
-  <div class="mb-8">
-    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
-      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
-      <span class="mx-1.5">/</span>
-      Software
-    </nav>
-    <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">Software versions</h1>
-    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
-      Select a service version to see which Magento and MageOS versions are compatible.
-    </p>
-  </div>
-
-  <div class="space-y-8">
-    {keyOrder.map((key) => {
-      const entries = groups.get(key);
-      if (!entries) return null;
-      const groupLabel = SERVICE_GROUP_LABELS[key] ?? key;
-      return (
-        <section>
-          <h2 class="text-base font-semibold text-zinc-700 dark:text-zinc-200 mb-3">{groupLabel}</h2>
-          <div class="flex flex-wrap gap-2">
-            {entries.map((e) => (
-              <a
-                href={`/software/${e.key}/${e.type}-${e.version}`}
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
-              >
-                {e.label}
-              </a>
+  {dims.map((d) => (
+    <section class="mt-10" aria-labelledby={`dim-${d.key}`}>
+      <h2 id={`dim-${d.key}`} class="font-display font-bold text-2xl">{d.label}</h2>
+      <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {d.options.map((o) => (
+          <a href={o.href} class="rounded-xl border border-line bg-surface p-4 flex flex-col gap-2 no-underline text-ink hover:border-brand">
+            <span class="font-mono font-semibold">{o.label}</span>
+            {o.newest.map((n) => (
+              <span class="text-sm text-muted">
+                {PRODUCT_LABELS[n.product] ?? n.product}: <span class:list={['font-mono', n.newest ? 'text-ink' : '']}>{n.newest ?? 'none'}</span>
+              </span>
             ))}
-          </div>
-        </section>
-      );
-    })}
-  </div>
-
+          </a>
+        ))}
+      </div>
+    </section>
+  ))}
 </Base>

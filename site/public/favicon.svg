@@ -1,3 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-  <path fill-rule="evenodd" d="M16.403 12.652a3 3 0 000-5.304 3 3 0 00-3.75-3.751 3 3 0 00-5.305 0 3 3 0 00-3.751 3.75 3 3 0 000 5.305 3 3 0 003.75 3.751 3 3 0 005.305 0 3 3 0 003.751-3.75zm-2.546-4.46a.75.75 0 00-1.214-.883l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 84">
+  <style>
+    .glass { stroke: #14213d; }
+    .liquid { fill: #1f5faf; }
+    .tick { stroke: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      .glass { stroke: #f4efe6; }
+      .liquid { fill: #6fa8f5; }
+      .tick { stroke: #0e1a2e; }
+    }
+  </style>
+  <defs>
+    <clipPath id="inside"><path d="M35 8v22L14 68a8 8 0 0 0 7 12h42a8 8 0 0 0 7-12L49 30V8z"/></clipPath>
+  </defs>
+  <path class="liquid" clip-path="url(#inside)" d="M0 52c7-5 14-5 21 0s14 5 21 0 14-5 21 0 14 5 21 0V90H0z"/>
+  <path class="glass" d="M31 8h22M35 8v22L14 68a8 8 0 0 0 7 12h42a8 8 0 0 0 7-12L49 30V8" stroke-width="6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+  <path class="tick" d="M32 65l7 7 13-14" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

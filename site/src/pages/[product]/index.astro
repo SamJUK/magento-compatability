@@ -1,155 +1,206 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { getProducts, getProductVersions } from '@lib/matrix.js';
-import { getVersionSummary } from '@lib/results.js';
-import type { ServiceStatus, VersionSummary } from '@lib/types.js';
+import StatusCell from '../../components/StatusCell.astro';
+import { getProductNames } from '@lib/matrix.js';
+import { getCells, getDimensions, getLines, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
 
-export async function getStaticPaths() {
-  const products = getProducts();
-  return products.map((p) => ({
-    params: { product: p.name },
-    props: { product: p },
-  }));
+export function getStaticPaths() {
+  return getProductNames().map((product) => ({ params: { product } }));
 }
 
-const { product } = Astro.props;
-const productVersions = getProductVersions(product.name);
-const versions = productVersions.map((pv) => pv.version);
+const { product } = Astro.params;
+const label = PRODUCT_LABELS[product] ?? product;
+const dims = getDimensions().filter((d) => ['php', 'db', 'search'].includes(d.key));
+const columns = dims.flatMap((d) => d.options.map((o) => ({ ...o, dimLabel: d.label })));
+const lines = getLines(product);
 
-// ── Version parsing ───────────────────────────────────────────────────────────
-interface PatchEntry {
-  version: string;
-  patchNum: number;
-  patchLabel: string;
-}
+const rows = lines.flatMap(({ line, releases }) =>
+  releases
+    .slice()
+    .reverse()
+    .map((r, i) => {
+      const cells = getCells(product, r.version);
+      return {
+        version: r.version,
+        line,
+        latest: i === 0,
+        firstOfLine: i === 0,
+        cells: columns.map((col) => {
+          const c = cells.get(col.id)!;
+          const why = c.failure ? ` (${STEP_LABELS[c.failure.step]}: ${c.failure.summary})` : '';
+          const verdict = c.status === 'pass' ? 'works' : c.status === 'fail' ? 'fails' : 'not tested';
+          return { ...c, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${why}` };
+        }),
+      };
+    }),
+);
 
-function parseVersion(v: string): { base: string; patchNum: number; patchLabel: string } {
-  const m = v.match(/^([\d.]+)(?:-p(\d+))?$/);
-  if (!m) return { base: v, patchNum: 0, patchLabel: 'base' };
-  const patchNum = m[2] ? parseInt(m[2], 10) : 0;
-  return { base: m[1], patchNum, patchLabel: m[2] ? `p${m[2]}` : 'base' };
-}
-
-// Group by base version
-const groups = new Map<string, PatchEntry[]>();
-for (const v of versions) {
-  const { base, patchNum, patchLabel } = parseVersion(v);
-  if (!groups.has(base)) groups.set(base, []);
-  groups.get(base)!.push({ version: v, patchNum, patchLabel });
-}
-
-// Sort each group by patchNum ascending
-for (const entries of groups.values()) {
-  entries.sort((a, b) => a.patchNum - b.patchNum);
-}
-
-// Sort rows by base version descending
-const sortedBases = [...groups.keys()].sort((a, b) => {
-  const aParts = a.split('.').map(Number);
-  const bParts = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-    const diff = (bParts[i] ?? 0) - (aParts[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-});
-
-// All unique patch numbers across all versions (for column headers)
-const allPatchNums = [...new Set(versions.map((v) => parseVersion(v).patchNum))].sort((a, b) => a - b);
-
-// Pre-fetch summaries
-const summaries = new Map<string, VersionSummary>();
-for (const v of versions) {
-  summaries.set(v, getVersionSummary(product.name, v));
-}
-
-function cellStatus(summary: VersionSummary): ServiceStatus {
-  const tested = summary.passCount + summary.failCount;
-    // Not tested yet
-  if (tested === 0) return 'unknown';
-  if (summary.unknownCount > 0) return 'partial';
-  if (summary.passCount > 0) return 'pass';
-  return 'fail';
-}
-
-const cellColors: Record<ServiceStatus, string> = {
-  pass:    'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/40',
-  fail:    'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 dark:bg-rose-900/25 dark:text-rose-300 dark:border-rose-800 dark:hover:bg-rose-900/40',
-  partial: 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:border-amber-800 dark:hover:bg-amber-900/40',
-  unknown: 'bg-zinc-50 text-zinc-500 border border-zinc-200 hover:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:bg-zinc-700',
-};
+const recPassing = rows.filter((r) => r.cells.some((c) => c.recommended && c.status === 'pass'));
+const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.status !== 'untested'));
+const defaultTo = lines[0]?.releases.at(-1)?.version;
+const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
 ---
 
-<Base title={`${product.name} versions`} description={`${product.name} compatibility results for all tested versions.`}>
-
-  <div class="mb-8">
-    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
-      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
-      <span class="mx-1.5">/</span>
-      <span class="capitalize">{product.name}</span>
+<Base title={`${label} matrix`} description={`Every ${label} release against every PHP, database and search version we test, with an upgrade planner.`}>
+  <div class="flex flex-wrap items-end justify-between gap-6">
+    <div class="flex flex-col gap-3 max-w-3xl">
+      <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Plan a {label} upgrade</h1>
+      <p class="text-muted text-lg leading-relaxed">
+        Pick where you are and where you are going. Highlighted columns work on both, so you can keep that service
+        through the upgrade and change it afterwards.
+      </p>
+    </div>
+    <nav class="flex gap-1 p-1 rounded-xl bg-sunken" aria-label="Product">
+      {getProductNames().map((p) => (
+        <a
+          href={`/${p}`}
+          aria-current={p === product ? 'page' : undefined}
+          class:list={['px-4 py-2.5 rounded-lg font-semibold no-underline', p === product ? 'bg-ink text-ground' : 'text-muted hover:text-ink']}
+        >{PRODUCT_LABELS[p] ?? p}</a>
+      ))}
     </nav>
-    <h1 class="text-3xl font-extrabold capitalize text-zinc-900 dark:text-white">{product.name}</h1>
-    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
-      Select a version to view the full service compatibility matrix.
-    </p>
   </div>
 
-  <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
-          <th class="text-left px-5 py-3 font-semibold text-zinc-600 dark:text-zinc-400 w-32">Version</th>
-          {allPatchNums.map((pn) => (
-            <th class="text-center px-4 py-3 font-semibold text-zinc-600 dark:text-zinc-400">
-              {pn === 0 ? 'base' : `p${pn}`}
-            </th>
-          ))}
-          <th class="text-right px-5 py-3 font-semibold text-zinc-600 dark:text-zinc-400 whitespace-nowrap">Last tested</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
-        {sortedBases.map((base) => {
-          const entries = groups.get(base)!;
-          const entryMap = new Map(entries.map((e) => [e.patchNum, e]));
-          const lastTested = entries
-            .map((e) => summaries.get(e.version)?.lastTested)
-            .filter(Boolean)
-            .sort()
-            .at(-1);
-          return (
-            <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
-              <td class="px-5 py-3 font-mono font-semibold text-zinc-700 dark:text-zinc-300">{base}</td>
-              {allPatchNums.map((pn) => {
-                const entry = entryMap.get(pn);
-                if (!entry) {
-                  return <td class="px-4 py-3 text-center text-zinc-300 dark:text-zinc-700 select-none">—</td>;
-                }
-                const summary = summaries.get(entry.version)!;
-                const status = cellStatus(summary);
-                return (
-                  <td class="px-4 py-3 text-center">
-                    <a
-                      href={`/${product.name}/${entry.version}`}
-                      class={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${cellColors[status]}`}
-                    >
-                      {entry.patchLabel}
-                      {status === 'pass'    && <span aria-hidden="true">✓</span>}
-                      {status === 'fail'    && <span aria-hidden="true">✗</span>}
-                      {status === 'partial' && <span aria-hidden="true">~</span>}
-                    </a>
-                  </td>
-                );
-              })}
-              <td class="px-5 py-3 text-right text-xs text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
-                {lastTested
-                  ? new Date(lastTested).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' })
-                  : '—'}
-              </td>
+  <section id="planner" class="mt-8 rounded-2xl bg-panel text-panel-ink p-5 sm:p-7 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]" aria-label="Upgrade planner">
+    <div class="flex flex-col gap-3 font-display text-xl font-bold">
+      <label class="flex items-center gap-3">
+        <span class="w-28 shrink-0">I'm on</span>
+        <select id="plan-from" class="flex-1 h-12 rounded-lg bg-surface text-ink px-3 font-mono text-base cursor-pointer">
+          {rows.map((r) => <option value={r.version} selected={r.version === defaultFrom}>{r.version}</option>)}
+        </select>
+      </label>
+      <label class="flex items-center gap-3">
+        <span class="w-28 shrink-0">Going to</span>
+        <select id="plan-to" class="flex-1 h-12 rounded-lg bg-surface text-ink px-3 font-mono text-base cursor-pointer">
+          {rows.map((r) => <option value={r.version} selected={r.version === defaultTo}>{r.version}</option>)}
+        </select>
+      </label>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-3" aria-live="polite">
+      {dims.map((d) => (
+        <div class="rounded-xl bg-black/20 p-4 flex flex-col gap-2" data-plan-dim={d.key}>
+          <span class="text-xs font-bold uppercase tracking-wider text-panel-muted">{d.label}</span>
+          <span class="font-semibold leading-snug" data-plan-keep></span>
+          <span class="text-sm text-panel-muted leading-snug" data-plan-after></span>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="mt-8 rounded-2xl border border-line bg-surface">
+    <div class="relative overflow-x-auto">
+      <table id="matrix" class="border-separate border-spacing-0 text-sm">
+        <caption class="sr-only">{label} releases against PHP, database and search versions</caption>
+        <thead>
+          <tr>
+            <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-4 pt-4 pb-2 font-display text-base">Release</th>
+            {dims.map((d) => (
+              <th scope="colgroup" colspan={d.options.length} class="text-left px-2 pt-4 pb-1 font-display text-base border-l border-line">{d.label}</th>
+            ))}
+          </tr>
+          <tr>
+            {columns.map((c, i) => (
+              <th
+                scope="col"
+                data-col={i}
+                data-dim={c.key}
+                data-label={c.label}
+                class:list={['px-1 pb-2 pt-1 font-mono text-[11px] font-medium text-muted whitespace-nowrap align-bottom', i > 0 && columns[i - 1].key !== c.key && 'border-l border-line']}
+                title={c.label}
+              >{c.short.split(' ').map((part) => <span class="block leading-tight">{part}</span>)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class="bg-surface" data-version={r.version} data-latest={r.latest ? '1' : undefined} hidden={!r.latest} id={r.firstOfLine ? `line-${r.line}` : undefined}>
+              <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-4 py-1.5 border-t border-line whitespace-nowrap">
+                <a href={`/${product}/${r.version}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
+                <span data-tag class="ml-1.5 px-1.5 py-0.5 rounded bg-brand text-on-brand text-[10px] font-bold" hidden></span>
+              </th>
+              {r.cells.map((c, i) => (
+                <td data-col={i} class:list={['px-0.5 py-1 text-center border-t border-line', i > 0 && columns[i - 1].key !== columns[i].key && 'border-l']}>
+                  <StatusCell status={c.status} recommended={c.recommended} href={`/${product}/${r.version}`} title={c.title} class="min-w-8 h-8" />
+                </td>
+              ))}
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  </div>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 border-t border-line text-sm text-muted">
+      <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-7 h-7" />Installs and passes</span>
+      <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-7 h-7" />Fails</span>
+      <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack</span>
+      <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-7 h-7" />Not tested</span>
+      <button id="toggle-patches" type="button" aria-pressed="false" class="ml-auto px-3 py-2 rounded-lg border border-line text-ink font-semibold cursor-pointer hover:border-brand">
+        Show every patch
+      </button>
+    </div>
+  </section>
 
+  <p class="mt-6 text-muted">
+    Cache, queue, web server and Varnish results are on each release page.
+    The recommended stack passes on {recPassing.length} of {recTested.length} tested {label} releases.{' '}
+    <a href={`/${product}/baseline`}>See every recommended-stack run</a>.
+  </p>
 </Base>
+
+<script>
+  const table = document.getElementById('matrix') as HTMLTableElement;
+  const from = document.getElementById('plan-from') as HTMLSelectElement;
+  const to = document.getElementById('plan-to') as HTMLSelectElement;
+  const toggle = document.getElementById('toggle-patches') as HTMLButtonElement;
+  const headers = [...table.querySelectorAll<HTMLElement>('thead th[data-col]')];
+  const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')];
+  const rowOf = (v: string) => rows.find((r) => r.dataset.version === v)!;
+  const statusAt = (row: HTMLTableRowElement, col: number) =>
+    row.querySelector<HTMLElement>(`td[data-col="${col}"] [data-status]`)!;
+
+  function update() {
+    const a = rowOf(from.value);
+    const b = rowOf(to.value);
+    const showAll = toggle.getAttribute('aria-pressed') === 'true';
+    const both = headers.map((_, i) => statusAt(a, i).dataset.status === 'pass' && statusAt(b, i).dataset.status === 'pass');
+
+    for (const row of rows) {
+      const tag = row.querySelector<HTMLElement>('[data-tag]')!;
+      const mark = row === a ? 'FROM' : row === b ? 'TO' : '';
+      tag.textContent = mark;
+      tag.hidden = !mark;
+      row.hidden = !(showAll || row.dataset.latest || mark);
+      row.classList.toggle('bg-sunken', !!mark);
+      row.classList.toggle('bg-surface', !mark);
+      row.querySelectorAll<HTMLElement>('td[data-col]').forEach((td) => td.classList.toggle('bg-hold', both[Number(td.dataset.col)]));
+    }
+    headers.forEach((th, i) => {
+      th.classList.toggle('bg-hold', both[i]);
+      th.classList.toggle('text-ink', both[i]);
+    });
+
+    for (const box of document.querySelectorAll<HTMLElement>('[data-plan-dim]')) {
+      const dim = box.dataset.planDim;
+      const cols = headers.map((th, i) => ({ th, i })).filter(({ th }) => th.dataset.dim === dim);
+      const keep = cols.filter(({ i }) => both[i]).map(({ th }) => th.dataset.label!);
+      const rec = cols.find(({ i }) => statusAt(b, i).dataset.rec)?.th.dataset.label;
+      box.querySelector('[data-plan-keep]')!.textContent = keep.length
+        ? `Keep ${keep.join(', ')}`
+        : 'No overlap. Change it during the upgrade.';
+      box.querySelector('[data-plan-after]')!.textContent = !rec
+        ? ''
+        : keep.includes(rec)
+          ? `${rec} is already recommended for ${to.value}.`
+          : `Then move to ${rec}, recommended for ${to.value}.`;
+    }
+  }
+
+  from.addEventListener('change', update);
+  to.addEventListener('change', update);
+  toggle.addEventListener('click', () => {
+    const on = toggle.getAttribute('aria-pressed') !== 'true';
+    toggle.setAttribute('aria-pressed', String(on));
+    toggle.textContent = on ? 'Show newest patch only' : 'Show every patch';
+    update();
+  });
+  update();
+</script>

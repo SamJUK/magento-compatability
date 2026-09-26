@@ -1,128 +1,37 @@
 ---
 import Base from '../layouts/Base.astro';
+
+const endpoints = [
+  { path: '/api/v1/matrix.json', example: '/api/v1/matrix.json', desc: 'The matrix definition from matrix.yml: every product, release, recommended stack and service version.' },
+  { path: '/api/v1/results.json', example: '/api/v1/results.json', desc: 'Every test result for every product, release and setup.' },
+  { path: '/api/v1/health.json', example: '/api/v1/health.json', desc: 'Build metadata: total results, last run time and pass or fail counts.' },
+  { path: '/api/v1/[product]/versions.json', example: '/api/v1/magento/versions.json', desc: 'The tested releases for a product, magento or mageos.' },
+  { path: '/api/v1/[product]/[version].json', example: '/api/v1/magento/2.4.8-p5.json', desc: 'Every result for one release, with per-step details.' },
+  { path: '/api/v1/[product]/github-matrix.json', example: '/api/v1/magento/github-matrix.json', desc: 'A GitHub Actions matrix of the stacks that passed, across all releases.' },
+  { path: '/api/v1/[product]/[version]/github-matrix.json', example: '/api/v1/magento/2.4.8-p5/github-matrix.json', desc: 'A GitHub Actions matrix of the stacks that passed for one release.' },
+  { path: '/api/v1/software/[service]/[type]-[version].json', example: '/api/v1/software/php/php-8.4.json', desc: 'How one service version fares across every release.' },
+];
 ---
 
-<Base title="API" description="REST API and MCP server documentation for the Magento compatibility matrix.">
+<Base title="API" description="Static JSON endpoints for Magento and Mage-OS compatibility results. No key, no rate limit.">
+  <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">API</h1>
+  <p class="mt-3 text-lg text-muted max-w-3xl">
+    Every response is a static JSON file built with the site and served from a CDN. No authentication, no rate limit.
+  </p>
+  <p class="mt-4 max-w-3xl rounded-xl border border-dashed border-fail-line bg-fail text-fail-ink px-4 py-3 text-sm">
+    The endpoints and response shapes are not stable yet and may change without notice.
+  </p>
 
-  <div class="mb-8">
-    <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
-      <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
-      <span class="mx-1.5">/</span>
-      API
-    </nav>
-    <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">API Reference</h1>
-    <p class="mt-2 text-zinc-500 dark:text-zinc-400 max-w-2xl">
-      All API responses are pre-rendered static JSON files, served at high speed from a CDN.
-      No authentication required.
-    </p>
-
-    <!-- Endpoints are not stable and may change without notice -->
-     <div class="mt-4 rounded-lg bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 p-4 text-sm">
-      ⚠️ API endpoints and response formats are not yet stable and may change without notice. Use with caution. ⚠️
-      </div>
-
-  </div>
-
-  <!-- ── REST API ────────────────────────────────────────────────────────── -->
-  <section class="mb-12">
-    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-6">REST API</h2>
-
-    <div class="space-y-4">
-      {[
-        {
-          method: 'GET',
-          path: '/api/v1/matrix.json',
-          desc: 'Returns the full matrix definition from <code class="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">matrix.yml</code> — all products, versions, and supported service ranges.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/results.json',
-          desc: 'Returns all test results across every product, version, and combination.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/health.json',
-          desc: 'Returns build metadata — total results, last run timestamp, pass/fail counts.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/[product]/versions.json',
-          desc: 'Returns the list of tested versions for a product (<code class="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">magento</code> or <code class="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">mageos</code>).',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/[product]/[version].json',
-          desc: 'Returns all test results for a specific product version, with per-step details.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/[product]/github-matrix.json',
-          desc: 'Returns a GitHub Actions compatible matrix definition for all product versions, to be used in CI workflows.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/[product]/[version]/github-matrix.json',
-          desc: 'Returns a GitHub Actions compatible matrix definition for a specific product version, to be used in CI workflows.',
-        },
-        {
-          method: 'GET',
-          path: '/api/v1/software/[service]/[version].json',
-          desc: 'Returns aggregated compatibility for a specific service version across all product versions.',
-        },
-      ].map(({ method, path, desc }) => (
-        <div class="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-          <div class="flex items-center gap-3 mb-2">
-            <span class="text-xs font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded">{method}</span>
-            <code class="text-sm font-mono text-zinc-900 dark:text-zinc-100">{path}</code>
-            <a href={path.replace('[product]', 'magento').replace('[version]', '2.4.8').replace('[service]', 'php').replace('[version]', '8.4-8.4')}
-               class="ml-auto text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
-               target="_blank">
-              Example →
-            </a>
-          </div>
-          <p class="text-sm text-zinc-500 dark:text-zinc-400" set:html={desc}></p>
+  <ul class="mt-10 flex flex-col gap-3">
+    {endpoints.map((e) => (
+      <li class="rounded-xl border border-line bg-surface p-5 flex flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="px-2 py-0.5 rounded bg-brand text-on-brand text-xs font-bold">GET</span>
+          <code class="font-mono text-sm break-all">{e.path}</code>
+          <a href={e.example} class="ml-auto text-sm font-semibold">Example →</a>
         </div>
-      ))}
-    </div>
-  </section>
-
-  <!-- ── MCP ──────────────────────────────────────────────────────────────── -->
-  <section class="mb-12 opacity-30">
-    <h2 class="text-xl font-bold text-zinc-900 dark:text-white mb-2">MCP Server (coming soon)</h2>
-    <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-6">
-      An MCP (Model Context Protocol) server is available for AI coding agents such as GitHub Copilot and Claude. It wraps the REST API and provides 5 tools your agent can call.
-    </p>
-
-    <div class="grid sm:grid-cols-2 gap-4 mb-6">
-      {[
-        { name: 'get_magento_versions', desc: 'List all known Magento or MageOS versions.' },
-        { name: 'get_compatibility_matrix', desc: 'Get the full matrix for a specific product version.' },
-        { name: 'check_service_compatibility', desc: 'Check if a specific service version works with a given product version.' },
-        { name: 'get_magento_versions_for_service', desc: 'Find all product versions compatible with a given service.' },
-        { name: 'get_all_results', desc: 'Dump all raw test results for further analysis.' },
-      ].map(({ name, desc }) => (
-        <div class="rounded-lg border border-zinc-200 dark:border-zinc-700 px-4 py-3">
-          <code class="text-xs font-mono text-zinc-900 dark:text-zinc-100 font-bold">{name}</code>
-          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{desc}</p>
-        </div>
-      ))}
-    </div>
-
-    <div class="rounded-xl bg-zinc-900 dark:bg-zinc-950 text-zinc-100 p-5 text-sm font-mono overflow-x-auto">
-      <div class="text-zinc-500 mb-2">// .vscode/mcp.json</div>
-      <pre>{`{
-  "servers": {
-    "m2compat": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["./mcp-server/dist/index.js"],
-      "env": {
-        "SITE_BASE_URL": "https://m2compat.example.com"
-      }
-    }
-  }
-}`}</pre>
-    </div>
-  </section>
-
+        <p class="text-sm text-muted">{e.desc}</p>
+      </li>
+    ))}
+  </ul>
 </Base>

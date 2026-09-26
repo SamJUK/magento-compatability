@@ -1,0 +1,30 @@
+---
+interface Props {
+  size?: number;
+  id: string;
+}
+
+const { size = 32, id } = Astro.props;
+---
+
+<svg width={size} height={size} viewBox="0 0 84 84" aria-hidden="true" class="shrink-0">
+  <defs>
+    <clipPath id={id}>
+      <path d="M35 8v22L14 68a8 8 0 0 0 7 12h42a8 8 0 0 0 7-12L49 30V8z" />
+    </clipPath>
+  </defs>
+  <g clip-path={`url(#${id})`} fill="var(--brand)">
+    <path d="M0 52c7-5 14-5 21 0s14 5 21 0 14-5 21 0 14 5 21 0V90H0z" />
+    <circle cx="52" cy="46" r="2.5" />
+    <circle cx="45" cy="39" r="1.8" />
+  </g>
+  <path
+    d="M31 8h22M35 8v22L14 68a8 8 0 0 0 7 12h42a8 8 0 0 0 7-12L49 30V8"
+    stroke="currentColor"
+    stroke-width="5"
+    fill="none"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
+  <path d="M32 65l7 7 13-14" stroke="var(--on-brand)" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

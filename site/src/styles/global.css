@@ -1,1 +1,119 @@
 @import "tailwindcss";
+
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-on-brand: var(--on-brand);
+  --color-panel: var(--panel);
+  --color-panel-ink: var(--panel-ink);
+  --color-panel-muted: var(--panel-muted);
+  --color-pass: var(--pass);
+  --color-pass-ink: var(--pass-ink);
+  --color-fail: var(--fail);
+  --color-fail-ink: var(--fail-ink);
+  --color-fail-line: var(--fail-line);
+  --color-rec: var(--rec);
+  --color-hold: var(--hold);
+
+  --font-display: var(--font-bricolage);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+}
+
+:root {
+  color-scheme: light;
+  --ground: #f3f0e8;
+  --surface: #ffffff;
+  --sunken: #ece7dc;
+  --ink: #14213d;
+  --muted: #4a5468;
+  --line: #d8d3c6;
+  --brand: #1f5faf;
+  --on-brand: #ffffff;
+  --panel: #14213d;
+  --panel-ink: #f3f0e8;
+  --panel-muted: #b9c0cf;
+  --pass: #2e6b3a;
+  --pass-ink: #ffffff;
+  --fail: #f7ddd3;
+  --fail-ink: #8e2a17;
+  --fail-line: #a8432c;
+  --rec: #f2a33a;
+  --hold: #dcebd3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #1b1a17;
+    --surface: #24221e;
+    --sunken: #2c2a25;
+    --ink: #f4efe6;
+    --muted: #b8b0a2;
+    --line: #3a372f;
+    --brand: #6fa8f5;
+    --on-brand: #0e1a2e;
+    --panel: #2c2a25;
+    --panel-ink: #f4efe6;
+    --panel-muted: #b8b0a2;
+    --pass: #2a6e42;
+    --pass-ink: #f1fbf3;
+    --fail: #2e1d19;
+    --fail-ink: #ffd6cc;
+    --fail-line: #ff8f7a;
+    --rec: #f2b04a;
+    --hold: #1f3325;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #1b1a17;
+  --surface: #24221e;
+  --sunken: #2c2a25;
+  --ink: #f4efe6;
+  --muted: #b8b0a2;
+  --line: #3a372f;
+  --brand: #6fa8f5;
+  --on-brand: #0e1a2e;
+  --panel: #2c2a25;
+  --panel-ink: #f4efe6;
+  --panel-muted: #b8b0a2;
+  --pass: #2a6e42;
+  --pass-ink: #f1fbf3;
+  --fail: #2e1d19;
+  --fail-ink: #ffd6cc;
+  --fail-line: #ff8f7a;
+  --rec: #f2b04a;
+  --hold: #1f3325;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+}
+
+a {
+  text-underline-offset: 3px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}

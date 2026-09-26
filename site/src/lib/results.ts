@@ -2,12 +2,9 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type {
   TestResult,
-  UntestedResult,
-  AnyResult,
   AggregatedServiceStatus,
   ServiceStatus,
   ServiceRowGroup,
-  ServiceVersionEntry,
   VersionSummary,
   SoftwareVersionSummary,
 } from './types.js';
@@ -17,13 +14,6 @@ import {
   getVersionsForProduct,
   getProductVersions,
   getAllCombinations,
-  getAllWebservers,
-  getAllDatabases,
-  getAllSearchEngines,
-  getAllCacheServices,
-  getAllQueueServices,
-  getAllVarnishVersions,
-  SERVICE_GROUP_LABELS,
 } from './matrix.js';
 
 const RESULTS_BASE = resolve(process.cwd(), '../results');
