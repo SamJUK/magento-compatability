@@ -155,12 +155,19 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Shared Composer cache state became corrupted during the harness run.",
 			LikelyFlaky: true,
 		}
-	case (stepName == "stack_up" || stepName == "install") && strings.Contains(text, "no space left on device"):
+	case strings.Contains(text, "no space left on device"):
 		return &result.Failure{
 			Category:    "infrastructure",
 			Code:        "disk_space",
 			Summary:     "The run exhausted host or Docker disk space.",
 			LikelyFlaky: true,
+		}
+	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "playwright_browser_missing",
+			Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
+			LikelyFlaky: false,
 		}
 	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
 		strings.Contains(text, "endpoint with name") && strings.Contains(text, "already exists in network") ||

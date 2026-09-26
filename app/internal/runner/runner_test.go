@@ -813,6 +813,28 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "disk full during smoke",
+			stepName: "smoke",
+			log:      "file_put_contents(/var/www/html/generated/code/X.php): Failed to open stream: No space left on device",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "disk_space",
+				Summary:     "The run exhausted host or Docker disk space.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "playwright browser missing",
+			stepName: "playwright",
+			log:      "Error: browserType.launch: Executable doesn't exist at /Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "playwright_browser_missing",
+				Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
+				LikelyFlaky: false,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",
