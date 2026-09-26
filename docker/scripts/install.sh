@@ -124,45 +124,36 @@ apply_patch_files() {
   echo "[INFO] Patching complete: ${applied} applied, ${skipped} skipped"
 }
 
+# Catches a vendor tree missing whole packages or required files. PSR-4 dirs are
+# not checked: packages may declare dirs (e.g. tests) their dist omits.
 validate_composer_autoload_files() {
-  local autoload_files="${MAGENTO_DIR}/vendor/composer/autoload_files.php"
-  local autoload_static="${MAGENTO_DIR}/vendor/composer/autoload_static.php"
-
-  AUTOLOAD_FILES_PATH="${autoload_files}" AUTOLOAD_STATIC_PATH="${autoload_static}" php <<'PHP'
+  VENDOR_COMPOSER_DIR="${MAGENTO_DIR}/vendor/composer" php <<'PHP'
 <?php
-$autoloadFilesPath = getenv('AUTOLOAD_FILES_PATH') ?: '';
-$autoloadStaticPath = getenv('AUTOLOAD_STATIC_PATH') ?: '';
+$dir = getenv('VENDOR_COMPOSER_DIR');
 $missing = [];
 
-if (is_file($autoloadFilesPath)) {
-    $autoloadFiles = require $autoloadFilesPath;
-    foreach ($autoloadFiles as $file) {
+if (is_file("$dir/autoload_files.php")) {
+    foreach (require "$dir/autoload_files.php" as $file) {
         if (!file_exists($file)) {
             $missing[] = $file;
         }
     }
 }
 
-if (is_file($autoloadStaticPath)) {
-    $autoloadStatic = file_get_contents($autoloadStaticPath);
-    if ($autoloadStatic !== false) {
-        preg_match_all("#=> __DIR__ \\. '/\\.\\.' \\. '([^']+)'#", $autoloadStatic, $matches);
-        foreach ($matches[1] as $relativePath) {
-            $candidate = dirname($autoloadStaticPath) . '/..' . $relativePath;
-            if (!file_exists($candidate)) {
-                $missing[] = $candidate;
-            }
+if (is_file("$dir/installed.php")) {
+    $installed = require "$dir/installed.php";
+    foreach ($installed['versions'] as $name => $package) {
+        $path = $package['install_path'] ?? null;
+        if ($path !== null && ($package['type'] ?? '') !== 'metapackage' && !is_dir($path)) {
+            $missing[] = "$path ($name)";
         }
     }
 }
 
-$missing = array_values(array_unique($missing));
-if ($missing) {
-    foreach ($missing as $file) {
-        fwrite(STDERR, "[ERROR] Missing Composer autoload file: {$file}\n");
-    }
-    exit(1);
+foreach ($missing as $file) {
+    fwrite(STDERR, "[ERROR] Missing Composer autoload file: {$file}\n");
 }
+exit($missing ? 1 : 0);
 PHP
 }
 
