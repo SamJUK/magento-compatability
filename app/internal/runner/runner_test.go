@@ -306,6 +306,43 @@ func TestNewComposeSetsComposeParallelLimit(t *testing.T) {
 	}
 }
 
+func TestComposeDownRemovesProjectAndAnonymousVolumes(t *testing.T) {
+	var calls [][]string
+	cp := &Compose{
+		projectName: "m2test-abcd",
+		files:       []string{"/tmp/base.yml"},
+		env:         []string{"COMPOSE_PROJECT_NAME=m2test-abcd"},
+		execCommand: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+
+	if err := cp.Down(context.Background()); err != nil {
+		t.Fatalf("Down() error = %v", err)
+	}
+
+	if len(calls) != 4 {
+		t.Fatalf("Down() made %d commands, want 4", len(calls))
+	}
+
+	if got, want := calls[0], []string{"docker", "compose", "-f", "/tmp/base.yml", "down", "--volumes", "--remove-orphans"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("compose down command = %v, want %v", got, want)
+	}
+
+	wantRemovals := [][]string{
+		{"docker", "volume", "rm", "--force", "m2test-abcd_magento"},
+		{"docker", "volume", "rm", "--force", "m2test-abcd_db-data"},
+		{"docker", "volume", "rm", "--force", "m2test-abcd_search-data"},
+	}
+	for i, want := range wantRemovals {
+		if got := calls[i+1]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("volume cleanup command %d = %v, want %v", i, got, want)
+		}
+	}
+}
+
 func TestSearchConfigFlag(t *testing.T) {
 	cases := []struct {
 		c    matrix.Combination
