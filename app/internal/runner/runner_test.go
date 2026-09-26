@@ -1004,9 +1004,9 @@ func TestClassifyStepFailure(t *testing.T) {
 			stepName: "install",
 			log:      "Undefined constant \"Magento\\\\Framework\\\\Setup\\\\Mvc\\\\GLOB_BRACE\"",
 			want: &result.Failure{
-				Category:    "compatibility",
+				Category:    "harness",
 				Code:        "glob_brace_unsupported",
-				Summary:     "The application references an undefined GLOB_BRACE constant during setup bootstrap.",
+				Summary:     "GLOB_BRACE is undefined on Alpine/musl PHP < 8.5; the musl-glob-brace patch did not apply.",
 				LikelyFlaky: false,
 			},
 		},

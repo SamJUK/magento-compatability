@@ -1,0 +1,19 @@
+--- a/vendor/magento/framework/Setup/Mvc/MvcApplication.php	2026-09-26 23:10:08
++++ b/vendor/magento/framework/Setup/Mvc/MvcApplication.php	2026-09-26 23:10:08
+@@ -10,6 +10,7 @@
+ use Laminas\ServiceManager\ServiceManager;
+ use Laminas\EventManager\EventManagerInterface;
+ use Laminas\Stdlib\ArrayUtils;
++use Magento\Framework\Filesystem\Glob as GlobWrapper;
+ 
+ /**
+  * Native MVC Application that replicates Laminas\Mvc\Application functionality
+@@ -167,7 +168,7 @@
+         // Load global.php and local.php configurations from config_glob_paths
+         if (isset($configuration['module_listener_options']['config_glob_paths'])) {
+             foreach ($configuration['module_listener_options']['config_glob_paths'] as $globPath) {
+-                $files = glob($globPath, GLOB_BRACE);
++                $files = GlobWrapper::glob($globPath, GlobWrapper::GLOB_BRACE);
+                 foreach ($files as $file) {
+                     if (is_readable($file)) {
+                         $autoloadConfig = include $file;
