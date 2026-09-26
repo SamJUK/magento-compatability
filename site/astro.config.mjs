@@ -1,4 +1,4 @@
-import { defineConfig } from 'astro/config';
+import { defineConfig, fontProviders } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -20,8 +20,10 @@ const devCacheRefreshPlugin = {
       try {
         const matrix  = await server.ssrLoadModule('/src/lib/matrix.ts');
         const results = await server.ssrLoadModule('/src/lib/results.ts');
+        const compat  = await server.ssrLoadModule('/src/lib/compat.ts');
         matrix.resetCache?.();
         results.resetCache?.();
+        compat.resetCache?.();
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ ok: true }));
       } catch (e) {
@@ -36,6 +38,32 @@ const devCacheRefreshPlugin = {
 export default defineConfig({
   output: 'static',
   site: 'https://m2compat.example.com',
+  fonts: [
+    {
+      provider: fontProviders.fontsource(),
+      name: 'Bricolage Grotesque',
+      cssVariable: '--font-bricolage',
+      weights: [500, 700, 800],
+      subsets: ['latin'],
+      fallbacks: ['system-ui', 'sans-serif'],
+    },
+    {
+      provider: fontProviders.fontsource(),
+      name: 'IBM Plex Sans',
+      cssVariable: '--font-plex-sans',
+      weights: [400, 500, 600, 700],
+      subsets: ['latin'],
+      fallbacks: ['system-ui', 'sans-serif'],
+    },
+    {
+      provider: fontProviders.fontsource(),
+      name: 'IBM Plex Mono',
+      cssVariable: '--font-plex-mono',
+      weights: [400, 500, 600],
+      subsets: ['latin'],
+      fallbacks: ['ui-monospace', 'monospace'],
+    },
+  ],
   vite: {
     plugins: [tailwindcss(), devCacheRefreshPlugin],
     resolve: {

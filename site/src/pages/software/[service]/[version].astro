@@ -1,108 +1,109 @@
 ---
 import Base from '../../../layouts/Base.astro';
-import StatusBadge from '../../../components/StatusBadge.astro';
-import { getAllServicePaths } from '@lib/results.js';
-import { getSoftwareVersionSummary } from '@lib/results.js';
-import { getProducts, getVersionsForProduct, SERVICE_GROUP_LABELS } from '@lib/matrix.js';
-import type { ServiceStatus } from '@lib/types.js';
+import StatusCell from '../../../components/StatusCell.astro';
+import { getProductNames } from '@lib/matrix.js';
+import { getDimensions, getOption, patchLabel, PRODUCT_LABELS } from '@lib/compat.js';
+import { answerFor, stripsFor } from '@lib/service.js';
 
-export async function getStaticPaths() {
-  return getAllServicePaths().map((entry) => ({
-    params: { service: entry.key, version: `${entry.type}-${entry.version}` },
-    props: { key: entry.key, type: entry.type, version: entry.version, label: entry.label },
-  }));
+export function getStaticPaths() {
+  return getDimensions().flatMap((d) =>
+    d.options.map((o) => ({ params: { service: d.key, version: `${o.type}-${o.version}` } })),
+  );
 }
 
-const { key, type, version, label } = Astro.props;
-const summary = getSoftwareVersionSummary(key, type, version);
-const products = getProducts();
-
-
-function semanticOrder(s: string) { 
-  const [main, patch] = s.split('-');
-  const parts = main.split('.').map(Number);
-  return parts[0] * 1_000_000 + parts[1] * 1_000 + (parts[2] || 0) + (patch ? -1 : 0);  
-}
+const { service, version } = Astro.params;
+const option = getOption(service, version)!;
+const dim = getDimensions().find((d) => d.key === option.key)!;
+const products = getProductNames().map((p) => ({
+  id: p,
+  label: PRODUCT_LABELS[p] ?? p,
+  answer: answerFor(p, option),
+  strips: stripsFor(p, option),
+}));
+const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)}`);
 ---
 
-<Base
-  title={`${label} compatibility`}
-  description={`Which Magento and MageOS versions work with ${label}?`}
->
-
-  <!-- breadcrumb -->
-  <nav class="text-sm text-zinc-400 dark:text-zinc-500 mb-2">
-    <a href="/" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Home</a>
-    <span class="mx-1.5">/</span>
-    <a href="/software" class="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Software</a>
-    <span class="mx-1.5">/</span>
-    {SERVICE_GROUP_LABELS[key] ?? key}
-    <span class="mx-1.5">/</span>
-    {label}
+<Base title={`${option.label} compatibility`} description={`The newest Magento and Mage-OS releases that install on ${option.label}, and every release we tested on it.`}>
+  <nav class="flex flex-wrap gap-1 text-sm font-semibold" aria-label="Kind of service">
+    {getDimensions().map((d) => (
+      <a
+        href={d.options[0].href}
+        aria-current={d.key === dim.key ? 'true' : undefined}
+        class:list={['px-3 py-2 rounded-lg no-underline', d.key === dim.key ? 'bg-ink text-ground' : 'text-muted hover:text-ink']}
+      >{d.label}</a>
+    ))}
   </nav>
 
-  <div class="mb-8">
-    <h1 class="text-3xl font-extrabold text-zinc-900 dark:text-white">
-      <span class="text-zinc-400 dark:text-zinc-500 text-xl font-normal">{SERVICE_GROUP_LABELS[key] ?? key} </span>
-      {label.replace(/^\S+\s/, '')}
-    </h1>
-    <p class="mt-2 text-zinc-500 dark:text-zinc-400">
-      Compatibility results for {label} across all Magento 2 and MageOS versions.
-    </p>
+  <div class="mt-5 flex flex-wrap items-center gap-5">
+    <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">{option.label}</h1>
+    <nav class="flex flex-wrap gap-1.5" aria-label={`Other ${dim.label} versions`}>
+      {dim.options.map((o) => (
+        <a
+          href={o.href}
+          aria-current={o.id === option.id ? 'page' : undefined}
+          class:list={['min-h-10 inline-flex items-center px-3 rounded-lg font-mono text-sm no-underline', o.id === option.id ? 'bg-brand text-on-brand' : 'border border-line bg-surface text-ink hover:border-brand']}
+        >{o.key === 'php' ? o.version : o.label}</a>
+      ))}
+    </nav>
   </div>
 
-  <!-- per-product tables -->
-  {products.map((product) => {
-    const versions = getVersionsForProduct(product.name);
-    const rows = versions
-      .map((ver) => {
-        const entry = summary.compatibility[`${product.name}/${ver}`];
-        return { ver, agg: entry?.aggregate ?? { status: 'unknown' as ServiceStatus, passed: 0, failed: 0, total: 0, resultIds: [] } };
-      })
-      .sort((a, b) => semanticOrder(b.ver) - semanticOrder(a.ver));
-
-    return (
-      <section class="mb-10">
-        <h2 class="text-lg font-bold capitalize text-zinc-900 dark:text-white mb-4">{product.name}</h2>
-        <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800">
-                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Version</th>
-                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Status</th>
-                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300">Combinations</th>
-                <th class="px-4 py-3 text-left font-semibold text-zinc-600 dark:text-zinc-300"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {rows.map(({ ver, agg }) => (
-                <tr class="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                  <td class="px-4 py-3 font-bold text-zinc-900 dark:text-white">{ver}</td>
-                  <td class="px-4 py-3">
-                    <StatusBadge
-                      status={agg.status}
-                      passed={agg.passed}
-                      total={agg.total}
-                    />
-                  </td>
-                  <td class="px-4 py-3 text-zinc-500 dark:text-zinc-400">
-                    {agg.total === 0 ? 'No results yet' : `${agg.passed}/${agg.total} pass`}
-                  </td>
-                  <td class="px-4 py-3 text-right">
-                    <a
-                      href={`/${product.name}/${ver}`}
-                      class="text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
-                    >
-                      Full matrix →
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+  <div class="mt-8 grid gap-6 md:grid-cols-2">
+    {products.map(({ id, label, answer }) => (
+      <section class="rounded-2xl border border-line bg-surface p-6 flex flex-col gap-3" aria-label={label}>
+        <h2 class="text-xs font-bold uppercase tracking-wider text-muted">{label}</h2>
+        {answer.newest ? (
+          <>
+            <p class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span class="font-display font-bold text-xl">Newest on {option.label}:</span>
+              <a href={`/${id}/${answer.newest}`} class="font-mono text-3xl font-semibold text-ink no-underline hover:text-brand">{answer.newest}</a>
+            </p>
+            <p class="text-muted">
+              {answer.passing} release{answer.passing === 1 ? '' : 's'} install{answer.passing === 1 ? 's' : ''}, the oldest {answer.oldest}.
+            </p>
+          </>
+        ) : (
+          <p class="font-display font-bold text-xl">No {label} release installed on {option.label}.</p>
+        )}
+        <p class="mt-1 rounded-xl bg-sunken px-4 py-3 leading-relaxed">
+          {!answer.newest
+            ? 'Try another version from the list above.'
+            : !answer.next
+              ? `${answer.newest} is the newest ${label} release we test.`
+              : answer.next.status === 'untested'
+                ? `${answer.next.version} is next. It has not been tested on ${option.label} yet.`
+                : answer.next.worksOn.length
+                  ? `${answer.next.version} is next. It fails on ${option.label} and installs on ${list(answer.next.worksOn.map((o) => o.label))}.`
+                  : `${answer.next.version} is next. It fails on ${option.label}, and on every other ${dim.label} version we tried.`}
+        </p>
       </section>
-    );
-  })}
+    ))}
+  </div>
 
+  {products.map(({ id, label, strips }) => (
+    <section class="mt-12" aria-labelledby={`strips-${id}`}>
+      <h2 id={`strips-${id}`} class="font-display font-extrabold text-2xl tracking-tight">Every {label} release on {option.label}</h2>
+      <div class="mt-3">
+        {strips.map((s) => (
+          <div class="grid gap-3 sm:grid-cols-[100px_minmax(0,1fr)_150px] items-center py-3 border-t border-line">
+            <a href={`/${id}#line-${s.line}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{s.line}</a>
+            <div class="flex flex-wrap gap-1.5">
+              {s.cells.map(({ version: v, cell }) => (
+                <StatusCell
+                  status={cell.status}
+                  recommended={cell.recommended}
+                  href={`/${id}/${v}`}
+                  text={patchLabel(id, v)}
+                  title={`${v} on ${option.label}: ${cell.status === 'pass' ? 'works' : cell.status === 'fail' ? 'fails' : 'not tested'}${cell.recommended ? ', recommended' : ''}`}
+                  class="min-w-11 h-9"
+                />
+              ))}
+            </div>
+            <span class="text-sm text-muted sm:text-right">
+              {s.passing === s.cells.length ? `All ${s.passing} install` : s.passing === 0 ? 'None install' : `${s.passing} of ${s.cells.length} install`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  ))}
 </Base>

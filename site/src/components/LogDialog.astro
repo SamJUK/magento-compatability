@@ -1,0 +1,117 @@
+---
+// Renders one log viewer per page. Open it from any element with data-log-id="<result id>".
+import { STEPS, STEP_LABELS } from '@lib/compat.js';
+import type { TestResult } from '@lib/types.js';
+
+interface Props {
+  results: TestResult[];
+}
+
+const { results } = Astro.props;
+
+const data = Object.fromEntries(
+  results.map((r) => [
+    r.id,
+    {
+      label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
+      timestamp: r.timestamp,
+      steps: STEPS.filter((s) => r.steps?.[s]).map((s) => ({
+        name: STEP_LABELS[s],
+        status: r.steps[s].status,
+        duration: r.steps[s].duration_s,
+        log: r.steps[s].log,
+      })),
+      containers: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
+    },
+  ]),
+);
+// Logs can contain "</script>", so keep "<" out of the embedded JSON.
+const json = JSON.stringify(data).replace(/</g, '\\u003c');
+---
+
+<script is:inline type="application/json" id="log-data" set:html={json}></script>
+
+<dialog
+  id="log-dialog"
+  class="m-auto w-[min(56rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface text-ink p-0 backdrop:bg-black/60"
+  aria-labelledby="log-dialog-title"
+>
+  <div class="flex items-center justify-between gap-4 px-5 py-4 border-b border-line">
+    <div class="min-w-0">
+      <h2 id="log-dialog-title" class="font-semibold text-sm truncate">Run logs</h2>
+      <p id="log-dialog-time" class="text-xs text-muted"></p>
+    </div>
+    <button id="log-dialog-close" type="button" class="shrink-0 p-2 rounded-md text-muted hover:text-ink hover:bg-sunken cursor-pointer" aria-label="Close logs">
+      <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+    </button>
+  </div>
+  <div class="flex gap-5 px-5 border-b border-line text-sm font-semibold" role="tablist">
+    <button type="button" role="tab" data-tab="steps" class="log-tab py-3 border-b-2 -mb-px cursor-pointer">Step logs</button>
+    <button type="button" role="tab" data-tab="containers" class="log-tab py-3 border-b-2 -mb-px cursor-pointer">Container logs</button>
+  </div>
+  <div id="log-dialog-body" class="overflow-y-auto max-h-[65vh] p-5 space-y-4"></div>
+</dialog>
+
+<script>
+  type Entry = {
+    label: string;
+    timestamp: string;
+    steps: Array<{ name: string; status: string; duration: number; log: string }>;
+    containers: Array<{ name: string; log: string }>;
+  };
+
+  const data: Record<string, Entry> = JSON.parse(document.getElementById('log-data')!.textContent || '{}');
+  const dialog = document.getElementById('log-dialog') as HTMLDialogElement;
+  const body = document.getElementById('log-dialog-body')!;
+  const tabs = [...document.querySelectorAll<HTMLButtonElement>('.log-tab')];
+  let entry: Entry | undefined;
+  let tab = 'steps';
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const block = (title: string, meta: string, log: string) => `
+    <div class="rounded-lg border border-line overflow-hidden">
+      <div class="flex items-center gap-3 px-4 py-2 bg-sunken text-xs font-semibold">${title}${meta}</div>
+      <pre class="px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all max-h-72 overflow-y-auto">${esc(log || '(empty)')}</pre>
+    </div>`;
+
+  function render() {
+    if (!entry) return;
+    for (const t of tabs) {
+      const on = t.dataset.tab === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.classList.toggle('border-brand', on);
+      t.classList.toggle('text-ink', on);
+      t.classList.toggle('border-transparent', !on);
+      t.classList.toggle('text-muted', !on);
+    }
+    if (tab === 'steps') {
+      body.innerHTML = entry.steps.length
+        ? entry.steps
+            .map((s) => {
+              const tone = s.status === 'pass' ? 'text-pass dark:text-pass-ink' : 'text-fail-line';
+              return block(esc(s.name), `<span class="${tone}">${esc(s.status)}</span><span class="ml-auto text-muted">${s.duration.toFixed(1)}s</span>`, s.log);
+            })
+            .join('')
+        : '<p class="text-sm text-muted">No step data recorded.</p>';
+    } else {
+      body.innerHTML = entry.containers.length
+        ? entry.containers.map((c) => block(esc(c.name), '', c.log)).join('')
+        : '<p class="text-sm text-muted">No container logs recorded. Older runs did not capture them.</p>';
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const trigger = (e.target as Element).closest<HTMLElement>('[data-log-id]');
+    if (!trigger) return;
+    entry = data[trigger.dataset.logId!];
+    if (!entry) return;
+    document.getElementById('log-dialog-title')!.textContent = entry.label;
+    document.getElementById('log-dialog-time')!.textContent = new Date(entry.timestamp).toLocaleString('en-GB');
+    tab = 'steps';
+    render();
+    dialog.showModal();
+  });
+  for (const t of tabs) t.addEventListener('click', () => ((tab = t.dataset.tab!), render()));
+  document.getElementById('log-dialog-close')!.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (e) => e.target === dialog && dialog.close());
+</script>

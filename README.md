@@ -14,7 +14,8 @@ Results are rendered by an Astro static site.
 |------|-------------|-------|
 | Docker | 24+ | Compose v2 required |
 | Go | 1.22+ | to build the CLI |
-| Node.js | 20+ | Playwright + Astro site |
+| Node.js | 22.12+ | Playwright + Astro site |
+| pnpm | 12+ | Astro site (`packageManager` pins the exact version) |
 
 ### macOS quick install
 ```bash
@@ -219,15 +220,18 @@ without overwriting the canonical results directory:
 
 ```bash
 cd site
-npm install
-npm run dev      # development server
-npm run build    # production static build
+pnpm install
+pnpm run dev      # development server
+pnpm run check    # type check
+pnpm run build    # production static build
 ```
 
 Pages:
-- `/magento` / `/mageos` — version overview matrix
-- `/magento/{version}` — full service compatibility breakdown
-- `/magento/baseline` — baseline-only results for all versions
+- `/` — "will it run?" question, plus every service version we test
+- `/magento` / `/mageos` — release matrix and upgrade planner
+- `/magento/{version}` — recommended stack, one-service swaps and why each failure failed
+- `/software/{service}/{type}-{version}` — newest release that installs on a service version
+- `/magento/baseline` — the recommended-stack run for every release
 
 ---
 

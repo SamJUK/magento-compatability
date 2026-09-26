@@ -1,0 +1,167 @@
+---
+import { getCells, getDimensions, getReleases, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { getProductNames } from '@lib/matrix.js';
+
+const dims = getDimensions();
+const options = dims.flatMap((d) => d.options);
+const reasons: string[] = [];
+const reasonIndex = (text: string) => {
+  const i = reasons.indexOf(text);
+  return i === -1 ? reasons.push(text) - 1 : i;
+};
+
+// One character per option: p pass, f fail, u untested; upper case marks the recommended option.
+const products = getProductNames().map((product) => ({
+  id: product,
+  label: PRODUCT_LABELS[product] ?? product,
+  releases: getReleases(product).map((r) => {
+    const cells = getCells(product, r.version);
+    const why: Record<number, number> = {};
+    const s = options
+      .map((o, i) => {
+        const c = cells.get(o.id)!;
+        if (c.failure) why[i] = reasonIndex(`${STEP_LABELS[c.failure.step]}: ${c.failure.summary}`);
+        const ch = c.status === 'pass' ? 'p' : c.status === 'fail' ? 'f' : 'u';
+        return c.recommended ? ch.toUpperCase() : ch;
+      })
+      .join('');
+    return { v: r.version, s, why };
+  }),
+}));
+
+const payload = JSON.stringify({
+  options: options.map((o) => ({ label: o.label, dim: o.key, href: o.href })),
+  reasons,
+  products,
+}).replace(/</g, '\\u003c');
+
+const selectClass =
+  'h-12 max-w-full rounded-lg border-2 border-ink bg-surface px-3 font-mono text-base sm:text-lg text-ink cursor-pointer';
+---
+
+<div class="rounded-2xl border border-line bg-surface p-5 sm:p-8 flex flex-col gap-6 shadow-[0_18px_40px_-28px_rgba(20,33,61,0.45)]">
+  <form id="qc" class="flex flex-wrap items-center gap-3 font-display text-2xl sm:text-3xl font-bold" onsubmit="return false">
+    <span>Will</span>
+    <label class="sr-only" for="qc-product">Product</label>
+    <select id="qc-product" class={selectClass}>
+      {products.map((p) => <option value={p.id}>{p.label}</option>)}
+    </select>
+    <label class="sr-only" for="qc-version">Release</label>
+    <select id="qc-version" class={selectClass}></select>
+    <span>run on</span>
+    <span class="inline-flex items-center gap-3 max-w-full">
+      <label class="sr-only" for="qc-option">Service version</label>
+      <select id="qc-option" class={selectClass}>
+        {dims.map((d) => (
+          <optgroup label={d.label}>
+            {d.options.map((o) => <option value={options.indexOf(o)}>{o.label}</option>)}
+          </optgroup>
+        ))}
+      </select>
+      <span>?</span>
+    </span>
+  </form>
+
+  <div id="qc-answer" aria-live="polite" class="rounded-xl p-5 sm:p-6 flex gap-4 items-start bg-sunken">
+    <span id="qc-icon" aria-hidden="true" class="grid place-items-center w-10 h-10 shrink-0 rounded-full text-lg font-bold"></span>
+    <div class="flex flex-col gap-2 min-w-0">
+      <p id="qc-verdict" class="font-display text-2xl sm:text-3xl font-extrabold">Pick a release and a service.</p>
+      <p id="qc-detail" class="text-base leading-relaxed"></p>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2 text-sm">
+    <span id="qc-works-label" class="font-semibold text-muted mr-1"></span>
+    <span id="qc-works" class="contents"></span>
+    <a id="qc-release" href="#" class="ml-auto font-semibold text-brand py-2">Every setup for this release →</a>
+  </div>
+</div>
+
+<script is:inline type="application/json" id="qc-data" set:html={payload}></script>
+
+<script>
+  type Release = { v: string; s: string; why: Record<number, number> };
+  type Data = {
+    options: Array<{ label: string; dim: string; href: string }>;
+    reasons: string[];
+    products: Array<{ id: string; label: string; releases: Release[] }>;
+  };
+
+  const data: Data = JSON.parse(document.getElementById('qc-data')!.textContent!);
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const product = $<HTMLSelectElement>('qc-product');
+  const version = $<HTMLSelectElement>('qc-version');
+  const option = $<HTMLSelectElement>('qc-option');
+
+  const current = () => data.products.find((p) => p.id === product.value)!;
+  const release = () => current().releases.find((r) => r.v === version.value)!;
+
+  function fillVersions() {
+    version.replaceChildren(...current().releases.map((r) => new Option(r.v, r.v)));
+  }
+
+  function pickRecommendedPhp() {
+    const r = release();
+    const i = data.options.findIndex((o, idx) => o.dim === 'php' && r.s[idx] === r.s[idx].toUpperCase());
+    if (i !== -1) option.value = String(i);
+  }
+
+  function render() {
+    const p = current();
+    const r = release();
+    const i = Number(option.value);
+    const o = data.options[i];
+    const status = r.s[i].toLowerCase();
+    const answer = $('qc-answer');
+    const icon = $('qc-icon');
+    const verdict = $('qc-verdict');
+    const detail = $('qc-detail');
+
+    answer.className = 'rounded-xl p-5 sm:p-6 flex gap-4 items-start';
+    if (status === 'p') {
+      answer.classList.add('bg-pass', 'text-pass-ink');
+      icon.className = 'grid place-items-center w-10 h-10 shrink-0 rounded-full text-lg font-bold bg-pass-ink text-pass';
+      icon.textContent = '✓';
+      verdict.textContent = 'Yes, it runs.';
+      detail.textContent = `${p.label} ${r.v} installed on ${o.label}, compiled, and passed the storefront, checkout and admin browser tests.`;
+      detail.className = 'text-base leading-relaxed';
+    } else if (status === 'f') {
+      answer.classList.add('bg-fail', 'text-fail-ink', 'border', 'border-dashed', 'border-fail-line');
+      icon.className = 'grid place-items-center w-10 h-10 shrink-0 rounded-full text-lg font-bold border-2 border-fail-ink';
+      icon.textContent = '✕';
+      verdict.textContent = 'No, it failed.';
+      detail.textContent = data.reasons[r.why[i]] ?? 'Failed on the last run. The release page has the full log.';
+      detail.className = 'font-mono text-sm leading-relaxed';
+    } else {
+      answer.classList.add('bg-sunken');
+      icon.className = 'grid place-items-center w-10 h-10 shrink-0 rounded-full text-lg font-bold border-2 border-dotted border-muted text-muted';
+      icon.textContent = '?';
+      verdict.textContent = 'Not tested yet.';
+      detail.textContent = `We have no run of ${p.label} ${r.v} on ${o.label}. Results appear here after the next sweep.`;
+      detail.className = 'text-base leading-relaxed';
+    }
+
+    const same = data.options.map((x, idx) => ({ ...x, idx })).filter((x) => x.dim === o.dim);
+    const works = same.filter((x) => r.s[x.idx].toLowerCase() === 'p');
+    const rec = same.find((x) => r.s[x.idx] === r.s[x.idx].toUpperCase() && r.s[x.idx] !== 'U');
+    $('qc-works-label').textContent = works.length ? `Works on ${r.v}:` : `Nothing in this group works on ${r.v}.`;
+    $('qc-works').replaceChildren(
+      ...works.map((x) => {
+        const a = document.createElement('a');
+        a.href = x.href;
+        a.textContent = x.label + (x === rec ? ' (recommended)' : '');
+        a.className = 'px-3 py-1.5 rounded-full border border-line bg-ground font-mono text-xs text-ink no-underline hover:border-brand';
+        return a;
+      }),
+    );
+    $<HTMLAnchorElement>('qc-release').href = `/${p.id}/${r.v}`;
+    $('qc-release').textContent = `Every setup for ${r.v} →`;
+  }
+
+  product.addEventListener('change', () => (fillVersions(), pickRecommendedPhp(), render()));
+  version.addEventListener('change', render);
+  option.addEventListener('change', render);
+  fillVersions();
+  pickRecommendedPhp();
+  render();
+</script>

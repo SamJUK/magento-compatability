@@ -1,0 +1,74 @@
+---
+import StatusCell from './StatusCell.astro';
+import { STEPS, STEP_LABELS } from '@lib/compat.js';
+import type { TestResult } from '@lib/types.js';
+
+interface Props {
+  results: TestResult[];
+  /** Adds a leading column, e.g. the release version on the baseline page. */
+  lead?: { heading: string; cell: (r: TestResult) => { text: string; href?: string } };
+}
+
+const { results, lead } = Astro.props;
+const sorted = [...results].sort((a, b) => (a.overall_status === b.overall_status ? 0 : a.overall_status === 'fail' ? -1 : 1));
+const th = 'px-3 py-2 text-left font-semibold text-muted whitespace-nowrap';
+const td = 'px-3 py-2 border-t border-line whitespace-nowrap';
+---
+
+<div class="relative overflow-x-auto rounded-xl border border-line bg-surface">
+  <table class="w-full text-sm">
+    <thead class="bg-sunken">
+      <tr>
+        {lead && <th scope="col" class={th}>{lead.heading}</th>}
+        <th scope="col" class={th}>Result</th>
+        <th scope="col" class={th}>PHP</th>
+        <th scope="col" class={th}>Database</th>
+        <th scope="col" class={th}>Search</th>
+        <th scope="col" class={th}>Cache</th>
+        <th scope="col" class={th}>Queue</th>
+        <th scope="col" class={th}>Web</th>
+        <th scope="col" class={th}>Varnish</th>
+        <th scope="col" class={th}>Steps</th>
+        <th scope="col" class={th}><span class="sr-only">Logs</span></th>
+      </tr>
+    </thead>
+    <tbody class="font-mono text-xs">
+      {sorted.map((r) => {
+        const s = r.services;
+        const l = lead?.cell(r);
+        return (
+          <tr>
+            {l && <td class={td}>{l.href ? <a href={l.href}>{l.text}</a> : l.text}</td>}
+            <td class={td}>
+              <StatusCell status={r.overall_status === 'pass' ? 'pass' : 'fail'} title={r.overall_status === 'pass' ? 'Passed' : 'Failed'} class="min-w-7 h-7" />
+            </td>
+            <td class={td}>{s.php}</td>
+            <td class={td}>{s.db.type} {s.db.version}</td>
+            <td class={td}>{s.search.type} {s.search.version}</td>
+            <td class={td}>{s.cache.type} {s.cache.version}</td>
+            <td class={td}>{s.queue.type} {s.queue.version}</td>
+            <td class={td}>{s.webserver}</td>
+            <td class={td}>{s.varnish}</td>
+            <td class={td}>
+              <span class="flex gap-1">
+                {STEPS.map((step) => {
+                  const st = r.steps?.[step];
+                  if (!st) return null;
+                  return (
+                    <span
+                      title={`${STEP_LABELS[step]}: ${st.status}`}
+                      class:list={['px-1.5 py-0.5 rounded font-sans text-[11px] font-semibold', st.status === 'pass' ? 'bg-pass text-pass-ink' : 'bg-fail text-fail-ink border border-dashed border-fail-line']}
+                    >{STEP_LABELS[step]}</span>
+                  );
+                })}
+              </span>
+            </td>
+            <td class={td}>
+              <button type="button" data-log-id={r.id} class="px-2.5 py-1.5 rounded-md border border-line font-sans font-semibold text-ink cursor-pointer hover:border-brand">Logs</button>
+            </td>
+          </tr>
+        );
+      })}
+    </tbody>
+  </table>
+</div>
