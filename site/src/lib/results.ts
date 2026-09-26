@@ -1,6 +1,5 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import type {
   TestResult,
   UntestedResult,
@@ -27,8 +26,7 @@ import {
   SERVICE_GROUP_LABELS,
 } from './matrix.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const RESULTS_BASE = resolve(__dirname, '../../../results');
+const RESULTS_BASE = resolve(process.cwd(), '../results');
 
 // ─── Load all results from disk ──────────────────────────────────────────────
 
