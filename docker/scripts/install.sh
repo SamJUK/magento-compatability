@@ -357,7 +357,7 @@ disable_optional_admin_modules() {
 disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
-if [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
+if [[ "${VENDOR_CACHE_SAVE:-1}" == "1" ]] && [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
   if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then
