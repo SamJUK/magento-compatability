@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -282,10 +281,6 @@ Flags:`)
 	waitErr := g.Wait()
 	cancelTicker()
 	prog.redraw() // final repaint before any trailing log lines
-
-	// Prune dangling images and stopped containers from this run.
-	exec.Command("docker", "image", "prune", "-f").Run()     //nolint:errcheck
-	exec.Command("docker", "container", "prune", "-f").Run() //nolint:errcheck
 
 	if *flagBaselines {
 		allPassed := printBaselineSummary(prog.baselines)
