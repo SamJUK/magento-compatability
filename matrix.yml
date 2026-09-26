@@ -863,7 +863,7 @@ products:
           varnish: "7.7"
       - version: "1.2.0"
         baseline:
-          php: "8.4"
+          php: "8.3"
           webserver: apache
           db: { type: mariadb, version: "10.6" }
           search: { type: opensearch, version: "2.19.5" }
