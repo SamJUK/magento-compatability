@@ -90,7 +90,7 @@ make build
 | `-list-json` | `false` | Print combinations as JSON and exit |
 | `-playwright` | `true` | Run Playwright E2E tests after smoke |
 | `-sample-data` | `false` | Install Magento sample data before smoke / Playwright validation |
-| `-no-vendor-cache-save` | `false` | Reuse cached vendor trees but don't store new ones (each is ~650 MB) |
+| `-no-cache-save` | `false` | Don't grow the shared Composer and vendor caches; reuses existing vendor trees (each is ~650 MB) |
 | `-no-tui` | `false` | Disable TUI; plain log output suitable for CI |
 | `-max-log-bytes` | `1048576` | Max bytes captured per container log (`0` = unlimited) |
 | `-matrix` | _(auto)_ | Path to matrix.yml |

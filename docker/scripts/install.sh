@@ -22,6 +22,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/vendor-cache.sh"
 
+# A one-off sweep (CACHE_SAVE=0) keeps the shared caches from growing.
+if [[ "${CACHE_SAVE:-1}" != "1" ]]; then
+  export COMPOSER_CACHE_DIR=/tmp/composer-cache
+fi
+
 ensure_composer_cache_health() {
   local cache_dir="${COMPOSER_CACHE_DIR:-/composer-cache}"
   local config_path="${cache_dir}/config.json"
@@ -357,7 +362,7 @@ disable_optional_admin_modules() {
 disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
-if [[ "${VENDOR_CACHE_SAVE:-1}" == "1" ]] && [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
+if [[ "${CACHE_SAVE:-1}" == "1" ]] && [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
   if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then

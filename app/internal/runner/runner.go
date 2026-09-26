@@ -254,13 +254,13 @@ func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string)
 
 // RunConfig holds configuration for a single combination run.
 type RunConfig struct {
-	ResultsDir          string
-	ComposeDir          string
-	PlaywrightDir       string // path to tests/playwright; empty = skip playwright
-	SkipVendorCacheSave bool
-	InstallSampleData   bool
-	Force               bool
-	MaxLogBytes         int64 // bytes to tail per container log; 0 = use default (1 MiB)
+	ResultsDir        string
+	ComposeDir        string
+	PlaywrightDir     string // path to tests/playwright; empty = skip playwright
+	SkipCacheSave     bool
+	InstallSampleData bool
+	Force             bool
+	MaxLogBytes       int64 // bytes to tail per container log; 0 = use default (1 MiB)
 }
 
 // searchConfigFlag returns the search type identifier for the Magento install
@@ -535,8 +535,8 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	}
 
 	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c), cfg.InstallSampleData)
-	if cfg.SkipVendorCacheSave {
-		magentoEnv = append(magentoEnv, "VENDOR_CACHE_SAVE=0")
+	if cfg.SkipCacheSave {
+		magentoEnv = append(magentoEnv, "CACHE_SAVE=0")
 	}
 
 	cp, err := newCompose(c, cfg.ComposeDir, magentoEnv)
