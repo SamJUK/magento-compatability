@@ -1,5 +1,5 @@
 import { defineConfig } from 'astro/config';
-import tailwind from '@astrojs/tailwind';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -35,10 +35,9 @@ const devCacheRefreshPlugin = {
 
 export default defineConfig({
   output: 'static',
-  integrations: [tailwind()],
   site: 'https://m2compat.example.com',
   vite: {
-    plugins: [devCacheRefreshPlugin],
+    plugins: [tailwindcss(), devCacheRefreshPlugin],
     resolve: {
       alias: {
         '@lib': path.resolve(__dirname, 'src/lib'),

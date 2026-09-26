@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
+import { resolve } from 'node:path';
+import { load } from 'js-yaml';
 import type {
   MatrixDefinition,
   ProductDefinition,
@@ -12,8 +11,7 @@ import type {
   TestServices,
 } from './types.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const MATRIX_PATH = resolve(__dirname, '../../../matrix.yml');
+const MATRIX_PATH = resolve(process.cwd(), '../matrix.yml');
 
 // ─── Load + cache ─────────────────────────────────────────────────────────────
 
@@ -22,7 +20,7 @@ let _matrix: MatrixDefinition | null = null;
 export function getMatrix(): MatrixDefinition {
   if (_matrix) return _matrix;
   const raw = readFileSync(MATRIX_PATH, 'utf-8');
-  _matrix = yaml.load(raw) as MatrixDefinition;
+  _matrix = load(raw) as MatrixDefinition;
   return _matrix;
 }
 
