@@ -47,6 +47,10 @@ services:
       - "${WEBSERVER_PORT:-0}:80"
     volumes:
       - magento:/var/www/html:ro
+      - type: bind
+        source: "${WEBSERVER_CONFIG_SOURCE}"
+        target: "${WEBSERVER_CONFIG_TARGET}"
+        read_only: true
     networks:
       - magento
     depends_on:

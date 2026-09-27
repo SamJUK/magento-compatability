@@ -61,6 +61,23 @@ fi
 # ─── Fix permissions ──────────────────────────────────────────────────────────
 echo ""
 echo "=== Fixing file permissions ==="
+
+# Pre-create Magento runtime directories so the first web request does not race
+# directory creation inside the PHP-FPM worker.
+for dir in \
+  "${MAGENTO_DIR}/var/cache" \
+  "${MAGENTO_DIR}/var/page_cache" \
+  "${MAGENTO_DIR}/var/session" \
+  "${MAGENTO_DIR}/var/log" \
+  "${MAGENTO_DIR}/var/view_preprocessed" \
+  "${MAGENTO_DIR}/pub/static" \
+  "${MAGENTO_DIR}/pub/media" \
+  "${MAGENTO_DIR}/generated/code" \
+  "${MAGENTO_DIR}/generated/metadata"
+do
+  mkdir -p "${dir}"
+done
+
 chown -R www-data:www-data \
   "${MAGENTO_DIR}/var" \
   "${MAGENTO_DIR}/pub" \
