@@ -164,9 +164,9 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	}
 
 	want := result.Failure{
-		Category:    "compatibility",
-		Code:        "elasticsearch8_unsupported",
-		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
+		Category:    "harness",
+		Code:        "elasticsearch8_module_unavailable",
+		Summary:     "Elasticsearch 8 on Magento 2.4.6/2.4.7 needs magento/module-elasticsearch-8, which only repo.magento.com serves; the harness cannot install it.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
@@ -192,13 +192,31 @@ func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUse
 	}
 
 	want := result.Failure{
-		Category:    "compatibility",
-		Code:        "elasticsearch8_unsupported",
-		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
+		Category:    "harness",
+		Code:        "elasticsearch8_module_unavailable",
+		Summary:     "Elasticsearch 8 on Magento 2.4.6/2.4.7 needs magento/module-elasticsearch-8, which only repo.magento.com serves; the harness cannot install it.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
 		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestClassifyStepFailureForCombination_Elasticsearch8UnsupportedOnMageOS10(t *testing.T) {
+	c := matrix.Combination{
+		Product:       "mageos",
+		Version:       "1.0.6",
+		SearchType:    "elasticsearch",
+		SearchVersion: "8.11.4",
+	}
+
+	got := classifyStepFailureForCombination(
+		c,
+		"install",
+		"Could not validate a connection to Elasticsearch.\nNo alive nodes found in your cluster",
+	)
+	if got == nil || got.Category != "compatibility" || got.Code != "elasticsearch8_unsupported" {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want compatibility/elasticsearch8_unsupported", got)
 	}
 }
 

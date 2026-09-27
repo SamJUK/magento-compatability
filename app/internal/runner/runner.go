@@ -77,6 +77,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Composer package extraction exceeded the archive unzip timeout.",
 			LikelyFlaky: true,
 		}
+	case stepName == "install" && isKnownElasticsearch8CompatibilityFailure(c, text) && needsElasticsearch8Module(c):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "elasticsearch8_module_unavailable",
+			Summary:     "Elasticsearch 8 on Magento 2.4.6/2.4.7 needs magento/module-elasticsearch-8, which only repo.magento.com serves; the harness cannot install it.",
+			LikelyFlaky: false,
+		}
 	case stepName == "install" && isKnownElasticsearch8CompatibilityFailure(c, text):
 		return &result.Failure{
 			Category:    "compatibility",
@@ -249,6 +256,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 	default:
 		return nil
 	}
+}
+
+// Adobe supports Elasticsearch 8 on 2.4.6/2.4.7 through an add-on module that
+// the public mirror does not carry.
+func needsElasticsearch8Module(c matrix.Combination) bool {
+	return c.Product == "magento" &&
+		(strings.HasPrefix(c.Version, "2.4.6") || strings.HasPrefix(c.Version, "2.4.7"))
 }
 
 func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string) bool {
