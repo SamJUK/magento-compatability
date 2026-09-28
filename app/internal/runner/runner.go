@@ -669,6 +669,7 @@ func writeResult(
 		},
 		Steps:         steps,
 		ContainerLogs: containerLogs,
+		Workarounds:   result.ParseWorkarounds(steps["install"].Log),
 		Timestamp:     result.Now(),
 	}
 

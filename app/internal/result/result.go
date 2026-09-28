@@ -69,7 +69,23 @@ type TestResult struct {
 	Services      Services          `json:"services"`
 	Steps         map[string]Step   `json:"steps"`
 	ContainerLogs map[string]string `json:"container_logs,omitempty"`
+	Workarounds   []string          `json:"workarounds,omitempty"`
 	Timestamp     string            `json:"timestamp"`
+}
+
+// ParseWorkarounds returns the ids install.sh reported with "[WORKAROUND] <id>",
+// in first-seen order. Ids are keys into docker/scripts/workarounds.json.
+func ParseWorkarounds(log string) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(log, "\n") {
+		id, ok := strings.CutPrefix(strings.TrimSpace(line), "[WORKAROUND] ")
+		if ok && id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

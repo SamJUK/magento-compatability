@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -191,5 +192,22 @@ func TestOverallStatus(t *testing.T) {
 		if got != tc.expect {
 			t.Errorf("OverallStatus(%v) = %q, want %q", tc.steps, got, tc.expect)
 		}
+	}
+}
+
+func TestParseWorkarounds(t *testing.T) {
+	log := "[INFO] Applying 2.4.4 version constraint fixes\n" +
+		"[WORKAROUND] magento-244-composer-aliases\n" +
+		"  [WORKAROUND] AC-2855  \n" +
+		"[WORKAROUND] magento-244-composer-aliases\n" +
+		"echo [WORKAROUND] not-a-marker\n"
+
+	got := result.ParseWorkarounds(log)
+	want := []string{"magento-244-composer-aliases", "AC-2855"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseWorkarounds() = %q, want %q", got, want)
+	}
+	if result.ParseWorkarounds("[OK] Composer install complete") != nil {
+		t.Fatal("ParseWorkarounds() without markers should be nil so the field is omitted")
 	}
 }

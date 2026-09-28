@@ -96,6 +96,7 @@ apply_version_fixes() {
   case "${PRODUCT_VERSION}" in
     2.4.4)
       echo "[INFO] Applying 2.4.4 version constraint fixes"
+      echo "[WORKAROUND] magento-244-composer-aliases"
       composer require "magento/security-package:1.1.3-p1 as 1.1.3" \
         --no-update --no-interaction 2>&1
       composer require "magento/inventory-metapackage:1.2.4-p1 as 1.2.4" \
@@ -105,6 +106,7 @@ apply_version_fixes() {
 
   if uses_elasticsearch8_module; then
     echo "[INFO] Swapping magento/module-elasticsearch-7 for magento/module-elasticsearch-8"
+    echo "[WORKAROUND] elasticsearch8-module"
     php -r '$f = "composer.json"; $j = json_decode(file_get_contents($f), true);
       $j["replace"]["magento/module-elasticsearch-7"] = "*";
       file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
@@ -122,6 +124,7 @@ uses_elasticsearch8_module() {
 
 # ─── Patch application ────────────────────────────────────────────────────────
 # Applies .patch files from /scripts/patches/ to the Magento installation.
+# Each one used is reported as [WORKAROUND] <id>; see workarounds.json.
 # Uses `patch --dry-run` to test applicability — skips silently if a patch
 # does not apply (wrong version or already applied in cached vendor).
 apply_patch_files() {
@@ -136,7 +139,11 @@ apply_patch_files() {
     if patch --dry-run -p1 -d "${MAGENTO_DIR}" < "${patch_file}" &>/dev/null; then
       patch -p1 -d "${MAGENTO_DIR}" < "${patch_file}" > /dev/null
       echo "[OK] Applied patch: ${name}"
+      echo "[WORKAROUND] ${name%.patch}"
       (( applied++ )) || true
+    elif patch -R --dry-run -p1 -d "${MAGENTO_DIR}" < "${patch_file}" &>/dev/null; then
+      echo "[INFO] Patch already applied (vendor cache): ${name}"
+      echo "[WORKAROUND] ${name%.patch}"
     else
       echo "[INFO] Skipped patch (not applicable): ${name}"
       (( skipped++ )) || true
