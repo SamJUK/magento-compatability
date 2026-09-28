@@ -102,6 +102,22 @@ apply_version_fixes() {
         --no-update --no-interaction 2>&1
       ;;
   esac
+
+  if uses_elasticsearch8_module; then
+    echo "[INFO] Swapping magento/module-elasticsearch-7 for magento/module-elasticsearch-8"
+    php -r '$f = "composer.json"; $j = json_decode(file_get_contents($f), true);
+      $j["replace"]["magento/module-elasticsearch-7"] = "*";
+      file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+    composer require magento/module-elasticsearch-8 --no-update --no-interaction 2>&1
+  fi
+}
+
+# Adobe supports Elasticsearch 8 on 2.4.6/2.4.7 through an add-on module that
+# replaces the bundled Elasticsearch 7 one.
+uses_elasticsearch8_module() {
+  [[ "${PRODUCT_PACKAGE}" == "magento/project-community-edition" ]] &&
+    [[ "${SEARCH_TYPE}" == "elasticsearch8" ]] &&
+    [[ "${PRODUCT_VERSION}" == 2.4.6* || "${PRODUCT_VERSION}" == 2.4.7* ]]
 }
 
 # ─── Patch application ────────────────────────────────────────────────────────
@@ -173,6 +189,7 @@ bash "${SCRIPT_DIR}/wait-for-services.sh"
 _pkg_slug="${PRODUCT_PACKAGE//\//-}"
 _pkg_slug="${_pkg_slug// /-}"
 VENDOR_CACHE_KEY="${PHP_VERSION:-8.3}-${_pkg_slug}-${PRODUCT_VERSION}"
+uses_elasticsearch8_module && VENDOR_CACHE_KEY+="-es8"
 VENDOR_CACHE_PATH="${VENDOR_CACHE_DIR}/${VENDOR_CACHE_KEY}"
 
 # Clear both normal files and dotfiles from previous runs before create-project.

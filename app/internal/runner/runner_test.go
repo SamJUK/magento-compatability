@@ -146,10 +146,10 @@ func TestComposeFileMap_AllKnownTypes(t *testing.T) {
 	}
 }
 
-func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T) {
+func TestClassifyStepFailureForCombination_Elasticsearch8ModuleUnresolvable(t *testing.T) {
 	c := matrix.Combination{
 		Product:       "magento",
-		Version:       "2.4.6-p11",
+		Version:       "2.4.6-p3",
 		SearchType:    "elasticsearch",
 		SearchVersion: "8.11.4",
 	}
@@ -157,7 +157,7 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	got := classifyStepFailureForCombination(
 		c,
 		"install",
-		"Could not validate a connection to the OpenSearch.\nNo alive nodes found in your cluster",
+		"Your requirements could not be resolved to an installable set of packages.\n  - Root composer.json requires magento/module-elasticsearch-8 * -> satisfiable by magento/module-elasticsearch-8[101.0.0].",
 	)
 	if got == nil {
 		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
@@ -166,7 +166,7 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	want := result.Failure{
 		Category:    "harness",
 		Code:        "elasticsearch8_module_unavailable",
-		Summary:     "Elasticsearch 8 on Magento 2.4.6/2.4.7 needs magento/module-elasticsearch-8, which only repo.magento.com serves; the harness cannot install it.",
+		Summary:     "The public mirrors only carry magento/module-elasticsearch-8 builds for the 8.15+ Elasticsearch client, which this release's core pins out; the matching build is only on repo.magento.com.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
@@ -174,7 +174,7 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	}
 }
 
-func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUsesElasticsearchMessage(t *testing.T) {
+func TestClassifyStepFailureForCombination_Elasticsearch8ConnectionFailureWithModule(t *testing.T) {
 	c := matrix.Combination{
 		Product:       "magento",
 		Version:       "2.4.7-p10",
@@ -192,9 +192,9 @@ func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUse
 	}
 
 	want := result.Failure{
-		Category:    "harness",
-		Code:        "elasticsearch8_module_unavailable",
-		Summary:     "Elasticsearch 8 on Magento 2.4.6/2.4.7 needs magento/module-elasticsearch-8, which only repo.magento.com serves; the harness cannot install it.",
+		Category:    "compatibility",
+		Code:        "elasticsearch8_unsupported",
+		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
