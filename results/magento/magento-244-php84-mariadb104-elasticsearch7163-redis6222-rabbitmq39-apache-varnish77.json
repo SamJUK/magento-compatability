@@ -50,5 +50,8 @@
     "varnish": "varnish-1  | 2026-09-28T00:12:11.322446781Z Debug: Version: varnish-7.7.3 revision 6884b75af9c9bdb2c9b6e2aa464a435e42cb4931\nvarnish-1  | 2026-09-28T00:12:11.322462197Z Debug: Platform: Linux,7.0.14-orbstack-00380-ga7e0a2dc9535,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-09-28T00:12:11.323163534Z Debug: Child (20) Started\nvarnish-1  | 2026-09-28T00:12:11.374324408Z Child launched OK\nvarnish-1  | 2026-09-28T00:12:11.374678202Z Info: Child (20) said Child starts\n",
     "webserver": ""
   },
+  "workarounds": [
+    "magento-244-composer-aliases"
+  ],
   "timestamp": "2026-09-28T00:12:23Z"
 }

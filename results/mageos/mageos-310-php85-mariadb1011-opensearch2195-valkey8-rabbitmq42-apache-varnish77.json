@@ -55,5 +55,8 @@
     "varnish": "varnish-1  | 2026-09-28T06:56:51.462929049Z Debug: Version: varnish-7.7.3 revision 6884b75af9c9bdb2c9b6e2aa464a435e42cb4931\nvarnish-1  | 2026-09-28T06:56:51.462951674Z Debug: Platform: Linux,7.0.14-orbstack-00380-ga7e0a2dc9535,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-09-28T06:56:51.463606967Z Debug: Child (20) Started\nvarnish-1  | 2026-09-28T06:56:51.520131754Z Child launched OK\nvarnish-1  | 2026-09-28T06:56:51.520778089Z Info: Child (20) said Child starts\n",
     "webserver": "webserver-1  | 2026-09-28T06:57:55.152836187Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 172.31.112.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-09-28T06:57:55.154288774Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 172.31.112.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-09-28T06:57:55.155780654Z [Mon Sep 28 06:57:55.155616 2026] [mpm_event:notice] [pid 1:tid 1] AH00489: Apache/2.4.68 (Unix) configured -- resuming normal operations\nwebserver-1  | 2026-09-28T06:57:55.155804362Z [Mon Sep 28 06:57:55.155690 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'httpd -D FOREGROUND'\n"
   },
+  "workarounds": [
+    "musl-glob-brace-mageos"
+  ],
   "timestamp": "2026-09-28T06:59:05Z"
 }
