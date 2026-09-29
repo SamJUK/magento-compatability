@@ -174,8 +174,8 @@ what it fixes and where it came from. Every result records the ids it needed in
 
 Patch files live in `docker/scripts/patches/`. A patch is only applied to the
 product versions its entry lists (`"2.4.4"` covers 2.4.4 and its `-pN`
-releases, `"3.0"` covers 3.0.x), and only when `patch -p1 --dry-run` says it
-fits. Module swaps and Composer aliases are handled in
+releases, `"3.0"` covers 3.0.x), limited to the PHP versions in its optional
+`php` list, and only when `patch -p1 --dry-run` says it fits. Module swaps and Composer aliases are handled in
 `docker/scripts/install.sh` → `apply_version_fixes()`.
 
 To add one:

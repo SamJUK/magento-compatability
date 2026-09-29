@@ -115,6 +115,36 @@
         "3.1"
       ],
       "environment": "Alpine/musl PHP < 8.5"
+    },
+    {
+      "id": "mageos-reservations-grid-typed-constants",
+      "kind": "patch",
+      "title": "Typed class constants break PHP 8.2 in the reservations grid module",
+      "detail": "mage-os/module-inventory-reservations-grid 1.0.1 (pinned by Mage-OS 2.0.0) declares `const string` / `const array`, which is PHP 8.3 syntax, so setup:install fails on PHP 8.2 with \"syntax error, unexpected identifier TABLE_NAME\". Upstream fixed it in 0e32434 (PHP <8.3 compat, #14); Mage-OS 2.1.0 ships the fixed module.",
+      "product": "mageos",
+      "versions": [
+        "2.0.0"
+      ],
+      "source": "https://github.com/mage-os/module-inventory-reservations-grid/commit/0e32434310",
+      "php": [
+        "8.2"
+      ]
+    },
+    {
+      "id": "mageos-admin-analytics-php84-nullable",
+      "kind": "patch",
+      "title": "PHP 8.4 implicit-nullable deprecation stops setup:di:compile",
+      "detail": "Magento\\\\AdminAnalytics\\\\Model\\\\Condition\\\\CanViewNotification::__construct() declares `ScopeConfigInterface $scopeConfig = null`. PHP 8.4 deprecates the implicit nullable and Magento's error handler turns the deprecation into an exception. The fix adds `?`. Merged to release/1.x in mage-os/mageos-magento2#158 after 1.3.1 was tagged, so no 1.x release carries it; 2.0.0 does.",
+      "product": "mageos",
+      "versions": [
+        "1.1",
+        "1.2",
+        "1.3"
+      ],
+      "source": "https://github.com/mage-os/mageos-magento2/pull/158",
+      "php": [
+        "8.4"
+      ]
     }
   ]
 }

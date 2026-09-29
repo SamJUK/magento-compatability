@@ -138,9 +138,9 @@ pins_old_elasticsearch_client() {
   esac
 }
 
-# True when workarounds.json lists <id> for this product and version. A listed
-# version matches itself and its patch releases: "2.4.4" covers "2.4.4-p13",
-# "3.0" covers "3.0.1".
+# True when workarounds.json lists <id> for this product and version (and PHP
+# version, when the entry names any). A listed version matches itself and its
+# patch releases: "2.4.4" covers "2.4.4-p13", "3.0" covers "3.0.1".
 workaround_applies() {
   WORKAROUND_ID="$1" php <<'PHP'
 <?php
@@ -149,6 +149,9 @@ $version = getenv('PRODUCT_VERSION');
 $registry = json_decode(file_get_contents('/scripts/workarounds.json'), true)['workarounds'] ?? [];
 foreach ($registry as $w) {
     if ($w['id'] !== getenv('WORKAROUND_ID') || $w['product'] !== $product) {
+        continue;
+    }
+    if (isset($w['php']) && !in_array(getenv('PHP_VERSION'), $w['php'], true)) {
         continue;
     }
     foreach ($w['versions'] as $v) {

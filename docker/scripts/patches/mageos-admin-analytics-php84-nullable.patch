@@ -1,0 +1,13 @@
+diff --git a/vendor/mage-os/module-admin-analytics/Model/Condition/CanViewNotification.php b/vendor/mage-os/module-admin-analytics/Model/Condition/CanViewNotification.php
+index 34084e97e692..c0efc3909cec 100644
+--- a/vendor/mage-os/module-admin-analytics/Model/Condition/CanViewNotification.php
++++ b/vendor/mage-os/module-admin-analytics/Model/Condition/CanViewNotification.php
+@@ -55,7 +55,7 @@ class CanViewNotification implements VisibilityConditionInterface
+     public function __construct(
+         Logger $viewerLogger,
+         CacheInterface $cacheStorage,
+-        ScopeConfigInterface $scopeConfig = null
++        ?ScopeConfigInterface $scopeConfig = null
+     ) {
+         $this->viewerLogger = $viewerLogger;
+         $this->cacheStorage = $cacheStorage;
