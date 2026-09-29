@@ -4,9 +4,11 @@ WORKDIR /app
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+RUN npm install -g corepack && corepack enable
 
 COPY site/package.json site/pnpm-lock.yaml site/pnpm-workspace.yaml ./site/
+# Corepack takes the pnpm version from package.json in the working directory.
+WORKDIR /app/site
 RUN pnpm --dir /app/site/ install --frozen-lockfile
 
 COPY site/ /app/site/
