@@ -111,6 +111,10 @@ apply_version_fixes() {
       $j["replace"]["magento/module-elasticsearch-7"] = "*";
       file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
     composer require magento/module-elasticsearch-8 --no-update --no-interaction 2>&1
+    if pins_old_elasticsearch_client; then
+      echo "[WORKAROUND] elasticsearch8-client-alias"
+      composer require "elasticsearch/elasticsearch:8.17.1 as 8.5.3" --no-update --no-interaction 2>&1
+    fi
   fi
 }
 
@@ -122,11 +126,46 @@ uses_elasticsearch8_module() {
     [[ "${PRODUCT_VERSION}" == 2.4.6* || "${PRODUCT_VERSION}" == 2.4.7* ]]
 }
 
+# Before 2.4.6-p10 / 2.4.7-p5, core pins elasticsearch/elasticsearch to ~8.5,
+# below the ^8.15 the mirrored module-elasticsearch-8 builds need.
+pins_old_elasticsearch_client() {
+  local patch_level="${PRODUCT_VERSION#*-p}"
+  [[ "${PRODUCT_VERSION}" == *-p* ]] || patch_level=0
+  case "${PRODUCT_VERSION}" in
+    2.4.6*) (( patch_level < 10 )) ;;
+    2.4.7*) (( patch_level < 5 )) ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when workarounds.json lists <id> for this product and version. A listed
+# version matches itself and its patch releases: "2.4.4" covers "2.4.4-p13",
+# "3.0" covers "3.0.1".
+workaround_applies() {
+  WORKAROUND_ID="$1" php <<'PHP'
+<?php
+$product = strpos(getenv('PRODUCT_PACKAGE'), 'mage-os/') === 0 ? 'mageos' : 'magento';
+$version = getenv('PRODUCT_VERSION');
+$registry = json_decode(file_get_contents('/scripts/workarounds.json'), true)['workarounds'] ?? [];
+foreach ($registry as $w) {
+    if ($w['id'] !== getenv('WORKAROUND_ID') || $w['product'] !== $product) {
+        continue;
+    }
+    foreach ($w['versions'] as $v) {
+        if ($version === $v || strpos($version, "$v-p") === 0 || strpos($version, "$v.") === 0) {
+            exit(0);
+        }
+    }
+}
+exit(1);
+PHP
+}
+
 # ─── Patch application ────────────────────────────────────────────────────────
 # Applies .patch files from /scripts/patches/ to the Magento installation.
 # Each one used is reported as [WORKAROUND] <id>; see workarounds.json.
-# Uses `patch --dry-run` to test applicability — skips silently if a patch
-# does not apply (wrong version or already applied in cached vendor).
+# Only patches workarounds.json lists for this version are tried, and each is
+# checked with `patch --dry-run` first.
 apply_patch_files() {
   local patches_dir="/scripts/patches"
   [[ -d "${patches_dir}" ]] || return 0
@@ -136,6 +175,11 @@ apply_patch_files() {
     [[ -f "${patch_file}" ]] || continue
     local name
     name="$(basename "${patch_file}")"
+    if ! workaround_applies "${name%.patch}"; then
+      echo "[INFO] Skipped patch (not listed for ${PRODUCT_VERSION}): ${name}"
+      (( skipped++ )) || true
+      continue
+    fi
     if patch --dry-run -p1 -d "${MAGENTO_DIR}" < "${patch_file}" &>/dev/null; then
       patch -p1 -d "${MAGENTO_DIR}" < "${patch_file}" > /dev/null
       echo "[OK] Applied patch: ${name}"

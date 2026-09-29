@@ -24,6 +24,31 @@
       "source": "https://experienceleague.adobe.com/en/docs/commerce-operations/installation-guide/prerequisites/search-engine/overview"
     },
     {
+      "id": "elasticsearch8-client-alias",
+      "kind": "composer",
+      "title": "Alias the Elasticsearch 8 client for older patch releases",
+      "detail": "Core on 2.4.6-p9 and earlier and 2.4.7-p4 and earlier pins elasticsearch/elasticsearch to ~8.5, below the ^8.15 that the mirrored magento/module-elasticsearch-8 needs. composer require \"elasticsearch/elasticsearch:8.17.1 as 8.5.3\" satisfies both.",
+      "product": "magento",
+      "versions": [
+        "2.4.6",
+        "2.4.6-p1",
+        "2.4.6-p2",
+        "2.4.6-p3",
+        "2.4.6-p4",
+        "2.4.6-p5",
+        "2.4.6-p6",
+        "2.4.6-p7",
+        "2.4.6-p8",
+        "2.4.6-p9",
+        "2.4.7",
+        "2.4.7-p1",
+        "2.4.7-p2",
+        "2.4.7-p3",
+        "2.4.7-p4"
+      ],
+      "search": "elasticsearch 8"
+    },
+    {
       "id": "AC-2855",
       "kind": "patch",
       "title": "ACSD-59280: ReflectionUnionType::getName() error",
@@ -38,11 +63,9 @@
       "id": "ACSD-46815_2.4.4_v2",
       "kind": "patch",
       "title": "ACSD-46815: static content deploy fails with the compact strategy",
-      "detail": "Adobe quality patch; setup:static-content:deploy with the compact strategy fails without it. Built for 2.4.4, applies cleanly to 2.4.2 and 2.4.3 too.",
+      "detail": "Adobe quality patch; setup:static-content:deploy with the compact strategy fails on 2.4.4 without it.",
       "product": "magento",
       "versions": [
-        "2.4.2",
-        "2.4.3",
         "2.4.4"
       ],
       "source": "https://experienceleague.adobe.com/en/docs/commerce-operations/tools/quality-patches-tool/patches-available-in-qpt/overview"
@@ -65,11 +88,6 @@
       "detail": "Fixes \"complex type 'mixedDataType': The content model is not deterministic\". Needed wherever PHP links libxml2 2.12 or newer. Patch by Pieter Hoste.",
       "product": "magento",
       "versions": [
-        "2.4.2",
-        "2.4.3",
-        "2.4.4",
-        "2.4.5",
-        "2.4.6",
         "2.4.7"
       ],
       "environment": "libxml2 2.12+",
