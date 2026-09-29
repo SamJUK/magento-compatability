@@ -853,6 +853,17 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "storefront timeout",
+			stepName: "playwright",
+			log:      "TimeoutError: page.goto: Timeout 30000ms exceeded.\n  - navigating to \"http://localhost:35842/\", waiting until \"domcontentloaded\"",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "storefront_timeout",
+				Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",

@@ -177,6 +177,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
 			LikelyFlaky: false,
 		}
+	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "storefront_timeout",
+			Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
+			LikelyFlaky: true,
+		}
 	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
 		strings.Contains(text, "endpoint with name") && strings.Contains(text, "already exists in network") ||
 		strings.Contains(text, "network with name") && strings.Contains(text, "already exists")):
