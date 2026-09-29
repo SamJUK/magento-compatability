@@ -90,6 +90,7 @@ make build
 | `-list-json` | `false` | Print combinations as JSON and exit |
 | `-playwright` | `true` | Run Playwright E2E tests after smoke |
 | `-sample-data` | `false` | Install Magento sample data before smoke / Playwright validation |
+| `-no-cache-save` | `false` | Don't grow the shared Composer and vendor caches; reuses existing vendor trees (each is ~650 MB) |
 | `-no-tui` | `false` | Disable TUI; plain log output suitable for CI |
 | `-max-log-bytes` | `1048576` | Max bytes captured per container log (`0` = unlimited) |
 | `-matrix` | _(auto)_ | Path to matrix.yml |
@@ -164,20 +165,22 @@ Each combination writes `results/{product}/{combo-id}.json`:
 
 ---
 
-## Patching
+## Workarounds
 
-Version-specific core bugs are fixed automatically during install.
-Patch files live in `docker/scripts/patches/` and are applied on every install
-(regardless of vendor cache state) using `patch -p1 --dry-run` to check applicability
-before applying. Inapplicable patches are silently skipped.
+Some combinations only install with extra knowledge: a core patch, an add-on
+module or a Composer alias. `docker/scripts/workarounds.json` lists each one with
+what it fixes and where it came from. Every result records the ids it needed in
+`workarounds`, so the site and API can warn that a pass depends on them.
 
-To add a patch:
-1. Drop a `.patch` file into `docker/scripts/patches/`
-2. Add an entry to `docker/scripts/patches.json`
-3. The patch will be applied (or silently skipped) on the next run
+Patch files live in `docker/scripts/patches/`. A patch is only applied to the
+product versions its entry lists (`"2.4.4"` covers 2.4.4 and its `-pN`
+releases, `"3.0"` covers 3.0.x), limited to the PHP versions in its optional
+`php` list, and only when `patch -p1 --dry-run` says it fits. Module swaps and Composer aliases are handled in
+`docker/scripts/install.sh` → `apply_version_fixes()`.
 
-Version-specific Composer constraint fixes (e.g. 2.4.4 package aliasing) are
-handled in `docker/scripts/install.sh` → `apply_version_fixes()`.
+To add one:
+1. Drop the `.patch` file into `docker/scripts/patches/`, or add the step to `apply_version_fixes()` with `echo "[WORKAROUND] <id>"`
+2. Add an entry with the same id to `docker/scripts/workarounds.json`
 
 ---
 

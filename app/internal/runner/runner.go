@@ -77,6 +77,14 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Composer package extraction exceeded the archive unzip timeout.",
 			LikelyFlaky: true,
 		}
+	case stepName == "install" && strings.Contains(text, "requires magento/module-elasticsearch-8") &&
+		strings.Contains(text, "could not be resolved"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "elasticsearch8_module_unavailable",
+			Summary:     "The public mirrors only carry magento/module-elasticsearch-8 builds for the 8.15+ Elasticsearch client, which this release's core pins out; the matching build is only on repo.magento.com.",
+			LikelyFlaky: false,
+		}
 	case stepName == "install" && isKnownElasticsearch8CompatibilityFailure(c, text):
 		return &result.Failure{
 			Category:    "compatibility",
@@ -117,9 +125,9 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 		}
 	case stepName == "install" && strings.Contains(text, "glob_brace"):
 		return &result.Failure{
-			Category:    "compatibility",
+			Category:    "harness",
 			Code:        "glob_brace_unsupported",
-			Summary:     "The application references an undefined GLOB_BRACE constant during setup bootstrap.",
+			Summary:     "GLOB_BRACE is undefined on Alpine/musl PHP < 8.5; the musl-glob-brace patch did not apply.",
 			LikelyFlaky: false,
 		}
 	case (stepName == "install" || stepName == "smoke") && (strings.Contains(text, "could not scan for classes inside") &&
@@ -155,11 +163,25 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Shared Composer cache state became corrupted during the harness run.",
 			LikelyFlaky: true,
 		}
-	case (stepName == "stack_up" || stepName == "install") && strings.Contains(text, "no space left on device"):
+	case strings.Contains(text, "no space left on device"):
 		return &result.Failure{
 			Category:    "infrastructure",
 			Code:        "disk_space",
 			Summary:     "The run exhausted host or Docker disk space.",
+			LikelyFlaky: true,
+		}
+	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "playwright_browser_missing",
+			Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
+			LikelyFlaky: false,
+		}
+	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "storefront_timeout",
+			Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
 			LikelyFlaky: true,
 		}
 	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
@@ -257,6 +279,7 @@ type RunConfig struct {
 	ResultsDir        string
 	ComposeDir        string
 	PlaywrightDir     string // path to tests/playwright; empty = skip playwright
+	SkipCacheSave     bool
 	InstallSampleData bool
 	Force             bool
 	MaxLogBytes       int64 // bytes to tail per container log; 0 = use default (1 MiB)
@@ -529,7 +552,14 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
+	if ctx.Err() != nil {
+		return false, nil
+	}
+
 	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c), cfg.InstallSampleData)
+	if cfg.SkipCacheSave {
+		magentoEnv = append(magentoEnv, "CACHE_SAVE=0")
+	}
 
 	cp, err := newCompose(c, cfg.ComposeDir, magentoEnv)
 	if err != nil {
@@ -556,10 +586,8 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 
 	defer func() {
 		_ = cp.Down(context.Background())
-		// Don't persist a partial result from a cancelled run — it would
-		// block re-runs without --force.
+		// A cancelled run leaves any previous result untouched.
 		if ctx.Err() != nil {
-			os.Remove(resultPath)
 			ran = false
 			err = nil
 		}
@@ -648,9 +676,13 @@ func writeResult(
 		},
 		Steps:         steps,
 		ContainerLogs: containerLogs,
+		Workarounds:   result.ParseWorkarounds(steps["install"].Log),
 		Timestamp:     result.Now(),
 	}
 
+	if ctx.Err() != nil {
+		return nil
+	}
 	return result.Write(path, r)
 }
 

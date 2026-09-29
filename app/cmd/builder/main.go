@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -121,6 +120,7 @@ Flags:`)
 		flagComposeDir         = fs.String("compose-dir", "", "Path to compose directory (default: <repo-root>/docker/compose)")
 		flagPlaywright         = fs.Bool("playwright", true, "Run Playwright E2E tests after smoke tests")
 		flagSampleData         = fs.Bool("sample-data", false, "Install Magento sample data before smoke/Playwright validation")
+		flagNoCacheSave        = fs.Bool("no-cache-save", false, "Don't grow the shared Composer and vendor caches (saves disk on one-off sweeps)")
 		flagBaselines          = fs.Bool("baseline", false, "Run only the baseline combination(s) and print a structured pass/fail summary")
 		flagNoTUI              = fs.Bool("no-tui", false, "Disable TUI — plain log output suitable for CI (also set by $CI env var)")
 		flagRetrySetupFailures = fs.Bool("retry-setup-failures", false, "Re-run only combinations whose stack_up step previously failed (implies -force)")
@@ -231,6 +231,7 @@ Flags:`)
 			return ""
 		}(),
 		InstallSampleData: *flagSampleData,
+		SkipCacheSave:     *flagNoCacheSave,
 		Force:             *flagForce || *flagRetrySetupFailures,
 		MaxLogBytes:       *flagMaxLogBytes,
 	}
@@ -282,10 +283,6 @@ Flags:`)
 	waitErr := g.Wait()
 	cancelTicker()
 	prog.redraw() // final repaint before any trailing log lines
-
-	// Prune dangling images and stopped containers from this run.
-	exec.Command("docker", "image", "prune", "-f").Run()     //nolint:errcheck
-	exec.Command("docker", "container", "prune", "-f").Run() //nolint:errcheck
 
 	if *flagBaselines {
 		allPassed := printBaselineSummary(prog.baselines)

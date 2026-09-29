@@ -1,4 +1,7 @@
 ARG PHP_VERSION=8.3
+FROM composer/composer:2.2.26-bin AS composer-lts
+FROM composer/composer:2.9.8-bin AS composer-latest
+
 FROM php:${PHP_VERSION}-fpm-alpine
 
 WORKDIR /var/www/html
@@ -46,13 +49,15 @@ COPY custom.ini /usr/local/etc/php/conf.d/
 #
 # Helper Tools
 #
-RUN --mount=type=cache,target=/tmp/composer-download \
-    if [[ "$PHP_VERSION" = 7.4* ]]; then \
-        curl -sOL https://getcomposer.org/download/2.2.26/composer.phar; \
+# Composer 2.2 LTS is the last line that supports PHP 7.4.
+COPY --from=composer-lts /composer /tmp/composer-lts
+COPY --from=composer-latest /composer /tmp/composer-latest
+RUN if [[ "$PHP_VERSION" = 7.4* ]]; then \
+        mv /tmp/composer-lts /usr/local/bin/composer; \
     else \
-        curl -sOL https://getcomposer.org/download/2.9.8/composer.phar; \
+        mv /tmp/composer-latest /usr/local/bin/composer; \
     fi && \
-    mv composer.phar /usr/local/bin/composer && \
+    rm -f /tmp/composer-lts /tmp/composer-latest && \
     chmod 755 /usr/local/bin/composer && \
     composer --version
 

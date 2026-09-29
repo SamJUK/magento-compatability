@@ -1,0 +1,78 @@
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Clean.php b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Clean.php
+index 00b9ec0..96904d4 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Clean.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Clean.php
+@@ -20,7 +20,7 @@ class Clean extends Action
+      *
+      * @see MassDelete::_isAllowed()
+      */
+-    const string ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::clean';
++    const ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::clean';
+ 
+     /**
+      * @param Context $context
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Index.php b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Index.php
+index 142895e..40a7287 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Index.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/Index.php
+@@ -18,7 +18,7 @@ class Index extends Action
+      *
+      * @see MassDelete::_isAllowed()
+      */
+-    const string ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::view';
++    const ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::view';
+ 
+     /**
+      * @param Action\Context $context
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/MassDelete.php b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/MassDelete.php
+index e519cbf..03716a2 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/MassDelete.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Controller/Adminhtml/Reservation/MassDelete.php
+@@ -27,7 +27,7 @@ class MassDelete extends Action implements HttpPostActionInterface
+      *
+      * @see MassDelete::_isAllowed()
+      */
+-    const string ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::delete';
++    const ADMIN_RESOURCE = 'MageOS_InventoryReservationsGrid::delete';
+ 
+     /**
+      * @param Context $context
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation.php b/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation.php
+index 926c6a9..623fefe 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation.php
+@@ -14,7 +14,7 @@ class Reservation extends AbstractDb
+     /**
+      * Reservation table name
+      */
+-    public const string TABLE_NAME = 'inventory_reservation';
++    public const TABLE_NAME = 'inventory_reservation';
+ 
+     /**
+      * @return void
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation/Collection.php b/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation/Collection.php
+index 369dd57..1f4eea1 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation/Collection.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Model/ResourceModel/Reservation/Collection.php
+@@ -29,7 +29,7 @@ class Collection extends AbstractCollection implements SearchResultInterface
+     /**
+      * List of fields to fulltext search
+      */
+-    private const array FIELDS_TO_FULLTEXT_SEARCH = [
++    private const FIELDS_TO_FULLTEXT_SEARCH = [
+         'sku',
+         'quantity',
+         'metadata'
+diff --git a/vendor/mage-os/module-inventory-reservations-grid/Model/Service/ReservationDeletionValidator.php b/vendor/mage-os/module-inventory-reservations-grid/Model/Service/ReservationDeletionValidator.php
+index d29224b..086b0f9 100644
+--- a/vendor/mage-os/module-inventory-reservations-grid/Model/Service/ReservationDeletionValidator.php
++++ b/vendor/mage-os/module-inventory-reservations-grid/Model/Service/ReservationDeletionValidator.php
+@@ -19,7 +19,7 @@ class ReservationDeletionValidator implements ReservationDeletionValidatorInterf
+     /**
+      * Path to the configuration setting for allowing reservation deletion.
+      */
+-    private const string PATH_ALLOW_DELETE = 'cataloginventory/reservation/allow_delete';
++    private const PATH_ALLOW_DELETE = 'cataloginventory/reservation/allow_delete';
+ 
+     /**
+      * @param ScopeConfigInterface $scopeConfig

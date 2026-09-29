@@ -20,6 +20,19 @@ vendor_cache_copy_tree() {
   tar -C "${source_root}" -cf - "${source_name}" | tar -C "${target_root}" -xf -
 }
 
+vendor_cache_copy_optional_file() {
+  local source_dir="$1"
+  local relative_path="$2"
+  local target_dir="$3"
+
+  if [[ ! -f "${source_dir}/${relative_path}" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${target_dir}/$(dirname "${relative_path}")"
+  cp -p "${source_dir}/${relative_path}" "${target_dir}/${relative_path}"
+}
+
 vendor_cache_release_lock() {
   if [[ -n "${VENDOR_CACHE_HELD_LOCK_DIR}" ]]; then
     rm -rf -- "${VENDOR_CACHE_HELD_LOCK_DIR}"
@@ -79,6 +92,7 @@ vendor_cache_restore() {
   fi
 
   vendor_cache_copy_tree "${cache_path}" "vendor" "${target_dir}"
+  vendor_cache_copy_optional_file "${cache_path}" "app/etc/NonComposerComponentRegistration.php" "${target_dir}"
   vendor_cache_release_lock
   return 0
 }
@@ -102,9 +116,25 @@ vendor_cache_save() {
   tmp_path="${cache_path}/vendor.tmp.$$"
   rm -rf -- "${tmp_path}"
   vendor_cache_copy_tree "${source_dir}" "vendor" "${tmp_path}"
+  vendor_cache_copy_optional_file "${source_dir}" "app/etc/NonComposerComponentRegistration.php" "${tmp_path}"
   mv "${tmp_path}/vendor" "${cache_path}/vendor"
+  if [[ -f "${tmp_path}/app/etc/NonComposerComponentRegistration.php" ]]; then
+    mkdir -p "${cache_path}/app/etc"
+    mv "${tmp_path}/app/etc/NonComposerComponentRegistration.php" "${cache_path}/app/etc/NonComposerComponentRegistration.php"
+    rmdir "${tmp_path}/app/etc" 2>/dev/null || true
+    rmdir "${tmp_path}/app" 2>/dev/null || true
+  fi
   rmdir "${tmp_path}"
 
+  vendor_cache_release_lock
+  return 0
+}
+
+vendor_cache_invalidate() {
+  local cache_path="$1"
+
+  vendor_cache_acquire_lock "${cache_path}" || return 4
+  rm -rf -- "${cache_path}"
   vendor_cache_release_lock
   return 0
 }

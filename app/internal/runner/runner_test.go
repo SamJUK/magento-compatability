@@ -146,10 +146,10 @@ func TestComposeFileMap_AllKnownTypes(t *testing.T) {
 	}
 }
 
-func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T) {
+func TestClassifyStepFailureForCombination_Elasticsearch8ModuleUnresolvable(t *testing.T) {
 	c := matrix.Combination{
 		Product:       "magento",
-		Version:       "2.4.6-p11",
+		Version:       "2.4.6-p3",
 		SearchType:    "elasticsearch",
 		SearchVersion: "8.11.4",
 	}
@@ -157,16 +157,16 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	got := classifyStepFailureForCombination(
 		c,
 		"install",
-		"Could not validate a connection to the OpenSearch.\nNo alive nodes found in your cluster",
+		"Your requirements could not be resolved to an installable set of packages.\n  - Root composer.json requires magento/module-elasticsearch-8 * -> satisfiable by magento/module-elasticsearch-8[101.0.0].",
 	)
 	if got == nil {
 		t.Fatal("classifyStepFailureForCombination(...) = nil, want classification")
 	}
 
 	want := result.Failure{
-		Category:    "compatibility",
-		Code:        "elasticsearch8_unsupported",
-		Summary:     "This product version could not complete setup:install against Elasticsearch 8.x.",
+		Category:    "harness",
+		Code:        "elasticsearch8_module_unavailable",
+		Summary:     "The public mirrors only carry magento/module-elasticsearch-8 builds for the 8.15+ Elasticsearch client, which this release's core pins out; the matching build is only on repo.magento.com.",
 		LikelyFlaky: false,
 	}
 	if *got != want {
@@ -174,7 +174,7 @@ func TestClassifyStepFailureForCombination_KnownCompatibilityIssue(t *testing.T)
 	}
 }
 
-func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUsesElasticsearchMessage(t *testing.T) {
+func TestClassifyStepFailureForCombination_Elasticsearch8ConnectionFailureWithModule(t *testing.T) {
 	c := matrix.Combination{
 		Product:       "magento",
 		Version:       "2.4.7-p10",
@@ -199,6 +199,24 @@ func TestClassifyStepFailureForCombination_Elasticsearch8CompatibilityFailureUse
 	}
 	if *got != want {
 		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want %#v", *got, want)
+	}
+}
+
+func TestClassifyStepFailureForCombination_Elasticsearch8UnsupportedOnMageOS10(t *testing.T) {
+	c := matrix.Combination{
+		Product:       "mageos",
+		Version:       "1.0.6",
+		SearchType:    "elasticsearch",
+		SearchVersion: "8.11.4",
+	}
+
+	got := classifyStepFailureForCombination(
+		c,
+		"install",
+		"Could not validate a connection to Elasticsearch.\nNo alive nodes found in your cluster",
+	)
+	if got == nil || got.Category != "compatibility" || got.Code != "elasticsearch8_unsupported" {
+		t.Fatalf("classifyStepFailureForCombination(...) = %#v, want compatibility/elasticsearch8_unsupported", got)
 	}
 }
 
@@ -303,6 +321,43 @@ func TestNewComposeSetsComposeParallelLimit(t *testing.T) {
 
 	if !containsString(cp.env, "COMPOSE_PARALLEL_LIMIT=1") {
 		t.Fatalf("compose env missing COMPOSE_PARALLEL_LIMIT=1: %v", cp.env)
+	}
+}
+
+func TestComposeDownRemovesProjectAndAnonymousVolumes(t *testing.T) {
+	var calls [][]string
+	cp := &Compose{
+		projectName: "m2test-abcd",
+		files:       []string{"/tmp/base.yml"},
+		env:         []string{"COMPOSE_PROJECT_NAME=m2test-abcd"},
+		execCommand: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+
+	if err := cp.Down(context.Background()); err != nil {
+		t.Fatalf("Down() error = %v", err)
+	}
+
+	if len(calls) != 4 {
+		t.Fatalf("Down() made %d commands, want 4", len(calls))
+	}
+
+	if got, want := calls[0], []string{"docker", "compose", "-f", "/tmp/base.yml", "down", "--volumes", "--remove-orphans"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("compose down command = %v, want %v", got, want)
+	}
+
+	wantRemovals := [][]string{
+		{"docker", "volume", "rm", "--force", "m2test-abcd_magento"},
+		{"docker", "volume", "rm", "--force", "m2test-abcd_db-data"},
+		{"docker", "volume", "rm", "--force", "m2test-abcd_search-data"},
+	}
+	for i, want := range wantRemovals {
+		if got := calls[i+1]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("volume cleanup command %d = %v, want %v", i, got, want)
+		}
 	}
 }
 
@@ -776,6 +831,39 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "disk full during smoke",
+			stepName: "smoke",
+			log:      "file_put_contents(/var/www/html/generated/code/X.php): Failed to open stream: No space left on device",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "disk_space",
+				Summary:     "The run exhausted host or Docker disk space.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "playwright browser missing",
+			stepName: "playwright",
+			log:      "Error: browserType.launch: Executable doesn't exist at /Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "playwright_browser_missing",
+				Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "storefront timeout",
+			stepName: "playwright",
+			log:      "TimeoutError: page.goto: Timeout 30000ms exceeded.\n  - navigating to \"http://localhost:35842/\", waiting until \"domcontentloaded\"",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "storefront_timeout",
+				Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",
@@ -945,9 +1033,9 @@ func TestClassifyStepFailure(t *testing.T) {
 			stepName: "install",
 			log:      "Undefined constant \"Magento\\\\Framework\\\\Setup\\\\Mvc\\\\GLOB_BRACE\"",
 			want: &result.Failure{
-				Category:    "compatibility",
+				Category:    "harness",
 				Code:        "glob_brace_unsupported",
-				Summary:     "The application references an undefined GLOB_BRACE constant during setup bootstrap.",
+				Summary:     "GLOB_BRACE is undefined on Alpine/musl PHP < 8.5; the musl-glob-brace patch did not apply.",
 				LikelyFlaky: false,
 			},
 		},

@@ -22,6 +22,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/vendor-cache.sh"
 
+# A one-off sweep (CACHE_SAVE=0) keeps the shared caches from growing.
+if [[ "${CACHE_SAVE:-1}" != "1" ]]; then
+  export COMPOSER_CACHE_DIR=/tmp/composer-cache
+fi
+
 ensure_composer_cache_health() {
   local cache_dir="${COMPOSER_CACHE_DIR:-/composer-cache}"
   local config_path="${cache_dir}/config.json"
@@ -91,18 +96,79 @@ apply_version_fixes() {
   case "${PRODUCT_VERSION}" in
     2.4.4)
       echo "[INFO] Applying 2.4.4 version constraint fixes"
+      echo "[WORKAROUND] magento-244-composer-aliases"
       composer require "magento/security-package:1.1.3-p1 as 1.1.3" \
         --no-update --no-interaction 2>&1
       composer require "magento/inventory-metapackage:1.2.4-p1 as 1.2.4" \
         --no-update --no-interaction 2>&1
       ;;
   esac
+
+  if uses_elasticsearch8_module; then
+    echo "[INFO] Swapping magento/module-elasticsearch-7 for magento/module-elasticsearch-8"
+    echo "[WORKAROUND] elasticsearch8-module"
+    php -r '$f = "composer.json"; $j = json_decode(file_get_contents($f), true);
+      $j["replace"]["magento/module-elasticsearch-7"] = "*";
+      file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+    composer require magento/module-elasticsearch-8 --no-update --no-interaction 2>&1
+    if pins_old_elasticsearch_client; then
+      echo "[WORKAROUND] elasticsearch8-client-alias"
+      composer require "elasticsearch/elasticsearch:8.17.1 as 8.5.3" --no-update --no-interaction 2>&1
+    fi
+  fi
+}
+
+# Adobe supports Elasticsearch 8 on 2.4.6/2.4.7 through an add-on module that
+# replaces the bundled Elasticsearch 7 one.
+uses_elasticsearch8_module() {
+  [[ "${PRODUCT_PACKAGE}" == "magento/project-community-edition" ]] &&
+    [[ "${SEARCH_TYPE}" == "elasticsearch8" ]] &&
+    [[ "${PRODUCT_VERSION}" == 2.4.6* || "${PRODUCT_VERSION}" == 2.4.7* ]]
+}
+
+# Before 2.4.6-p10 / 2.4.7-p5, core pins elasticsearch/elasticsearch to ~8.5,
+# below the ^8.15 the mirrored module-elasticsearch-8 builds need.
+pins_old_elasticsearch_client() {
+  local patch_level="${PRODUCT_VERSION#*-p}"
+  [[ "${PRODUCT_VERSION}" == *-p* ]] || patch_level=0
+  case "${PRODUCT_VERSION}" in
+    2.4.6*) (( patch_level < 10 )) ;;
+    2.4.7*) (( patch_level < 5 )) ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when workarounds.json lists <id> for this product and version (and PHP
+# version, when the entry names any). A listed version matches itself and its
+# patch releases: "2.4.4" covers "2.4.4-p13", "3.0" covers "3.0.1".
+workaround_applies() {
+  WORKAROUND_ID="$1" php <<'PHP'
+<?php
+$product = strpos(getenv('PRODUCT_PACKAGE'), 'mage-os/') === 0 ? 'mageos' : 'magento';
+$version = getenv('PRODUCT_VERSION');
+$registry = json_decode(file_get_contents('/scripts/workarounds.json'), true)['workarounds'] ?? [];
+foreach ($registry as $w) {
+    if ($w['id'] !== getenv('WORKAROUND_ID') || $w['product'] !== $product) {
+        continue;
+    }
+    if (isset($w['php']) && !in_array(getenv('PHP_VERSION'), $w['php'], true)) {
+        continue;
+    }
+    foreach ($w['versions'] as $v) {
+        if ($version === $v || strpos($version, "$v-p") === 0 || strpos($version, "$v.") === 0) {
+            exit(0);
+        }
+    }
+}
+exit(1);
+PHP
 }
 
 # ─── Patch application ────────────────────────────────────────────────────────
 # Applies .patch files from /scripts/patches/ to the Magento installation.
-# Uses `patch --dry-run` to test applicability — skips silently if a patch
-# does not apply (wrong version or already applied in cached vendor).
+# Each one used is reported as [WORKAROUND] <id>; see workarounds.json.
+# Only patches workarounds.json lists for this version are tried, and each is
+# checked with `patch --dry-run` first.
 apply_patch_files() {
   local patches_dir="/scripts/patches"
   [[ -d "${patches_dir}" ]] || return 0
@@ -112,16 +178,58 @@ apply_patch_files() {
     [[ -f "${patch_file}" ]] || continue
     local name
     name="$(basename "${patch_file}")"
+    if ! workaround_applies "${name%.patch}"; then
+      echo "[INFO] Skipped patch (not listed for ${PRODUCT_VERSION}): ${name}"
+      (( skipped++ )) || true
+      continue
+    fi
     if patch --dry-run -p1 -d "${MAGENTO_DIR}" < "${patch_file}" &>/dev/null; then
       patch -p1 -d "${MAGENTO_DIR}" < "${patch_file}" > /dev/null
       echo "[OK] Applied patch: ${name}"
+      echo "[WORKAROUND] ${name%.patch}"
       (( applied++ )) || true
+    elif patch -R --dry-run -p1 -d "${MAGENTO_DIR}" < "${patch_file}" &>/dev/null; then
+      echo "[INFO] Patch already applied (vendor cache): ${name}"
+      echo "[WORKAROUND] ${name%.patch}"
     else
       echo "[INFO] Skipped patch (not applicable): ${name}"
       (( skipped++ )) || true
     fi
   done
   echo "[INFO] Patching complete: ${applied} applied, ${skipped} skipped"
+}
+
+# Catches a vendor tree missing whole packages or required files. PSR-4 dirs are
+# not checked: packages may declare dirs (e.g. tests) their dist omits.
+validate_composer_autoload_files() {
+  VENDOR_COMPOSER_DIR="${MAGENTO_DIR}/vendor/composer" php <<'PHP'
+<?php
+$dir = getenv('VENDOR_COMPOSER_DIR');
+$missing = [];
+
+if (is_file("$dir/autoload_files.php")) {
+    foreach (require "$dir/autoload_files.php" as $file) {
+        if (!file_exists($file)) {
+            $missing[] = $file;
+        }
+    }
+}
+
+if (is_file("$dir/installed.php")) {
+    $installed = require "$dir/installed.php";
+    foreach ($installed['versions'] as $name => $package) {
+        $path = $package['install_path'] ?? null;
+        if ($path !== null && ($package['type'] ?? '') !== 'metapackage' && !is_dir($path)) {
+            $missing[] = "$path ($name)";
+        }
+    }
+}
+
+foreach ($missing as $file) {
+    fwrite(STDERR, "[ERROR] Missing Composer autoload file: {$file}\n");
+}
+exit($missing ? 1 : 0);
+PHP
 }
 
 # ─── Wait for services ────────────────────────────────────────────────────────
@@ -135,6 +243,7 @@ bash "${SCRIPT_DIR}/wait-for-services.sh"
 _pkg_slug="${PRODUCT_PACKAGE//\//-}"
 _pkg_slug="${_pkg_slug// /-}"
 VENDOR_CACHE_KEY="${PHP_VERSION:-8.3}-${_pkg_slug}-${PRODUCT_VERSION}"
+uses_elasticsearch8_module && VENDOR_CACHE_KEY+="-es8"
 VENDOR_CACHE_PATH="${VENDOR_CACHE_DIR}/${VENDOR_CACHE_KEY}"
 
 # Clear both normal files and dotfiles from previous runs before create-project.
@@ -184,6 +293,12 @@ if [[ -d "${VENDOR_CACHE_PATH}/vendor" ]]; then
     rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
            "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
   fi
+
+  if ! validate_composer_autoload_files; then
+    echo "[WARN] Vendor cache ${VENDOR_CACHE_KEY} is incomplete — invalidating and reinstalling from scratch" >&2
+    rm -rf "${MAGENTO_DIR}/vendor"
+    vendor_cache_invalidate "${VENDOR_CACHE_PATH}" || true
+  fi
 else
   echo ""
   echo "=== Installing ${PRODUCT_PACKAGE}:${PRODUCT_VERSION} (no vendor cache) ==="
@@ -193,6 +308,8 @@ composer install \
   --no-interaction \
   --no-progress \
   2>&1
+
+validate_composer_autoload_files
 
 apply_patch_files
 
@@ -316,7 +433,7 @@ disable_optional_admin_modules() {
 disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
-if [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
+if [[ "${CACHE_SAVE:-1}" == "1" ]] && [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
   if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then
