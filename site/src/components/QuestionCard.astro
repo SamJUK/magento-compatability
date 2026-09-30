@@ -1,6 +1,7 @@
 ---
 import { getCells, getDimensions, getReleases, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
 import { getProductNames } from '@lib/matrix.js';
+import { neededWorkarounds } from '@lib/workarounds.js';
 
 const dims = getDimensions();
 const options = dims.flatMap((d) => d.options);
@@ -9,29 +10,41 @@ const reasonIndex = (text: string) => {
   const i = reasons.indexOf(text);
   return i === -1 ? reasons.push(text) - 1 : i;
 };
+const fixes: string[] = [];
+const fixIndex = (title: string) => {
+  const i = fixes.indexOf(title);
+  return i === -1 ? fixes.push(title) - 1 : i;
+};
+const lineOf = (product: string, version: string) =>
+  product === 'magento' ? version.split('-p')[0] : `${version.split('.')[0]}.x`;
 
 // One character per option: p pass, f fail, u untested; upper case marks the recommended option.
+// `x` lists, per option, the fixes a passing run needed that a user would need too.
 const products = getProductNames().map((product) => ({
   id: product,
   label: PRODUCT_LABELS[product] ?? product,
   releases: getReleases(product).map((r) => {
     const cells = getCells(product, r.version);
     const why: Record<number, number> = {};
+    const x: Record<number, number[]> = {};
     const s = options
       .map((o, i) => {
         const c = cells.get(o.id)!;
         if (c.failure) why[i] = reasonIndex(`${STEP_LABELS[c.failure.step]}: ${c.failure.summary}`);
+        const needed = c.status === 'pass' ? neededWorkarounds(c.result?.workarounds) : [];
+        if (needed.length) x[i] = needed.map((w) => fixIndex(w.title));
         const ch = c.status === 'pass' ? 'p' : c.status === 'fail' ? 'f' : 'u';
         return c.recommended ? ch.toUpperCase() : ch;
       })
       .join('');
-    return { v: r.version, s, why };
+    return { v: r.version, s, why, x, line: lineOf(product, r.version) };
   }),
 }));
 
 const payload = JSON.stringify({
   options: options.map((o) => ({ label: o.label, dim: o.key, href: o.href })),
   reasons,
+  fixes,
   products,
 }).replace(/</g, '\\u003c');
 
@@ -80,10 +93,11 @@ const selectClass =
 <script is:inline type="application/json" id="qc-data" set:html={payload}></script>
 
 <script>
-  type Release = { v: string; s: string; why: Record<number, number> };
+  type Release = { v: string; s: string; why: Record<number, number>; x: Record<number, number[]>; line: string };
   type Data = {
     options: Array<{ label: string; dim: string; href: string }>;
     reasons: string[];
+    fixes: string[];
     products: Array<{ id: string; label: string; releases: Release[] }>;
   };
 
@@ -121,9 +135,12 @@ const selectClass =
     if (status === 'p') {
       answer.classList.add('bg-pass', 'text-pass-ink');
       icon.className = 'grid place-items-center w-10 h-10 shrink-0 rounded-full text-lg font-bold bg-pass-ink text-pass';
-      icon.textContent = '✓';
-      verdict.textContent = 'Yes, it runs.';
-      detail.textContent = `${p.label} ${r.v} installed on ${o.label}, compiled, and passed the storefront, checkout and admin browser tests.`;
+      const needs = (r.x[i] ?? []).map((f) => data.fixes[f]);
+      icon.textContent = needs.length ? '✓+' : '✓';
+      verdict.textContent = needs.length ? 'Yes, with an extra step.' : 'Yes, it runs.';
+      detail.textContent = needs.length
+        ? `${p.label} ${r.v} passed on ${o.label}, but only with a fix the release does not ship: ${needs.join('; ')}. The release page explains how to apply it.`
+        : `${p.label} ${r.v} installed on ${o.label}, compiled, and passed the storefront, checkout and admin browser tests.`;
       detail.className = 'text-base leading-relaxed';
     } else if (status === 'f') {
       answer.classList.add('bg-fail', 'text-fail-ink', 'border', 'border-dashed', 'border-fail-line');
@@ -156,6 +173,70 @@ const selectClass =
     );
     $<HTMLAnchorElement>('qc-release').href = `/${p.id}/${r.v}`;
     $('qc-release').textContent = `Every setup for ${r.v} →`;
+    renderMatrix(p, r, i);
+  }
+
+  // Optional grid on the page: the picked kind of service across the newest release of every line.
+  function renderMatrix(picked: Data['products'][number], pickedRelease: Release, pickedOption: number) {
+    const table = document.getElementById('qc-matrix') as HTMLTableElement | null;
+    if (!table) return;
+    const dim = data.options[pickedOption].dim;
+    const cols = data.options.map((x, idx) => ({ ...x, idx })).filter((x) => x.dim === dim);
+    const tone: Record<string, string> = {
+      p: 'bg-pass text-pass-ink',
+      f: 'bg-fail text-fail-ink border border-dashed border-fail-line',
+      u: 'border border-dotted border-line text-muted',
+    };
+    const th = (text: string, cls: string) => Object.assign(document.createElement('th'), { textContent: text, className: cls });
+    const head = document.createElement('tr');
+    head.append(th('Release', 'sticky left-0 bg-surface text-left px-3 py-2 font-display text-sm'));
+    for (const c of cols) {
+      const h = th(c.label, `px-1 py-2 font-mono text-[10px] font-medium whitespace-nowrap ${c.idx === pickedOption ? 'text-ink bg-hold' : 'text-muted'}`);
+      h.dataset.col = String(c.idx);
+      head.append(h);
+    }
+    const body: HTMLTableRowElement[] = [];
+    for (const prod of data.products) {
+      const group = document.createElement('tr');
+      const cell = th(prod.label, 'sticky left-0 bg-sunken text-left px-3 py-1.5 border-t border-line font-display text-sm');
+      cell.colSpan = cols.length + 1;
+      group.append(cell);
+      body.push(group);
+      const lines = [...new Set(prod.releases.map((rel) => rel.line))];
+      for (const line of lines) {
+        const mine = prod === picked && line === pickedRelease.line;
+        const shown = mine ? pickedRelease : prod.releases.find((rel) => rel.line === line)!;
+        const tr = document.createElement('tr');
+        tr.className = mine ? 'bg-sunken' : '';
+        const name = document.createElement('th');
+        name.className = 'sticky left-0 bg-inherit text-left px-3 py-0.5 border-t border-line font-mono text-xs font-medium whitespace-nowrap';
+        const link = Object.assign(document.createElement('a'), { href: `/${prod.id}/${shown.v}`, textContent: shown.v, className: 'text-ink no-underline hover:text-brand' });
+        name.append(link);
+        tr.append(name);
+        for (const c of cols) {
+          const st = shown.s[c.idx].toLowerCase();
+          const extra = st === 'p' && shown.x[c.idx];
+          const td = document.createElement('td');
+          td.dataset.col = String(c.idx);
+          td.className = `p-px text-center border-t border-line ${c.idx === pickedOption ? 'bg-hold' : ''}`;
+          const chip = document.createElement('span');
+          chip.className = `inline-grid place-items-center min-w-7 h-6 px-0.5 rounded-md font-mono text-xs font-semibold ${tone[st]}`;
+          chip.dataset.status = st === 'p' ? 'pass' : st === 'f' ? 'fail' : 'untested';
+          chip.textContent = st === 'p' ? (extra ? '✓+' : '✓') : st === 'f' ? '✕' : '·';
+          chip.title = `${prod.label} ${shown.v} with ${c.label}: ${st === 'p' ? (extra ? 'works with an extra step' : 'works') : st === 'f' ? 'fails' : 'not tested'}`;
+          td.append(chip);
+          tr.append(td);
+        }
+        body.push(tr);
+      }
+    }
+    const group = (option.selectedOptions[0].parentElement as HTMLOptGroupElement).label;
+    document.getElementById('qc-matrix-title')!.textContent = `${group} support by release line`;
+    const thead = document.createElement('thead');
+    thead.append(head);
+    const tbody = document.createElement('tbody');
+    tbody.append(...body);
+    table.replaceChildren(thead, tbody);
   }
 
   product.addEventListener('change', () => (fillVersions(), pickRecommendedPhp(), render()));

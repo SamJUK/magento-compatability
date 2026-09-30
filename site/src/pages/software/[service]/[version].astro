@@ -93,7 +93,7 @@ const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1)
                   recommended={cell.recommended}
                   href={`/${id}/${v}`}
                   text={patchLabel(id, v)}
-                  title={`${v} on ${option.label}: ${cell.status === 'pass' ? 'works' : cell.status === 'fail' ? 'fails' : 'not tested'}${cell.recommended ? ', recommended' : ''}`}
+                  title={`${v} on ${option.label}: ${cell.status === 'pass' ? 'works' : cell.status === 'fail' ? 'fails' : 'not tested'}`}
                   class="min-w-11 h-9"
                 />
               ))}

@@ -1,24 +1,43 @@
 ---
 import Base from '../layouts/Base.astro';
-import QuestionCard from '../components/QuestionCard.astro';
+import StatusCell from '../components/StatusCell.astro';
 import { getGlobalStats } from '@lib/results.js';
 import { getProductNames } from '@lib/matrix.js';
-import { formatDate, getDimensions, getLines, getReleases, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { formatDate, getCells, getDimensions, getReleases, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { neededWorkarounds } from '@lib/workarounds.js';
 
 const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
 const stats = getGlobalStats();
 const dims = getDimensions();
-const optionCount = dims.reduce((n, d) => n + d.options.length, 0);
+const columns = dims.flatMap((d) => d.options.map((o) => ({ ...o, dimLabel: d.label })));
 
-const products = getProductNames().map((name) => {
-  const releases = getReleases(name);
+// Newest release of each line: 2.4.8-p5 for Magento's 2.4.8. Mage-OS follows semver, so its
+// service support only moves between majors and one row per major (3.5.0 for 3.x) is enough.
+const lineOf = (product: string, version: string) =>
+  product === 'magento' ? version.split('-p')[0] : `${version.split('.')[0]}.x`;
+
+const products = getProductNames().map((product) => {
+  const seen = new Set<string>();
+  const latest = getReleases(product).filter((r) => {
+    const line = lineOf(product, r.version);
+    return !seen.has(line) && seen.add(line);
+  });
   return {
-    name,
-    label: PRODUCT_LABELS[name] ?? name,
-    count: releases.length,
-    oldest: releases.at(-1)?.version,
-    newest: releases[0]?.version,
-    lines: getLines(name).map((l) => ({ line: l.line, count: l.releases.length })),
+    product,
+    label: PRODUCT_LABELS[product] ?? product,
+    rows: latest.map((r) => {
+      const cells = getCells(product, r.version);
+      const row = columns.map((col) => {
+        const c = cells.get(col.id)!;
+        const needed = c.status === 'pass' ? neededWorkarounds(c.result?.workarounds) : [];
+        const verdict = c.status === 'pass' ? 'works' : c.status === 'fail' ? 'fails' : 'not tested';
+        const why = c.failure ? ` (${STEP_LABELS[c.failure.step]}: ${c.failure.summary})` : '';
+        const needs = needed.length ? `, needs ${needed.map((w) => w.title).join('; ')}` : '';
+        return { ...c, extra: needed.length > 0, title: `${r.version} with ${col.label}: ${verdict}${needs}${why}` };
+      });
+      const tested = row.filter((c) => c.status !== 'untested');
+      return { version: r.version, line: lineOf(product, r.version), cells: row, passed: tested.filter((c) => c.status === 'pass').length, tested: tested.length };
+    }),
   };
 });
 
@@ -30,67 +49,72 @@ const how = [
 ];
 ---
 
-<Base title="Will it run?">
-  <section class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
-    <div class="flex flex-col gap-7 lg:sticky lg:top-6">
-      <p class="text-xs sm:text-sm font-semibold uppercase tracking-widest text-muted">
-        {stats.total.toLocaleString('en-GB')} real installs in Docker · last run {formatDate(stats.lastRun)}
+<Base title="Compatibility matrix" description="The newest patch of every Magento and Mage-OS line, tested against every PHP, database, search, cache, queue, web server and Varnish version.">
+  <section class="flex flex-wrap items-end justify-between gap-4">
+    <div class="flex flex-col gap-2">
+      <h1 class="font-display font-extrabold text-3xl sm:text-4xl tracking-tight">Magento and Mage-OS compatibility</h1>
+      <p class="text-muted">
+        The newest release of each line against every service version, from {stats.total.toLocaleString('en-GB')} real installs in Docker.
+        Last run {formatDate(stats.lastRun)}.
       </p>
-      <h1 class="font-display font-extrabold text-4xl sm:text-6xl leading-[1.02] tracking-tight">
-        Pick a release and a service.<br class="hidden sm:block" /> We tell you if it installs.
-      </h1>
-      <QuestionCard />
     </div>
-
-    <aside class="rounded-2xl bg-sunken p-6 flex flex-col gap-5" aria-labelledby="by-service">
-      <div>
-        <h2 id="by-service" class="font-display font-bold text-2xl">Or start from your server</h2>
-        <p class="mt-1 text-sm text-muted leading-relaxed">
-          Pick what your host runs. We show the newest release that installs on it, and what the next one needs.
-        </p>
-      </div>
-      {dims.map((d) => (
-        <div class="flex flex-col gap-2 pt-4 border-t border-line">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-muted">{d.label}</h3>
-          <div class="flex flex-wrap gap-1.5">
-            {d.options.map((o) => (
-              <a href={o.href} class="inline-flex items-center min-h-9 px-2.5 rounded-md border border-line bg-surface font-mono text-xs text-ink no-underline hover:border-brand">
-                {o.label}
-              </a>
-            ))}
-          </div>
-        </div>
-      ))}
-      <p class="text-xs text-muted">{optionCount} service versions across {dims.length} kinds of service.</p>
-    </aside>
+    <a href="/check" class="inline-flex items-center h-11 px-4 rounded-lg bg-brand text-on-brand font-semibold no-underline">Will it run on my stack? →</a>
   </section>
 
-  <section class="mt-20 flex flex-col gap-6" aria-labelledby="products">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <h2 id="products" class="font-display font-extrabold text-3xl sm:text-4xl tracking-tight">Magento and Mage-OS, every patch</h2>
-    </div>
-    <div class="grid gap-6 md:grid-cols-2">
-      {products.map((p) => (
-        <div class="rounded-2xl border border-line bg-surface p-6 flex flex-col gap-4">
-          <div class="flex items-baseline justify-between gap-4">
-            <h3 class="font-display font-bold text-2xl"><a href={`/${p.name}`} class="text-ink no-underline hover:text-brand">{p.label}</a></h3>
-            <span class="text-sm text-muted"><strong class="text-xl text-ink">{p.count}</strong> releases</span>
-          </div>
-          <p class="text-muted leading-relaxed">
-            Every release from {p.oldest} to {p.newest}, tested on the recommended stack and with each service swapped in turn.
-          </p>
-          <div class="flex flex-wrap gap-2">
-            {p.lines.map((l) => (
-              <a href={`/${p.name}#line-${l.line}`} class="px-2.5 py-1.5 rounded-md bg-sunken font-mono text-sm text-ink no-underline hover:text-brand">
-                {l.line} <span class="text-muted">· {l.count}</span>
-              </a>
+  <section class="mt-8 rounded-2xl border border-line bg-surface" aria-label="Newest release of each line against every service version">
+    <div class="relative overflow-x-auto">
+      <table data-grid class="border-separate border-spacing-0 text-xs">
+        <thead>
+          <tr>
+            <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-3 pt-3 pb-1.5 font-display text-sm">Release</th>
+            <th scope="col" rowspan="2" class="text-right px-1.5 pt-3 pb-1.5 font-mono text-[10px] font-medium text-muted align-bottom">pass</th>
+            {dims.map((d) => (
+              <th scope="colgroup" colspan={d.options.length} class="text-left px-1.5 pt-3 pb-0.5 font-display text-sm border-l border-line">{d.label}</th>
             ))}
-          </div>
-          <a href={`/${p.name}`} class="mt-auto font-semibold text-brand py-1">Open the {p.label} matrix →</a>
-        </div>
-      ))}
+          </tr>
+          <tr>
+            {columns.map((c, i) => (
+              <th
+                scope="col"
+                class:list={['px-px pb-1.5 pt-0.5 font-mono text-[10px] font-medium text-muted whitespace-nowrap align-bottom', (i === 0 || columns[i - 1].key !== c.key) && 'border-l border-line']}
+                title={c.label}
+              >{c.short.split(' ').map((part) => <span class="block leading-tight">{part}</span>)}</th>
+            ))}
+          </tr>
+        </thead>
+        {products.map((p) => (
+          <tbody>
+            <tr>
+              <th scope="colgroup" colspan={columns.length + 2} class="sticky left-0 bg-sunken text-left px-3 py-1.5 border-t border-line font-display text-sm">
+                <a href={`/${p.product}`} class="text-ink no-underline hover:text-brand">{p.label}</a>
+              </th>
+            </tr>
+            {p.rows.map((r) => (
+              <tr class="bg-surface">
+                <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-3 py-0.5 border-t border-line whitespace-nowrap">
+                  <a href={`/${p.product}/${r.version}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
+                  {p.product !== 'magento' && <span class="ml-1 font-mono text-[10px] text-muted">{r.line}</span>}
+                </th>
+                <td class="px-1.5 py-0.5 border-t border-line text-right font-mono text-[10px] text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
+                {r.cells.map((c, i) => (
+                  <td class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
+                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} title={c.title} class="min-w-6 h-6 px-0.5" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        ))}
+      </table>
     </div>
   </section>
+
+  <div class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-muted">
+    <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-6 h-6" />Installs and passes</span>
+    <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-6 h-6" />Works with an extra patch or module</span>
+    <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-6 h-6" />Fails</span>
+    <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-6 h-6" />Not tested</span>
+  </div>
 
   <section class="mt-20 flex flex-col gap-6" aria-labelledby="data">
     <h2 id="data" class="font-display font-extrabold text-3xl sm:text-4xl tracking-tight">Take the data with you</h2>

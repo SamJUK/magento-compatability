@@ -3,6 +3,7 @@ import type { CellStatus } from '@lib/compat.js';
 
 interface Props {
   status: CellStatus;
+  /** Marks the recommended stack for page scripts; not shown in the grid. */
   recommended?: boolean;
   href?: string;
   /** Accessible description, e.g. "2.4.8-p5 with PHP 8.5: fails" */
@@ -22,8 +23,7 @@ const tone = {
   fail: 'bg-fail text-fail-ink border border-dashed border-fail-line',
   untested: 'border border-dotted border-line text-muted',
 }[status];
-const ring = recommended ? 'outline-2 outline-offset-2 outline-rec' : '';
-const classes = `inline-grid place-items-center px-1.5 rounded-md font-mono text-xs font-semibold no-underline ${tone} ${ring} ${className || 'min-w-10 h-9'}`;
+const classes = `inline-grid place-items-center px-1.5 rounded-md font-mono text-xs font-semibold no-underline ${tone} ${className || 'min-w-10 h-9'}`;
 const Tag = href ? 'a' : 'span';
 ---
 

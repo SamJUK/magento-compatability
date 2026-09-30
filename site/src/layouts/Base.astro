@@ -1,6 +1,7 @@
 ---
 import { Font } from 'astro:assets';
 import Logo from '../components/Logo.astro';
+import GridFocus from '../components/GridFocus.astro';
 import '../styles/global.css';
 
 interface Props {
@@ -17,6 +18,7 @@ const path = Astro.url.pathname;
 const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
 
 const nav = [
+  { href: '/check', label: 'Will it run?' },
   { href: '/magento', label: 'Magento' },
   { href: '/mageos', label: 'Mage-OS' },
   { href: '/software', label: 'Services' },
@@ -123,5 +125,6 @@ const nav = [
         }
       });
     </script>
+    <GridFocus />
   </body>
 </html>

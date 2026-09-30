@@ -1,0 +1,56 @@
+---
+import Base from '../layouts/Base.astro';
+import QuestionCard from '../components/QuestionCard.astro';
+import { getGlobalStats } from '@lib/results.js';
+import { formatDate, getDimensions } from '@lib/compat.js';
+
+const stats = getGlobalStats();
+const dims = getDimensions();
+const optionCount = dims.reduce((n, d) => n + d.options.length, 0);
+---
+
+<Base title="Will it run?" description="Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.">
+  <section class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
+    <div class="flex flex-col gap-7 min-w-0">
+      <p class="text-xs sm:text-sm font-semibold uppercase tracking-widest text-muted">
+        {stats.total.toLocaleString('en-GB')} real installs in Docker · last run {formatDate(stats.lastRun)}
+      </p>
+      <h1 class="font-display font-extrabold text-4xl sm:text-6xl leading-[1.02] tracking-tight">
+        Pick a release and a service.<br class="hidden sm:block" /> We tell you if it installs.
+      </h1>
+      <QuestionCard />
+      <section class="rounded-2xl border border-line bg-surface" aria-labelledby="qc-matrix-title">
+        <div class="px-4 pt-4">
+          <h2 id="qc-matrix-title" class="font-display font-bold text-2xl">Support by release line</h2>
+          <p class="mt-1 text-sm text-muted">The newest release of each line against every version of the service you picked. Your release and service are highlighted.</p>
+        </div>
+        <div class="relative overflow-x-auto mt-3">
+          <table id="qc-matrix" data-grid class="w-full border-separate border-spacing-0 text-sm"></table>
+        </div>
+      </section>
+    </div>
+
+    <aside class="rounded-2xl bg-sunken p-6 flex flex-col gap-5" aria-labelledby="by-service">
+      <div>
+        <h2 id="by-service" class="font-display font-bold text-2xl">Or start from your server</h2>
+        <p class="mt-1 text-sm text-muted leading-relaxed">
+          Pick what your host runs. We show the newest release that installs on it, and what the next one needs.
+        </p>
+      </div>
+      {dims.map((d) => (
+        <div class="flex flex-col gap-2 pt-4 border-t border-line">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-muted">{d.label}</h3>
+          <div class="flex flex-wrap gap-1.5">
+            {d.options.map((o) => (
+              <a href={o.href} class="inline-flex items-center min-h-9 px-2.5 rounded-md border border-line bg-surface font-mono text-xs text-ink no-underline hover:border-brand">
+                {o.label}
+              </a>
+            ))}
+          </div>
+        </div>
+      ))}
+      <p class="text-xs text-muted">{optionCount} service versions across {dims.length} kinds of service.</p>
+    </aside>
+  </section>
+
+</Base>
