@@ -1,5 +1,8 @@
 .git
 app/
-docker/
+docker/*
+!docker/scripts/
+docker/scripts/*
+!docker/scripts/workarounds.json
 site/node_modules
 site/dist
