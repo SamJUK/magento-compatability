@@ -1,6 +1,7 @@
 import type { APIRoute, GetStaticPaths } from 'astro';
 import { getProducts, getVersionsForProduct } from '@lib/matrix.js';
 import { getResultsForVersion, getVersionSummary } from '@lib/results.js';
+import { workaroundUsage } from '@lib/workarounds.js';
 
 export const getStaticPaths: GetStaticPaths = () => {
   const paths = [];
@@ -22,7 +23,9 @@ export const GET: APIRoute = ({ params }) => {
     return rest;
   });
 
-  return new Response(JSON.stringify({ product, version, summary, strippedResults }, null, 2), {
+  const workarounds = workaroundUsage(results);
+
+  return new Response(JSON.stringify({ product, version, summary, workarounds, strippedResults }, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
 };

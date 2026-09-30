@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro';
 import StatusCell from '../../components/StatusCell.astro';
 import { getProductNames } from '@lib/matrix.js';
 import { getCells, getDimensions, getLines, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { neededWorkarounds } from '@lib/workarounds.js';
 
 export function getStaticPaths() {
   return getProductNames().map((product) => ({ params: { product } }));
@@ -29,7 +30,10 @@ const rows = lines.flatMap(({ line, releases }) =>
           const c = cells.get(col.id)!;
           const why = c.failure ? ` (${STEP_LABELS[c.failure.step]}: ${c.failure.summary})` : '';
           const verdict = c.status === 'pass' ? 'works' : c.status === 'fail' ? 'fails' : 'not tested';
-          return { ...c, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${why}` };
+          const needed = c.status === 'pass' ? neededWorkarounds(c.result?.workarounds) : [];
+          const extra = needed.length > 0;
+          const needs = extra ? `, needs ${needed.map((w) => w.title).join('; ')}` : '';
+          return { ...c, extra, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${needs}${why}` };
         }),
       };
     }),
@@ -120,7 +124,7 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
               </th>
               {r.cells.map((c, i) => (
                 <td data-col={i} class:list={['px-0.5 py-1 text-center border-t border-line', i > 0 && columns[i - 1].key !== columns[i].key && 'border-l']}>
-                  <StatusCell status={c.status} recommended={c.recommended} href={`/${product}/${r.version}`} title={c.title} class="min-w-8 h-8" />
+                  <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${product}/${r.version}`} title={c.title} class="min-w-8 h-8" />
                 </td>
               ))}
             </tr>
@@ -130,6 +134,7 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
     </div>
     <div class="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 border-t border-line text-sm text-muted">
       <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-7 h-7" />Installs and passes</span>
+      <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-7 h-7" />Works with an extra patch or module</span>
       <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-7 h-7" />Fails</span>
       <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack</span>
       <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-7 h-7" />Not tested</span>

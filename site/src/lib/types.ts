@@ -49,6 +49,8 @@ export interface TestResult {
   };
   /** Per-service container logs captured after the run, keyed by service name */
   container_logs?: Record<string, string>;
+  /** Ids from docker/scripts/workarounds.json that this install needed */
+  workarounds?: string[];
   timestamp: string;
 }
 
@@ -165,4 +167,19 @@ export interface SoftwareVersionSummary {
     version: string;
     aggregate: AggregatedServiceStatus;
   }>;
+}
+
+export interface Workaround {
+  id: string;
+  kind: 'patch' | 'module' | 'composer' | string;
+  title: string;
+  detail: string;
+  product: string;
+  versions: string[];
+  /** PHP versions the workaround is limited to; absent means every PHP version */
+  php?: string[];
+  search?: string;
+  /** Set when the workaround is only needed in some environments, e.g. "Alpine/musl PHP < 8.5" */
+  environment?: string;
+  source?: string;
 }
