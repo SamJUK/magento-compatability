@@ -33,7 +33,7 @@ const rows = lines.flatMap(({ line, releases }) =>
           const needed = c.status === 'pass' ? neededWorkarounds(c.result?.workarounds) : [];
           const extra = needed.length > 0;
           const needs = extra ? `, needs ${needed.map((w) => w.title).join('; ')}` : '';
-          return { ...c, extra, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${needs}${why}` };
+          return { ...c, extra, title: `${r.version} with ${col.label}: ${verdict}${needs}${why}` };
         }),
       };
     }),
@@ -144,7 +144,6 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
       <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-7 h-7" />Installs and passes</span>
       <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-7 h-7" />Works with an extra patch or module</span>
       <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-7 h-7" />Fails</span>
-      <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack, from {product === 'magento' ? 'Adobe' : 'Mage-OS'}'s system requirements</span>
       <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-7 h-7" />Not tested</span>
       <button id="toggle-patches" type="button" aria-pressed="false" class="ml-auto px-3 py-2 rounded-lg border border-line text-ink font-semibold cursor-pointer hover:border-brand">
         Show every patch
@@ -154,7 +153,7 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
 
   <p class="mt-6 text-muted">
     Cache, queue, web server and Varnish results are on each release page.
-    The recommended stack passes on {recPassing.length} of {recTested.length} tested {label} releases.{' '}
+    The recommended stack ({product === 'magento' ? "Adobe's" : "Mage-OS's"} system requirements) passes on {recPassing.length} of {recTested.length} tested {label} releases.{' '}
     <a href={`/${product}/baseline`}>See every recommended-stack run</a>.
   </p>
 </Base>
@@ -272,7 +271,7 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
       for (const dim of dimsHere) {
         const was = prev[dim];
         const now = run[dim];
-        let text = next ? 'run this before upgrading' : 'recommended here';
+        let text = next ? 'run this before upgrading' : 'recommended for this release';
         let tone = 'bg-black/20';
         if (n > 0 && was === now) text = 'keep';
         else if (n > 0) {

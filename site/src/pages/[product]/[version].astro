@@ -55,6 +55,7 @@ for (const c of cells.values()) {
 const failures = [...groups.values()].sort((a, b) => b.cells.length - a.cells.length);
 const failCount = failures.reduce((n, g) => n + g.cells.length, 0);
 const tested = summary.passCount + summary.failCount;
+const source = product === 'magento' ? 'Adobe' : 'Mage-OS';
 const workarounds = workaroundUsage(results);
 const KIND_LABELS: Record<string, string> = { patch: 'Core patch', module: 'Extra module', composer: 'Composer fix' };
 const extraOf = (c: Cell) => (c.status === 'pass' ? neededWorkarounds(c.result?.workarounds) : []);
@@ -112,6 +113,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
                 ? 'The recommended stack failed'
                 : 'The recommended stack has not run yet'}
           </h2>
+          <p class="text-sm text-panel-muted">The stack {source} lists in its system requirements for {label} {version}.</p>
           <ul class="flex flex-wrap gap-2" aria-label="Recommended stack">
             {recommended.map((c) => (
               <li class="px-3 py-2 rounded-lg bg-black/25 font-mono text-sm">{c.option.label}</li>
@@ -176,7 +178,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
       <div class="mt-12 grid gap-10 lg:grid-cols-[minmax(0,1fr)_420px] items-start">
         <section aria-labelledby="swap">
           <h2 id="swap" class="font-display font-extrabold text-3xl tracking-tight">Swap one service at a time</h2>
-          <p class="mt-2 text-muted">Each chip is the recommended stack with only that service changed. The blue chip is the recommended stack from Adobe's (or Mage-OS's) system requirements.</p>
+          <p class="mt-2 text-muted">Each chip is the recommended stack with only that service changed. The chip marked “recommended” is the stack {source} lists in its system requirements.</p>
           <div class="mt-4">
             {dims.map((d) => (
               <div class="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)] py-4 border-t border-line">
@@ -191,11 +193,12 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
                       <a
                         href={o.href}
                         title={`${o.label}: ${verdict}${c.recommended ? ' (recommended)' : ''}${needs}`}
-                        class:list={[chip, tone[c.status], c.recommended && c.status === 'pass' && '!bg-brand !text-on-brand !border-transparent']}
+                        class:list={[chip, tone[c.status]]}
                       >
                         <span aria-hidden="true">{glyph[c.status]}{extra && '+'}</span>
                         {o.label}
-                        <span class="sr-only">: {verdict}{c.recommended && ', recommended'}{needs}</span>
+                        {c.recommended && <span class="text-[10px] font-sans font-bold uppercase tracking-wider opacity-80">recommended</span>}
+                        <span class="sr-only">: {verdict}{needs}</span>
                       </a>
                     );
                   })}

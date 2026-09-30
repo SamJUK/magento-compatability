@@ -33,7 +33,7 @@ const products = getProductNames().map((product) => {
         const verdict = c.status === 'pass' ? 'works' : c.status === 'fail' ? 'fails' : 'not tested';
         const why = c.failure ? ` (${STEP_LABELS[c.failure.step]}: ${c.failure.summary})` : '';
         const needs = needed.length ? `, needs ${needed.map((w) => w.title).join('; ')}` : '';
-        return { ...c, extra: needed.length > 0, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${needs}${why}` };
+        return { ...c, extra: needed.length > 0, title: `${r.version} with ${col.label}: ${verdict}${needs}${why}` };
       });
       const tested = row.filter((c) => c.status !== 'untested');
       return { version: r.version, line: lineOf(product, r.version), cells: row, passed: tested.filter((c) => c.status === 'pass').length, tested: tested.length };
@@ -113,7 +113,6 @@ const how = [
     <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-6 h-6" />Installs and passes</span>
     <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-6 h-6" />Works with an extra patch or module</span>
     <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-6 h-6" />Fails</span>
-    <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-6 h-6" />Recommended stack (Adobe's system requirements; Mage-OS's for Mage-OS)</span>
     <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-6 h-6" />Not tested</span>
   </div>
 

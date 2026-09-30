@@ -215,16 +215,15 @@ const selectClass =
         tr.append(name);
         for (const c of cols) {
           const st = shown.s[c.idx].toLowerCase();
-          const rec = shown.s[c.idx] === 'P';
           const extra = st === 'p' && shown.x[c.idx];
           const td = document.createElement('td');
           td.dataset.col = String(c.idx);
           td.className = `p-px text-center border-t border-line ${c.idx === pickedOption ? 'bg-hold' : ''}`;
           const chip = document.createElement('span');
-          chip.className = `inline-grid place-items-center min-w-7 h-6 px-0.5 rounded-md font-mono text-xs font-semibold ${rec ? 'bg-brand text-on-brand' : tone[st]}`;
+          chip.className = `inline-grid place-items-center min-w-7 h-6 px-0.5 rounded-md font-mono text-xs font-semibold ${tone[st]}`;
           chip.dataset.status = st === 'p' ? 'pass' : st === 'f' ? 'fail' : 'untested';
           chip.textContent = st === 'p' ? (extra ? '✓+' : '✓') : st === 'f' ? '✕' : '·';
-          chip.title = `${prod.label} ${shown.v} with ${c.label}: ${st === 'p' ? (extra ? 'works with an extra step' : 'works') : st === 'f' ? 'fails' : 'not tested'}${rec ? ', recommended' : ''}`;
+          chip.title = `${prod.label} ${shown.v} with ${c.label}: ${st === 'p' ? (extra ? 'works with an extra step' : 'works') : st === 'f' ? 'fails' : 'not tested'}`;
           td.append(chip);
           tr.append(td);
         }
