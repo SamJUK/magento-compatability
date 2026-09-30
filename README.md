@@ -196,26 +196,13 @@ npx playwright install --with-deps chromium
 MAGENTO_BASE_URL=http://localhost:8080 npx playwright test
 ```
 
-To include the opt-in admin coverage against a known-good local install:
+Three specs run on every combination:
 
-```bash
-cd docker/scripts/tests/playwright
-MAGENTO_BASE_URL=http://localhost:8080 PLAYWRIGHT_ADMIN=1 npx playwright test tests/admin.spec.ts
-```
+- `storefront.spec.ts`: homepage renders the Luma shell
+- `checkout.spec.ts`: guest buys `e2e-checkout-product` (seeded by `tests/seed-checkout-product.php` during smoke) with flat rate and check / money order
+- `admin.spec.ts`: logs in as `admin` / `Admin123!` and saves a CMS block
 
-To validate checkout flows that require Magento sample data through the builder
-without overwriting the canonical results directory:
-
-```bash
-./app/bin/magento-compatibility-builder test \
-  -baseline \
-  -product magento \
-  -version 2.4.8 \
-  -sample-data \
-  -results-dir /tmp/playwright-results \
-  -force \
-  -no-tui
-```
+Standalone runs against another install need that product seeded, and `PLAYWRIGHT_ADMIN_USER`, `PLAYWRIGHT_ADMIN_PASSWORD` and `PLAYWRIGHT_ADMIN_PATH` if its admin differs.
 
 ---
 

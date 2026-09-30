@@ -7,6 +7,8 @@
 # Tests performed:
 #   1. setup:upgrade          — ensures DB schema is up to date
 #   2. setup:di:compile       — dependency injection compilation
+#   3. seed checkout product  — simple product for the Playwright checkout spec
+#   4. indexer:reindex        — makes the seeded product salable
 #
 # Environment:
 #   RUN_DI_COMPILE  — set to 0 to skip setup:di:compile (default: 1)
@@ -57,6 +59,12 @@ if [[ "${RUN_DI_COMPILE:-1}" == "1" ]]; then
   run_step "setup:di:compile" \
     bin/magento setup:di:compile --no-interaction
 fi
+
+run_step "seed checkout product" \
+  php /scripts/tests/seed-checkout-product.php
+
+run_step "indexer:reindex" \
+  bin/magento indexer:reindex
 
 # ─── Fix permissions ──────────────────────────────────────────────────────────
 echo ""

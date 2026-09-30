@@ -5,6 +5,7 @@ const reportFile = process.env.PLAYWRIGHT_REPORT_FILE ?? 'playwright-report/resu
 
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './global-setup.ts',
   timeout: 60_000,
   expect: {
     timeout: 15_000,

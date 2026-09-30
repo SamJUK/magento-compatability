@@ -485,11 +485,10 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 func TestPlaywrightEnv_ReplacesBaseURLAndReportFile(t *testing.T) {
 	t.Setenv("MAGENTO_BASE_URL", "http://stale.example")
 	t.Setenv("PLAYWRIGHT_REPORT_FILE", "old-report.json")
-	t.Setenv("PLAYWRIGHT_SAMPLE_DATA", "1")
 	t.Setenv("FORCE_COLOR", "1")
 	t.Setenv("NO_COLOR", "1")
 
-	env := playwrightEnv("http://localhost:4321", "playwright-report/fresh.json", false)
+	env := playwrightEnv("http://localhost:4321", "playwright-report/fresh.json")
 	envSet := make(map[string]bool, len(env))
 	for _, kv := range env {
 		envSet[kv] = true
@@ -501,17 +500,11 @@ func TestPlaywrightEnv_ReplacesBaseURLAndReportFile(t *testing.T) {
 	if !envSet["PLAYWRIGHT_REPORT_FILE=playwright-report/fresh.json"] {
 		t.Fatalf("playwrightEnv: missing updated report file")
 	}
-	if !envSet["PLAYWRIGHT_SAMPLE_DATA=0"] {
-		t.Fatalf("playwrightEnv: missing updated sample-data flag")
-	}
 	if envSet["MAGENTO_BASE_URL=http://stale.example"] {
 		t.Fatalf("playwrightEnv: stale base URL leaked into subprocess environment")
 	}
 	if envSet["PLAYWRIGHT_REPORT_FILE=old-report.json"] {
 		t.Fatalf("playwrightEnv: stale report path leaked into subprocess environment")
-	}
-	if envSet["PLAYWRIGHT_SAMPLE_DATA=1"] {
-		t.Fatalf("playwrightEnv: stale sample-data flag leaked into subprocess environment")
 	}
 	if envSet["FORCE_COLOR=1"] {
 		t.Fatalf("playwrightEnv: FORCE_COLOR should not leak into subprocess environment")
