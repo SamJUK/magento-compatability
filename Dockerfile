@@ -14,6 +14,7 @@ RUN pnpm --dir /app/site/ install --frozen-lockfile
 COPY site/ /app/site/
 COPY ./matrix.yml /app/matrix.yml
 COPY ./results/ /app/results/
+COPY ./docker/scripts/workarounds.json /app/docker/scripts/workarounds.json
 
 ARG MODE=production
 ENV NODE_ENV=${MODE}

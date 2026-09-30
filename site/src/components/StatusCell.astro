@@ -7,14 +7,16 @@ interface Props {
   href?: string;
   /** Accessible description, e.g. "2.4.8-p5 with PHP 8.5: fails" */
   title: string;
+  /** The run only passed with an extra patch, module or Composer fix. */
+  extra?: boolean;
   /** Text inside the cell; defaults to a tick, cross or dot. */
   text?: string;
   class?: string;
 }
 
-const { status, recommended = false, href, title, text, class: className = '' } = Astro.props;
+const { status, recommended = false, extra = false, href, title, text, class: className = '' } = Astro.props;
 
-const glyph = text ?? (status === 'pass' ? '✓' : status === 'fail' ? '✕' : '·');
+const glyph = text ?? (status === 'pass' ? (extra ? '✓+' : '✓') : status === 'fail' ? '✕' : '·');
 const tone = {
   pass: 'bg-pass text-pass-ink',
   fail: 'bg-fail text-fail-ink border border-dashed border-fail-line',
