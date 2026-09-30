@@ -37,7 +37,7 @@ const devCacheRefreshPlugin = {
 
 export default defineConfig({
   output: 'static',
-  site: 'https://m2compat.example.com',
+  site: 'https://magento.works',
   fonts: [
     {
       provider: fontProviders.fontsource(),
