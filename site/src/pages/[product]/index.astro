@@ -41,8 +41,6 @@ const rows = lines.flatMap(({ line, releases }) =>
 
 const recPassing = rows.filter((r) => r.cells.some((c) => c.recommended && c.status === 'pass'));
 const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.status !== 'untested'));
-const defaultTo = lines[0]?.releases.at(-1)?.version;
-const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
 ---
 
 <Base title={`${label} matrix`} description={`Every ${label} release against every PHP, database and search version we test, with an upgrade planner.`}>
@@ -50,8 +48,8 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
     <div class="flex flex-col gap-3 max-w-3xl">
       <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Plan a {label} upgrade</h1>
       <p class="text-muted text-lg leading-relaxed">
-        Pick where you are and where you are going. Highlighted columns work on both, so you can keep that service
-        through the upgrade and change it afterwards.
+        Pick where you are and where you are going. The route keeps the services you tick running at every step,
+        stopping at an earlier release when a straight jump would break one. Highlighted columns work on both ends.
       </p>
     </div>
     <nav class="flex gap-1 p-1 rounded-xl bg-sunken" aria-label="Product">
@@ -66,28 +64,39 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
   </div>
 
   <section id="planner" class="mt-8 rounded-2xl bg-panel text-panel-ink p-5 sm:p-7 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]" aria-label="Upgrade planner">
-    <div class="flex flex-col gap-3 font-display text-xl font-bold">
-      <label class="flex items-center gap-3">
+    <div class="flex flex-col gap-3">
+      <label class="flex items-center gap-3 font-display text-xl font-bold">
         <span class="w-28 shrink-0">I'm on</span>
         <select id="plan-from" class="flex-1 h-12 rounded-lg bg-surface text-ink px-3 font-mono text-base cursor-pointer">
-          {rows.map((r) => <option value={r.version} selected={r.version === defaultFrom}>{r.version}</option>)}
+          <option value="" selected>Pick a release</option>
+          {rows.map((r) => <option value={r.version}>{r.version}</option>)}
         </select>
       </label>
-      <label class="flex items-center gap-3">
+      <label class="flex items-center gap-3 font-display text-xl font-bold">
         <span class="w-28 shrink-0">Going to</span>
         <select id="plan-to" class="flex-1 h-12 rounded-lg bg-surface text-ink px-3 font-mono text-base cursor-pointer">
-          {rows.map((r) => <option value={r.version} selected={r.version === defaultTo}>{r.version}</option>)}
+          <option value="" selected>Pick a release</option>
+          {rows.map((r) => <option value={r.version}>{r.version}</option>)}
         </select>
       </label>
-    </div>
-    <div class="grid gap-4 sm:grid-cols-3" aria-live="polite">
-      {dims.map((d) => (
-        <div class="rounded-xl bg-black/20 p-4 flex flex-col gap-2" data-plan-dim={d.key}>
-          <span class="text-xs font-bold uppercase tracking-wider text-panel-muted">{d.label}</span>
-          <span class="font-semibold leading-snug" data-plan-keep></span>
-          <span class="text-sm text-panel-muted leading-snug" data-plan-after></span>
+      <fieldset class="mt-2 flex flex-col gap-2">
+        <legend class="text-sm font-semibold">Keep the same through each upgrade</legend>
+        <p class="text-xs text-panel-muted leading-relaxed">Tick what is hard to change on your hosting. Physical servers usually need the database and search engine to carry over; containers can swap anything.</p>
+        <div class="flex flex-wrap gap-2">
+          {dims.map((d) => (
+            <label class="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-black/20 text-sm font-semibold cursor-pointer">
+              <input type="checkbox" name="sticky" value={d.key} checked={d.key !== 'php'} class="size-4 accent-brand" />
+              {d.label}
+            </label>
+          ))}
         </div>
-      ))}
+      </fieldset>
+    </div>
+    <div aria-live="polite" class="flex flex-col gap-3">
+      <h2 class="text-xs font-bold uppercase tracking-wider text-panel-muted">The route</h2>
+      <ol id="plan-steps" class="flex flex-col gap-2.5 text-base leading-snug">
+        <li class="text-panel-muted">Pick where you are and where you are going.</li>
+      </ol>
     </div>
   </section>
 
@@ -156,24 +165,71 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
   const from = document.getElementById('plan-from') as HTMLSelectElement;
   const to = document.getElementById('plan-to') as HTMLSelectElement;
   const toggle = document.getElementById('toggle-patches') as HTMLButtonElement;
+  const steps = document.getElementById('plan-steps') as HTMLOListElement;
+  const sticky = [...document.querySelectorAll<HTMLInputElement>('input[name="sticky"]')];
   const headers = [...table.querySelectorAll<HTMLElement>('thead th[data-col]')];
-  const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')];
-  const rowOf = (v: string) => rows.find((r) => r.dataset.version === v)!;
-  const statusAt = (row: HTMLTableRowElement, col: number) =>
-    row.querySelector<HTMLElement>(`td[data-col="${col}"] [data-status]`)!;
+  const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')]; // newest first
+  const rowOf = (v: string) => rows.find((r) => r.dataset.version === v);
+  const passes = (row: HTMLTableRowElement, col: number) =>
+    row.querySelector<HTMLElement>(`td[data-col="${col}"] [data-status]`)!.dataset.status === 'pass';
+  const colsOf = (dim: string) => headers.map((th, i) => ({ th, i })).filter(({ th }) => th.dataset.dim === dim);
+  const dimLabel = (dim: string) => sticky.find((c) => c.value === dim)!.parentElement!.textContent!.trim();
+  const shared = (a: HTMLTableRowElement, b: HTMLTableRowElement, dim: string) =>
+    colsOf(dim).filter(({ i }) => passes(a, i) && passes(b, i));
+  const recommended = (row: HTMLTableRowElement, dim: string) =>
+    colsOf(dim).find(({ i }) => row.querySelector(`td[data-col="${i}"] [data-rec]`))?.th.dataset.label;
+  const family = (label?: string) => label?.split(' ')[0];
+
+  // Which shared version to run across a hop: the target's recommendation, else the one you are on,
+  // else the newest of the same family (stay on MariaDB rather than hop to Percona).
+  function carry(x: HTMLTableRowElement, y: HTMLTableRowElement, dim: string, current?: string) {
+    const both = shared(x, y, dim).map(({ th }) => th.dataset.label!);
+    const target = recommended(y, dim);
+    const here = current ?? recommended(x, dim);
+    if (target && both.includes(target)) return target;
+    if (here && both.includes(here)) return here;
+    return both.filter((l) => family(l) === family(here)).at(-1) ?? both.at(-1)!;
+  }
+
+  // Hop forward to the newest release whose kept services still overlap with where you are,
+  // stopping only at the newest patch of each line on the way.
+  function route(a: HTMLTableRowElement, b: HTMLTableRowElement, keep: string[]) {
+    const path = [a];
+    let at = a;
+    while (at !== b) {
+      const ahead = rows.slice(rows.indexOf(b), rows.indexOf(at)).filter((r) => r === b || r.dataset.latest);
+      const next = ahead.find((r) => keep.every((dim) => shared(at, r, dim).length > 0));
+      if (!next) return undefined;
+      path.push(next);
+      at = next;
+    }
+    return path;
+  }
+
+  function li(html: string, muted = false) {
+    const el = document.createElement('li');
+    el.innerHTML = html;
+    if (muted) el.className = 'text-panel-muted';
+    return el;
+  }
 
   function update() {
+    const showAll = toggle.getAttribute('aria-pressed') === 'true';
     const a = rowOf(from.value);
     const b = rowOf(to.value);
-    const showAll = toggle.getAttribute('aria-pressed') === 'true';
-    const both = headers.map((_, i) => statusAt(a, i).dataset.status === 'pass' && statusAt(b, i).dataset.status === 'pass');
+    const keep = sticky.filter((c) => c.checked).map((c) => c.value);
+    const ready = a && b && rows.indexOf(b) < rows.indexOf(a);
+    const path = ready ? route(a, b, keep) ?? route(a, b, []) : undefined;
+    const direct = ready && path!.length === 2 && keep.length > 0 && !route(a, b, keep);
 
+    const both = headers.map((_, i) => !!(a && b && passes(a, i) && passes(b, i)));
     for (const row of rows) {
       const tag = row.querySelector<HTMLElement>('[data-tag]')!;
-      const mark = row === a ? 'FROM' : row === b ? 'TO' : '';
+      const mark = row === a ? 'FROM' : row === b ? 'TO' : path?.includes(row) ? 'VIA' : '';
       tag.textContent = mark;
       tag.hidden = !mark;
       row.hidden = !(showAll || row.dataset.latest || mark);
+      row.classList.toggle('opacity-35', !!path && !mark);
       row.classList.toggle('bg-sunken', !!mark);
       row.classList.toggle('bg-surface', !mark);
       row.querySelectorAll<HTMLElement>('td[data-col]').forEach((td) => td.classList.toggle('bg-hold', both[Number(td.dataset.col)]));
@@ -183,24 +239,33 @@ const defaultFrom = (lines[2] ?? lines.at(-1))?.releases.at(-1)?.version;
       th.classList.toggle('text-ink', both[i]);
     });
 
-    for (const box of document.querySelectorAll<HTMLElement>('[data-plan-dim]')) {
-      const dim = box.dataset.planDim;
-      const cols = headers.map((th, i) => ({ th, i })).filter(({ th }) => th.dataset.dim === dim);
-      const keep = cols.filter(({ i }) => both[i]).map(({ th }) => th.dataset.label!);
-      const rec = cols.find(({ i }) => statusAt(b, i).dataset.rec)?.th.dataset.label;
-      box.querySelector('[data-plan-keep]')!.textContent = keep.length
-        ? `Keep ${keep.join(', ')}`
-        : 'No overlap. Change it during the upgrade.';
-      box.querySelector('[data-plan-after]')!.textContent = !rec
-        ? ''
-        : keep.includes(rec)
-          ? `${rec} is already recommended for ${to.value}.`
-          : `Then move to ${rec}, recommended for ${to.value}.`;
+    if (!a || !b) return steps.replaceChildren(li('Pick where you are and where you are going.', true));
+    if (!ready) return steps.replaceChildren(li('Pick a newer release to go to.', true));
+
+    const items: HTMLLIElement[] = [];
+    if (direct) items.push(li(`No route keeps ${keep.map(dimLabel).join(' and ')} the same, so this is one jump.`, true));
+    const dimsHere = [...new Set(headers.map((th) => th.dataset.dim!))];
+    const running: Record<string, string | undefined> = {};
+    for (let h = 1; h < path!.length; h++) {
+      const [x, y] = [path![h - 1], path![h]];
+      const carried = dimsHere.filter((dim) => keep.includes(dim) && shared(x, y, dim).length > 0);
+      const moves = carried.map((dim) => (running[dim] = carry(x, y, dim, running[dim])));
+      const change = dimsHere
+        .filter((dim) => !carried.includes(dim))
+        .map((dim) => (running[dim] = recommended(y, dim)))
+        .filter(Boolean);
+      const on = moves.length ? `On <strong>${x.dataset.version}</strong>, run ${moves.join(', ')}. ` : '';
+      const swap = change.length ? ` Switch to ${change.join(', ')} as part of it.` : '';
+      items.push(li(`${on}Upgrade to <strong>${y.dataset.version}</strong>.${swap}`));
     }
+    const after = keep.map((dim) => recommended(b, dim)).filter((rec, i) => rec && rec !== running[keep[i]]);
+    if (after.length) items.push(li(`Then move to the recommended ${after.join(', ')}.`, true));
+    steps.replaceChildren(...items);
   }
 
   from.addEventListener('change', update);
   to.addEventListener('change', update);
+  sticky.forEach((c) => c.addEventListener('change', update));
   toggle.addEventListener('click', () => {
     const on = toggle.getAttribute('aria-pressed') !== 'true';
     toggle.setAttribute('aria-pressed', String(on));

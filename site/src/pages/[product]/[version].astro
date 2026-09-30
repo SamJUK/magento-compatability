@@ -176,7 +176,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
       <div class="mt-12 grid gap-10 lg:grid-cols-[minmax(0,1fr)_420px] items-start">
         <section aria-labelledby="swap">
           <h2 id="swap" class="font-display font-extrabold text-3xl tracking-tight">Swap one service at a time</h2>
-          <p class="mt-2 text-muted">Each chip is the recommended stack with only that service changed. The ringed chip is the recommendation.</p>
+          <p class="mt-2 text-muted">Each chip is the recommended stack with only that service changed. The chip with a dot is the recommendation.</p>
           <div class="mt-4">
             {dims.map((d) => (
               <div class="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)] py-4 border-t border-line">
@@ -191,7 +191,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
                       <a
                         href={o.href}
                         title={`${o.label}: ${verdict}${c.recommended ? ' (recommended)' : ''}${needs}`}
-                        class:list={[chip, tone[c.status], c.recommended && 'outline-2 outline-offset-2 outline-rec']}
+                        class:list={[chip, tone[c.status], c.recommended && 'relative after:absolute after:top-[3px] after:right-[3px] after:size-1 after:rounded-full after:bg-current']}
                       >
                         <span aria-hidden="true">{glyph[c.status]}{extra && '+'}</span>
                         {o.label}

@@ -11,15 +11,16 @@ const stats = getGlobalStats();
 const dims = getDimensions();
 const columns = dims.flatMap((d) => d.options.map((o) => ({ ...o, dimLabel: d.label })));
 
-// Newest release of each minor line: 2.4.8-p5 for Magento's 2.4.8, 3.5.0 for Mage-OS 3.5.
-const minorOf = (product: string, version: string) =>
-  product === 'magento' ? version.split('-p')[0] : version.split('.').slice(0, 2).join('.');
+// Newest release of each line: 2.4.8-p5 for Magento's 2.4.8. Mage-OS follows semver, so its
+// service support only moves between majors and one row per major (3.5.0 for 3.x) is enough.
+const lineOf = (product: string, version: string) =>
+  product === 'magento' ? version.split('-p')[0] : `${version.split('.')[0]}.x`;
 
 const products = getProductNames().map((product) => {
   const seen = new Set<string>();
   const latest = getReleases(product).filter((r) => {
-    const minor = minorOf(product, r.version);
-    return !seen.has(minor) && seen.add(minor);
+    const line = lineOf(product, r.version);
+    return !seen.has(line) && seen.add(line);
   });
   return {
     product,
@@ -35,7 +36,7 @@ const products = getProductNames().map((product) => {
         return { ...c, extra: needed.length > 0, title: `${r.version} with ${col.label}: ${verdict}${c.recommended ? ', recommended' : ''}${needs}${why}` };
       });
       const tested = row.filter((c) => c.status !== 'untested');
-      return { version: r.version, minor: minorOf(product, r.version), cells: row, passed: tested.filter((c) => c.status === 'pass').length, tested: tested.length };
+      return { version: r.version, line: lineOf(product, r.version), cells: row, passed: tested.filter((c) => c.status === 'pass').length, tested: tested.length };
     }),
   };
 });
@@ -60,59 +61,60 @@ const how = [
     <a href="/check" class="inline-flex items-center h-11 px-4 rounded-lg bg-brand text-on-brand font-semibold no-underline">Will it run on my stack? →</a>
   </section>
 
-  {products.map((p) => (
-    <section class="mt-8 rounded-2xl border border-line bg-surface" aria-labelledby={`m-${p.product}`}>
-      <div class="flex flex-wrap items-baseline justify-between gap-3 px-4 pt-4">
-        <h2 id={`m-${p.product}`} class="font-display font-bold text-2xl">{p.label}</h2>
-        <a href={`/${p.product}`} class="text-sm font-semibold">Every {p.label} release →</a>
-      </div>
-      <div class="relative overflow-x-auto">
-        <table class="border-separate border-spacing-0 text-sm">
-          <caption class="sr-only">Newest {p.label} release of each line against every service version</caption>
-          <thead>
-            <tr>
-              <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-4 pt-3 pb-2 font-display text-base">Release</th>
-              <th scope="col" rowspan="2" class="text-right px-2 pt-3 pb-2 font-mono text-[11px] font-medium text-muted align-bottom">pass</th>
-              {dims.map((d) => (
-                <th scope="colgroup" colspan={d.options.length} class="text-left px-2 pt-3 pb-1 font-display text-base border-l border-line">{d.label}</th>
-              ))}
-            </tr>
-            <tr>
-              {columns.map((c, i) => (
-                <th
-                  scope="col"
-                  class:list={['px-0.5 pb-2 pt-1 font-mono text-[11px] font-medium text-muted whitespace-nowrap align-bottom', (i === 0 || columns[i - 1].key !== c.key) && 'border-l border-line']}
-                  title={c.label}
-                >{c.short.split(' ').map((part) => <span class="block leading-tight">{part}</span>)}</th>
-              ))}
-            </tr>
-          </thead>
+  <section class="mt-8 rounded-2xl border border-line bg-surface" aria-label="Newest release of each line against every service version">
+    <div class="relative overflow-x-auto">
+      <table class="border-separate border-spacing-0 text-xs">
+        <thead>
+          <tr>
+            <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-3 pt-3 pb-1.5 font-display text-sm">Release</th>
+            <th scope="col" rowspan="2" class="text-right px-1.5 pt-3 pb-1.5 font-mono text-[10px] font-medium text-muted align-bottom">pass</th>
+            {dims.map((d) => (
+              <th scope="colgroup" colspan={d.options.length} class="text-left px-1.5 pt-3 pb-0.5 font-display text-sm border-l border-line">{d.label}</th>
+            ))}
+          </tr>
+          <tr>
+            {columns.map((c, i) => (
+              <th
+                scope="col"
+                class:list={['px-px pb-1.5 pt-0.5 font-mono text-[10px] font-medium text-muted whitespace-nowrap align-bottom', (i === 0 || columns[i - 1].key !== c.key) && 'border-l border-line']}
+                title={c.label}
+              >{c.short.split(' ').map((part) => <span class="block leading-tight">{part}</span>)}</th>
+            ))}
+          </tr>
+        </thead>
+        {products.map((p) => (
           <tbody>
+            <tr>
+              <th scope="colgroup" colspan={columns.length + 2} class="sticky left-0 bg-sunken text-left px-3 py-1.5 border-t border-line font-display text-sm">
+                <a href={`/${p.product}`} class="text-ink no-underline hover:text-brand">{p.label}</a>
+              </th>
+            </tr>
             {p.rows.map((r) => (
               <tr class="bg-surface">
-                <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-4 py-1 border-t border-line whitespace-nowrap">
+                <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-3 py-0.5 border-t border-line whitespace-nowrap">
                   <a href={`/${p.product}/${r.version}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
+                  {p.product !== 'magento' && <span class="ml-1 font-mono text-[10px] text-muted">{r.line}</span>}
                 </th>
-                <td class="px-2 py-1 border-t border-line text-right font-mono text-xs text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
+                <td class="px-1.5 py-0.5 border-t border-line text-right font-mono text-[10px] text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
                 {r.cells.map((c, i) => (
-                  <td class:list={['px-0.5 py-0.5 text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
-                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} title={c.title} class="min-w-7 h-7" />
+                  <td class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
+                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} title={c.title} class="min-w-6 h-6 px-0.5" />
                   </td>
                 ))}
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
-    </section>
-  ))}
+        ))}
+      </table>
+    </div>
+  </section>
 
   <div class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-muted">
-    <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-7 h-7" />Installs and passes</span>
-    <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-7 h-7" />Works with an extra patch or module</span>
-    <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-7 h-7" />Fails</span>
-    <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack</span>
-    <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-7 h-7" />Not tested</span>
+    <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-6 h-6" />Installs and passes</span>
+    <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-6 h-6" />Works with an extra patch or module</span>
+    <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-6 h-6" />Fails</span>
+    <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-6 h-6" />Recommended stack</span>
+    <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-6 h-6" />Not tested</span>
   </div>
 
   <section class="mt-20 flex flex-col gap-6" aria-labelledby="data">

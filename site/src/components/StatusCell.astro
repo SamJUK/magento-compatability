@@ -22,7 +22,8 @@ const tone = {
   fail: 'bg-fail text-fail-ink border border-dashed border-fail-line',
   untested: 'border border-dotted border-line text-muted',
 }[status];
-const ring = recommended ? 'outline-2 outline-offset-2 outline-rec' : '';
+// A small dot marks the recommended stack; an outline on every row was too loud.
+const ring = recommended ? 'relative after:absolute after:top-[3px] after:right-[3px] after:size-1 after:rounded-full after:bg-current' : '';
 const classes = `inline-grid place-items-center px-1.5 rounded-md font-mono text-xs font-semibold no-underline ${tone} ${ring} ${className || 'min-w-10 h-9'}`;
 const Tag = href ? 'a' : 'span';
 ---

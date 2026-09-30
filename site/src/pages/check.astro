@@ -43,4 +43,14 @@ const optionCount = dims.reduce((n, d) => n + d.options.length, 0);
       <p class="text-xs text-muted">{optionCount} service versions across {dims.length} kinds of service.</p>
     </aside>
   </section>
+
+  <section class="mt-12 rounded-2xl border border-line bg-surface" aria-labelledby="qc-matrix-title">
+    <div class="px-4 pt-4">
+      <h2 id="qc-matrix-title" class="font-display font-bold text-2xl">Support by release line</h2>
+      <p class="mt-1 text-sm text-muted">The newest release of each line against every version of the service you picked. Your release and service are highlighted.</p>
+    </div>
+    <div class="relative overflow-x-auto mt-3">
+      <table id="qc-matrix" class="border-separate border-spacing-0 text-sm"></table>
+    </div>
+  </section>
 </Base>
