@@ -1,0 +1,15 @@
+/* TEAM */
+Built by: Sam James
+Contact: hello@magento.works
+GitHub: https://github.com/samjuk
+
+/* THANKS */
+Hypernode: the Mage-OS mirror of Magento packages every install uses
+Mage-OS: repo.mage-os.org, and the fixes several patches here backport
+Pieter Hoste: the libxml2 2.12+ Elasticsearch XSD fix
+
+/* SITE */
+Source: https://github.com/samjuk/magento-compatability
+Standards: HTML, CSS, JSON
+Components: Astro, Tailwind CSS, Go, Docker, Playwright
+Fonts: Bricolage Grotesque, IBM Plex Sans, IBM Plex Mono
