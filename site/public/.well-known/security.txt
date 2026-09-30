@@ -1,0 +1,4 @@
+Contact: mailto:hello@magento.works
+Expires: 2027-09-30T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://magento.works/.well-known/security.txt

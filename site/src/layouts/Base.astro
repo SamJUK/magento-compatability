@@ -33,8 +33,9 @@ const nav = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalURL} />
-    <title>{title} · Magento Compatability</title>
+    <title>{title} · magento.works</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="author" type="text/plain" href="/humans.txt" />
     <script is:inline>
       try {
         const t = localStorage.getItem('theme');
@@ -52,7 +53,7 @@ const nav = [
       <div class="max-w-7xl mx-auto px-4 sm:px-6 min-h-16 py-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
         <a href="/" class="flex items-center gap-2.5 text-ink no-underline">
           <Logo id="logo-header" size={30} />
-          <span class="font-display font-extrabold text-lg tracking-tight">Magento Compatability</span>
+          <span class="font-display font-extrabold text-lg tracking-tight">magento<span class="text-brand">.works</span></span>
         </a>
 
         <nav class="flex flex-wrap items-center gap-1 text-sm font-semibold" aria-label="Main">
@@ -95,10 +96,11 @@ const nav = [
     <footer class="border-t border-line">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-3 justify-between text-sm text-muted">
         <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
-        <span class="flex gap-5">
+        <span class="flex flex-wrap gap-x-5 gap-y-2">
           <a href="/api" class="text-muted hover:text-ink">API</a>
           <a href="/api/v1/results.json" class="text-muted hover:text-ink">results.json</a>
           <a href={GITHUB_URL} class="text-muted hover:text-ink">GitHub</a>
+          <a href="mailto:hello@magento.works" class="text-muted hover:text-ink">hello@magento.works</a>
         </span>
       </div>
     </footer>

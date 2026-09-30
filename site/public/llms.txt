@@ -1,0 +1,27 @@
+# magento.works
+
+> Which Magento Open Source and Mage-OS releases install and run on which PHP, database, search engine, cache, queue, web server and Varnish versions. Every result comes from a real install in Docker. All data is static JSON: no key, no rate limit.
+
+Not affiliated with Adobe or the Mage-OS Association.
+
+## Pages
+
+- [Will it run?](https://magento.works/check): pick a release and a service version, get a yes or no
+- [Magento releases](https://magento.works/magento): every tested Magento release and upgrade route
+- [Mage-OS releases](https://magento.works/mageos): every tested Mage-OS release and upgrade route
+- [Services](https://magento.works/software): how each PHP, database, search, cache and queue version fares across releases
+
+## API
+
+- [API reference](https://magento.works/api): all endpoints with examples
+- [Release results](https://magento.works/api/v1/magento/2.4.8-p5.json): every result for one release, with per-step details. Pattern: `/api/v1/{magento|mageos}/{version}.json`
+- [Tested releases](https://magento.works/api/v1/magento/versions.json): pattern `/api/v1/{magento|mageos}/versions.json`
+- [Service version](https://magento.works/api/v1/software/php/php-8.4.json): how one service version fares across every release. Pattern: `/api/v1/software/{service}/{type}-{version}.json`
+- [GitHub Actions matrix](https://magento.works/api/v1/magento/github-matrix.json): stacks that passed, ready for `strategy.matrix`. Per release: `/api/v1/{product}/{version}/github-matrix.json`
+- [Matrix definition](https://magento.works/api/v1/matrix.json): every product, release and service version under test
+- [Build health](https://magento.works/api/v1/health.json): total results, last run time and pass or fail counts
+
+## Optional
+
+- [All results](https://magento.works/api/v1/results.json): every result in one large file
+- [Source and harness](https://github.com/samjuk/magento-compatability): matrix.yml, the Docker harness and every result file
