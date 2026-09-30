@@ -63,7 +63,7 @@ const how = [
 
   <section class="mt-8 rounded-2xl border border-line bg-surface" aria-label="Newest release of each line against every service version">
     <div class="relative overflow-x-auto">
-      <table class="border-separate border-spacing-0 text-xs">
+      <table data-grid class="border-separate border-spacing-0 text-xs">
         <thead>
           <tr>
             <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-3 pt-3 pb-1.5 font-display text-sm">Release</th>
@@ -113,7 +113,7 @@ const how = [
     <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-6 h-6" />Installs and passes</span>
     <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-6 h-6" />Works with an extra patch or module</span>
     <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-6 h-6" />Fails</span>
-    <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-6 h-6" />Recommended stack</span>
+    <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-6 h-6" />Recommended stack (Adobe's system requirements; Mage-OS's for Mage-OS)</span>
     <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-6 h-6" />Not tested</span>
   </div>
 

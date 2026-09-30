@@ -17,13 +17,13 @@ interface Props {
 const { status, recommended = false, extra = false, href, title, text, class: className = '' } = Astro.props;
 
 const glyph = text ?? (status === 'pass' ? (extra ? '✓+' : '✓') : status === 'fail' ? '✕' : '·');
+// The recommended stack (Adobe's system requirements, or Mage-OS's) is a blue tile when it passes.
 const tone = {
-  pass: 'bg-pass text-pass-ink',
+  pass: recommended ? 'bg-brand text-on-brand' : 'bg-pass text-pass-ink',
   fail: 'bg-fail text-fail-ink border border-dashed border-fail-line',
   untested: 'border border-dotted border-line text-muted',
 }[status];
-// A small dot marks the recommended stack; an outline on every row was too loud.
-const ring = recommended ? 'relative after:absolute after:top-[3px] after:right-[3px] after:size-1 after:rounded-full after:bg-current' : '';
+const ring = recommended && status !== 'pass' ? 'outline-2 outline-offset-1 outline-brand' : '';
 const classes = `inline-grid place-items-center px-1.5 rounded-md font-mono text-xs font-semibold no-underline ${tone} ${ring} ${className || 'min-w-10 h-9'}`;
 const Tag = href ? 'a' : 'span';
 ---

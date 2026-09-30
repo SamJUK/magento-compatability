@@ -80,8 +80,8 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
         </select>
       </label>
       <fieldset class="mt-2 flex flex-col gap-2">
-        <legend class="text-sm font-semibold">Keep the same through each upgrade</legend>
-        <p class="text-xs text-panel-muted leading-relaxed">Tick what is hard to change on your hosting. Physical servers usually need the database and search engine to carry over; containers can swap anything.</p>
+        <legend class="text-sm font-semibold">Version overlap</legend>
+        <p class="text-xs text-panel-muted leading-relaxed">For each ticked service, the route keeps a version that works before and after every upgrade. You can then change that service on its own, so it does not add downtime to the upgrade. More ticks can mean more steps.</p>
         <div class="flex flex-wrap gap-2">
           {dims.map((d) => (
             <label class="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-black/20 text-sm font-semibold cursor-pointer">
@@ -92,17 +92,16 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
         </div>
       </fieldset>
     </div>
-    <div aria-live="polite" class="flex flex-col gap-3">
+    <div aria-live="polite" class="flex flex-col gap-3 min-w-0">
       <h2 class="text-xs font-bold uppercase tracking-wider text-panel-muted">The route</h2>
-      <ol id="plan-steps" class="flex flex-col gap-2.5 text-base leading-snug">
-        <li class="text-panel-muted">Pick where you are and where you are going.</li>
-      </ol>
+      <p id="plan-note" class="text-panel-muted">Pick where you are and where you are going.</p>
+      <ol id="plan-route" class="flex flex-col gap-2"></ol>
     </div>
   </section>
 
   <section class="mt-8 rounded-2xl border border-line bg-surface">
     <div class="relative overflow-x-auto">
-      <table id="matrix" class="border-separate border-spacing-0 text-sm">
+      <table id="matrix" data-grid class="border-separate border-spacing-0 text-sm">
         <caption class="sr-only">{label} releases against PHP, database and search versions</caption>
         <thead>
           <tr>
@@ -145,7 +144,7 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
       <span class="flex items-center gap-2"><StatusCell status="pass" title="Works" class="min-w-7 h-7" />Installs and passes</span>
       <span class="flex items-center gap-2"><StatusCell status="pass" extra title="Works with an extra step" class="min-w-7 h-7" />Works with an extra patch or module</span>
       <span class="flex items-center gap-2"><StatusCell status="fail" title="Fails" class="min-w-7 h-7" />Fails</span>
-      <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack</span>
+      <span class="flex items-center gap-2"><StatusCell status="pass" recommended title="Recommended stack" class="min-w-7 h-7" />Recommended stack, from {product === 'magento' ? 'Adobe' : 'Mage-OS'}'s system requirements</span>
       <span class="flex items-center gap-2"><StatusCell status="untested" title="Not tested" class="min-w-7 h-7" />Not tested</span>
       <button id="toggle-patches" type="button" aria-pressed="false" class="ml-auto px-3 py-2 rounded-lg border border-line text-ink font-semibold cursor-pointer hover:border-brand">
         Show every patch
@@ -165,7 +164,8 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
   const from = document.getElementById('plan-from') as HTMLSelectElement;
   const to = document.getElementById('plan-to') as HTMLSelectElement;
   const toggle = document.getElementById('toggle-patches') as HTMLButtonElement;
-  const steps = document.getElementById('plan-steps') as HTMLOListElement;
+  const note = document.getElementById('plan-note') as HTMLParagraphElement;
+  const routeList = document.getElementById('plan-route') as HTMLOListElement;
   const sticky = [...document.querySelectorAll<HTMLInputElement>('input[name="sticky"]')];
   const headers = [...table.querySelectorAll<HTMLElement>('thead th[data-col]')];
   const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')]; // newest first
@@ -206,10 +206,15 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
     return path;
   }
 
-  function li(html: string, muted = false) {
-    const el = document.createElement('li');
-    el.innerHTML = html;
-    if (muted) el.className = 'text-panel-muted';
+  const colFor = (dim: string, label?: string) => colsOf(dim).find(({ th }) => th.dataset.label === label)?.i;
+
+  // One row per release on the route, with the version of each service to run while on it.
+  function tile(dim: string, label: string | undefined, noteText: string, tone: string) {
+    const el = document.createElement('div');
+    el.className = `rounded-lg p-2.5 flex flex-col gap-0.5 min-w-0 ${tone}`;
+    el.innerHTML = `<span class="text-[10px] font-bold uppercase tracking-wider opacity-70">${dimLabel(dim)}</span>
+      <span class="font-mono text-sm font-semibold break-words">${label ?? 'not tested'}</span>
+      <span class="text-[11px] leading-tight opacity-80">${noteText}</span>`;
     return el;
   }
 
@@ -239,28 +244,48 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
       th.classList.toggle('text-ink', both[i]);
     });
 
-    if (!a || !b) return steps.replaceChildren(li('Pick where you are and where you are going.', true));
-    if (!ready) return steps.replaceChildren(li('Pick a newer release to go to.', true));
+    routeList.replaceChildren();
+    if (!a || !b) return void (note.textContent = 'Pick where you are and where you are going.');
+    if (!ready) return void (note.textContent = 'Pick a newer release to go to.');
+    note.textContent = direct
+      ? `No route keeps ${keep.map(dimLabel).join(' and ')} overlapping, so this is one jump.`
+      : path!.length > 2
+        ? `${path!.length - 1} upgrades, via ${path!.slice(1, -1).map((r) => r.dataset.version).join(', ')}.`
+        : 'One upgrade.';
 
-    const items: HTMLLIElement[] = [];
-    if (direct) items.push(li(`No route keeps ${keep.map(dimLabel).join(' and ')} the same, so this is one jump.`, true));
     const dimsHere = [...new Set(headers.map((th) => th.dataset.dim!))];
-    const running: Record<string, string | undefined> = {};
-    for (let h = 1; h < path!.length; h++) {
-      const [x, y] = [path![h - 1], path![h]];
-      const carried = dimsHere.filter((dim) => keep.includes(dim) && shared(x, y, dim).length > 0);
-      const moves = carried.map((dim) => (running[dim] = carry(x, y, dim, running[dim])));
-      const change = dimsHere
-        .filter((dim) => !carried.includes(dim))
-        .map((dim) => (running[dim] = recommended(y, dim)))
-        .filter(Boolean);
-      const on = moves.length ? `On <strong>${x.dataset.version}</strong>, run ${moves.join(', ')}. ` : '';
-      const swap = change.length ? ` Switch to ${change.join(', ')} as part of it.` : '';
-      items.push(li(`${on}Upgrade to <strong>${y.dataset.version}</strong>.${swap}`));
-    }
-    const after = keep.map((dim) => recommended(b, dim)).filter((rec, i) => rec && rec !== running[keep[i]]);
-    if (after.length) items.push(li(`Then move to the recommended ${after.join(', ')}.`, true));
-    steps.replaceChildren(...items);
+    let prev: Record<string, string | undefined> = {};
+    path!.forEach((row, n) => {
+      const next = path![n + 1];
+      const run: Record<string, string | undefined> = {};
+      for (const dim of dimsHere) {
+        run[dim] = next && keep.includes(dim) && shared(row, next, dim).length
+          ? carry(row, next, dim, prev[dim])
+          : recommended(row, dim);
+      }
+      const li = document.createElement('li');
+      li.className = 'grid gap-2 sm:grid-cols-[130px_repeat(3,minmax(0,1fr))] items-stretch';
+      const tag = n === 0 ? 'FROM' : next ? 'VIA' : 'TO';
+      li.innerHTML = `<div class="flex sm:flex-col gap-2 sm:gap-1 items-center sm:items-start py-1">
+        <span class="px-1.5 py-0.5 rounded bg-brand text-on-brand text-[10px] font-bold">${tag}</span>
+        <span class="font-mono font-bold">${row.dataset.version}</span></div>`;
+      for (const dim of dimsHere) {
+        const was = prev[dim];
+        const now = run[dim];
+        let text = next ? 'run this before upgrading' : 'recommended here';
+        let tone = 'bg-black/20';
+        if (n > 0 && was === now) text = 'keep';
+        else if (n > 0) {
+          const col = colFor(dim, was);
+          const stillWorks = col !== undefined && passes(row, col);
+          text = stillWorks ? `switch from ${was} after upgrading` : `switch from ${was ?? 'it'} with the upgrade`;
+          tone = stillWorks ? 'bg-black/20 ring-1 ring-inset ring-panel-muted' : 'bg-fail text-fail-ink';
+        }
+        li.append(tile(dim, now, text, tone));
+      }
+      routeList.append(li);
+      prev = run;
+    });
   }
 
   from.addEventListener('change', update);
