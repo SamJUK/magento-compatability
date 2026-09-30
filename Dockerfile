@@ -23,4 +23,7 @@ RUN pnpm --dir /app/site/ run build -- --mode ${MODE}
 # Production Image
 FROM nginx:alpine
 COPY --from=build /app/site/dist /usr/share/nginx/html
+# Relative redirects (/check -> /check/) so they keep the scheme and host the
+# TLS proxy in front was reached on.
+RUN echo 'absolute_redirect off;' > /etc/nginx/conf.d/redirects.conf
 EXPOSE 80
