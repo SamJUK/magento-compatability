@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -473,6 +474,10 @@ func buildInstallArgs(env []string, baseURL string) []string {
 	return args
 }
 
+// composerUpstream5xx matches a package repository answering with a server
+// error, e.g. `could not be downloaded (HTTP/2 504 )`.
+var composerUpstream5xx = regexp.MustCompile(`could not be downloaded \(http/[0-9.]+ 5[0-9]{2}`)
+
 func isTransientComposerNetworkFailure(log string) bool {
 	log = compactWhitespace(strings.ToLower(log))
 	for _, sig := range transientComposerCurlErrors {
@@ -480,7 +485,7 @@ func isTransientComposerNetworkFailure(log string) bool {
 			return true
 		}
 	}
-	return false
+	return composerUpstream5xx.MatchString(log)
 }
 
 func isRetryableInstallFailure(log string) bool {
