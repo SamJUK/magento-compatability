@@ -631,6 +631,7 @@ func TestIsTransientComposerNetworkFailure(t *testing.T) {
 		{name: "curl 6", log: "curl error 6 while downloading packages.json", want: true},
 		{name: "curl 7", log: "curl error 7 while downloading packages.json", want: true},
 		{name: "curl 28", log: "curl error 28 while downloading packages.json", want: true},
+		{name: "curl 55", log: "curl error 55 while downloading https://mage-os.hypernode.com/mirror/p2/magento/module-inventory-in-store-pickup-admin-ui.json: Send failure: Broken pipe", want: true},
 		{name: "curl 56", log: "curl error 56 while downloading packages.json", want: true},
 		{name: "different failure", log: "PHP Fatal error: something else", want: false},
 	}

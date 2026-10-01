@@ -30,6 +30,7 @@ var transientComposerCurlErrors = []string{
 	"curl error 6",
 	"curl error 7",
 	"curl error 28",
+	"curl error 55",
 	"curl error 56",
 }
 
