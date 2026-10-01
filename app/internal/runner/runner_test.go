@@ -894,6 +894,17 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "typed bulk endpoint on OpenSearch 2+",
+			stepName: "smoke",
+			log:      "Fatal error: Uncaught Elasticsearch\\Common\\Exceptions\\BadRequest400Exception: {\"error\":\"no handler found for uri [/magento2_product_1_v1/document/_bulk] and method [POST]\"}",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "search_mapping_types_removed",
+				Summary:     "This release indexes through mapping-type endpoints that the search engine has removed, so installs succeed but saving a product fails.",
+				LikelyFlaky: false,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",

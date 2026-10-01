@@ -158,6 +158,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "This release has no STOMP support (Magento_Stomp), so it cannot use ActiveMQ Artemis.",
 			LikelyFlaky: false,
 		}
+	case stepName == "smoke" && strings.Contains(text, "no handler found for uri") && strings.Contains(text, "/_bulk"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "search_mapping_types_removed",
+			Summary:     "This release indexes through mapping-type endpoints that the search engine has removed, so installs succeed but saving a product fails.",
+			LikelyFlaky: false,
+		}
 	case stepName == "install" && strings.Contains(text, "no alive nodes found in your cluster"):
 		return &result.Failure{
 			Category:    "harness",
