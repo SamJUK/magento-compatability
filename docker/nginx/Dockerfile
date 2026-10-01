@@ -1,4 +1,5 @@
-FROM nginx:1.28-alpine
+ARG WEBSERVER_VERSION=1.30
+FROM nginx:${WEBSERVER_VERSION}-alpine
 
 LABEL maintainer="magento2-supported-versions"
 
