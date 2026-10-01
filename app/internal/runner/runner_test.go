@@ -470,6 +470,7 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 		"SEARCH_TYPE=opensearch",
 		"SEARCH_HOST_FLAG_STYLE=opensearch",
 		"INSTALL_SAMPLE_DATA=0",
+		"QUEUE_PORT=5672",
 	}
 	envSet := make(map[string]bool, len(env))
 	for _, kv := range env {
@@ -880,6 +881,17 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "release without stomp",
+			stepName: "install",
+			log:      "  The \"--stomp-host\" option does not exist.  ",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "stomp_unsupported",
+				Summary:     "This release has no STOMP support (Magento_Stomp), so it cannot use ActiveMQ Artemis.",
+				LikelyFlaky: false,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",
@@ -1145,5 +1157,14 @@ func TestClassifyStepFailure(t *testing.T) {
 				t.Fatalf("classifyStepFailure(...) = %#v, want %#v", *got, *tc.want)
 			}
 		})
+	}
+}
+
+func TestQueuePort(t *testing.T) {
+	if got := queuePort(matrix.Combination{QueueType: "artemis"}); got != "61613" {
+		t.Errorf("artemis: got %s, want 61613", got)
+	}
+	if got := queuePort(matrix.Combination{QueueType: "rabbitmq"}); got != "5672" {
+		t.Errorf("rabbitmq: got %s, want 5672", got)
 	}
 }

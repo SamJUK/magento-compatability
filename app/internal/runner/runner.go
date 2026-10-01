@@ -149,6 +149,14 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The harness invoked setup:install with OpenSearch host flags that this Magento version does not support.",
 			LikelyFlaky: false,
 		}
+	case stepName == "install" && (strings.Contains(text, "the \"--stomp-host\" option does not exist") ||
+		strings.Contains(text, "the \"--queue-default-connection\" option does not exist")):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "stomp_unsupported",
+			Summary:     "This release has no STOMP support (Magento_Stomp), so it cannot use ActiveMQ Artemis.",
+			LikelyFlaky: false,
+		}
 	case stepName == "install" && strings.Contains(text, "no alive nodes found in your cluster"):
 		return &result.Failure{
 			Category:    "harness",
@@ -421,13 +429,22 @@ func buildMagentoEnv(c matrix.Combination, searchFlag string, installSampleData 
 		"SEARCH_PORT=9200",
 		"CACHE_HOST=cache",
 		"CACHE_PORT=6379",
+		"QUEUE_TYPE=" + c.QueueType,
 		"QUEUE_HOST=queue",
-		"QUEUE_PORT=5672",
+		"QUEUE_PORT=" + queuePort(c),
 		"QUEUE_USER=magento",
 		"QUEUE_PASSWORD=magento",
 		"MAGENTO_BASE_URL=http://localhost",
 		"INSTALL_SAMPLE_DATA=" + sampleDataValue,
 	}
+}
+
+// queuePort is the broker port Magento connects to: STOMP for Artemis, AMQP otherwise.
+func queuePort(c matrix.Combination) string {
+	if c.QueueType == "artemis" {
+		return "61613"
+	}
+	return "5672"
 }
 
 // resolveBaseURL discovers the host-side mapped port and returns the base URL
