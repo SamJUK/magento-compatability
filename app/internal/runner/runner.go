@@ -177,6 +177,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
 			LikelyFlaky: false,
 		}
+	case stepName == "playwright" && strings.Contains(text, "without releasing locks"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "pagebuilder_render_lock",
+			Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
+			LikelyFlaky: true,
+		}
 	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
 		return &result.Failure{
 			Category:    "infrastructure",
@@ -211,6 +218,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Category:    "harness",
 			Code:        "service_startup",
 			Summary:     "A dependency container exited during stack startup before Magento install began.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && strings.Contains(text, "dependency ") && strings.Contains(text, " failed to start"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "service_unhealthy",
+			Summary:     "A dependency container started but never passed its healthcheck before stack startup gave up.",
 			LikelyFlaky: true,
 		}
 	case stepName == "stack_up" && text == "":

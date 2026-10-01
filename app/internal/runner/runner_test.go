@@ -857,6 +857,28 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "page builder render lock",
+			stepName: "playwright",
+			log:      "console error: [2026-10-01 00:03:04+01:00] [ERROR] Page Builder was rendering for 5 seconds without releasing locks.\nTimeoutError: page.waitForURL: Timeout 120000ms exceeded.",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "pagebuilder_render_lock",
+				Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "dependency never healthy",
+			stepName: "stack_up",
+			log:      " Container m2test-322341b77290c18a-8c077f76-queue-1 Error dependency queue failed to start\nm2test-322341b77290c18a-8c077f76-queue-1 rabbitmq:4.2-alpine Up 2 minutes (health: starting)",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "service_unhealthy",
+				Summary:     "A dependency container started but never passed its healthcheck before stack startup gave up.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",
