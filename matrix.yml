@@ -18,12 +18,12 @@ products:
       - version: "2.4.9"
         baseline:
           php: "8.5"
-          webserver: apache
-          db: { type: mariadb, version: "11.4" }
+          webserver: nginx
+          db: { type: mariadb, version: "12.3" }
           search: { type: opensearch, version: "3" }
-          cache: { type: valkey, version: "8" }
-          queue: { type: rabbitmq, version: "4.2" }
-          varnish: "7.7"
+          cache: { type: valkey, version: "9" }
+          queue: { type: rabbitmq, version: "4.3" }
+          varnish: "8.0"
 
       ######################
       # MAGENTO 2.4.8 LINE #
@@ -31,12 +31,12 @@ products:
       - version: "2.4.8-p5"
         baseline:
           php: "8.4"
-          webserver: apache
+          webserver: nginx
           db: { type: mariadb, version: "11.4" }
-          search: { type: opensearch, version: "2.19.5" }
+          search: { type: opensearch, version: "3" }
           cache: { type: valkey, version: "8" }
-          queue: { type: rabbitmq, version: "4.2" }
-          varnish: "7.7"
+          queue: { type: rabbitmq, version: "4.3" }
+          varnish: "8.0"
 
       - version: "2.4.8-p4"
         baseline:
@@ -965,21 +965,31 @@ services:
     - type: apache
       version: "2.4"
     - type: nginx
-      version: "1.28"
+      version: "1.30"
 
   database:
+    - type: mysql
+      version: "9.7"
     - type: mysql
       version: "8.4.9"
     - type: mysql
       version: "8.0.46"
     - type: percona
+      version: "8.4"
+    - type: percona
       version: "8.0"
+    - type: mariadb
+      version: "12.3"
+    - type: mariadb
+      version: "11.8"
     - type: mariadb
       version: "11.4"
     - type: mariadb
       version: "10.11"
     - type: mariadb
       version: "10.6"
+    - type: mariadb
+      version: "10.5"
     - type: mariadb
       version: "10.4"
 
@@ -988,6 +998,10 @@ services:
       version: "3"
     - type: opensearch
       version: "2.19.5"
+    - type: opensearch
+      version: "1.3.20"
+    - type: elasticsearch
+      version: "9.5.3"
     - type: elasticsearch
       version: "8.19.15"
     - type: elasticsearch
@@ -1002,6 +1016,8 @@ services:
       version: "7.6.2"
 
   cache:
+    - type: valkey
+      version: "9"
     - type: valkey
       version: "8"
     - type: redis
@@ -1021,6 +1037,8 @@ services:
 
   queue:
     - type: rabbitmq
+      version: "4.3"
+    - type: rabbitmq
       version: "4.2"
     - type: rabbitmq
       version: "3.13"
@@ -1028,9 +1046,12 @@ services:
       version: "3.9"
     - type: rabbitmq
       version: "3.8"
+    - type: artemis
+      version: "2.44.0"
 
   # "none" means no Varnish container; requests hit the web server directly
   varnish:
     - "8.0"
     - "7.7"
-    # - "none"
+    - "6.0"
+    - "none"
