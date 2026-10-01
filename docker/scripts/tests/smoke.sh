@@ -8,7 +8,8 @@
 #   1. setup:upgrade          — ensures DB schema is up to date
 #   2. setup:di:compile       — dependency injection compilation
 #   3. seed checkout product  — simple product for the Playwright checkout spec
-#   4. indexer:reindex        — makes the seeded product salable
+#   4. disable page builder   — the admin spec saves through the standard editor
+#   5. indexer:reindex        — makes the seeded product salable
 #
 # Environment:
 #   RUN_DI_COMPILE  — set to 0 to skip setup:di:compile (default: 1)
@@ -62,6 +63,14 @@ fi
 
 run_step "seed checkout product" \
   php /scripts/tests/seed-checkout-product.php
+
+# Page Builder saves hang at random when its render lock never releases
+# (magento/magento2#39076), whatever the stack. The admin spec saves a CMS block,
+# so use the standard editor. 2.4.2 ships without Page Builder.
+if [[ "$(bin/magento module:status Magento_PageBuilder)" == *"Module is enabled"* ]]; then
+  run_step "disable page builder" \
+    bin/magento config:set cms/pagebuilder/enabled 0
+fi
 
 run_step "indexer:reindex" \
   bin/magento indexer:reindex
