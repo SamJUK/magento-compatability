@@ -30,6 +30,10 @@ test.describe('Checkout', () => {
   test('guest can place an order', async ({ page }) => {
     test.slow();
 
+    // Logged so a failure in the results log shows which request or script broke.
+    page.on('response', (r) => { if (r.status() >= 400) console.log(`HTTP ${r.status()} ${r.url()}`); });
+    page.on('console', (m) => { if (m.type() === 'error') console.log(`console error: ${m.text()}`); });
+
     await addProductToCart(page);
 
     // Go to checkout
