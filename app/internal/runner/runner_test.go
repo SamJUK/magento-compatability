@@ -905,6 +905,17 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "order success redirected to cart",
+			stepName: "playwright",
+			log:      "[2/3] [chromium] › tests/checkout.spec.ts:30:7 › Checkout › guest can place an order\nTimeoutError: page.waitForURL: Timeout 30000ms exceeded.\n  navigated to \"http://localhost:35293/checkout/cart/\"",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "order_success_redirect",
+				Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen in about 1 run in 500 and passes on rerun.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",

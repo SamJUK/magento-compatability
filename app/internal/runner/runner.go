@@ -201,6 +201,14 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
 			LikelyFlaky: true,
 		}
+	case stepName == "playwright" && strings.Contains(text, "checkout.spec.ts") &&
+		strings.Contains(text, "page.waitforurl") && strings.Contains(text, "/checkout/cart/\""):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "order_success_redirect",
+			Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen in about 1 run in 500 and passes on rerun.",
+			LikelyFlaky: true,
+		}
 	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
 		return &result.Failure{
 			Category:    "infrastructure",
