@@ -6,6 +6,7 @@
 # Required environment variables (set by orchestrate.sh):
 #   PHP_VERSION     — e.g. "8.3"
 #   WEBSERVER_TYPE  — "nginx" or "apache"
+#   WEBSERVER_VERSION — base image version, e.g. "1.30" or "2.4"
 #   MAGENTO_DIR     — absolute path on host to mount the Magento installation
 #   COMPOSE_PROJECT_NAME — unique per combination run
 
@@ -42,7 +43,9 @@ services:
     build:
       context: "../${WEBSERVER_TYPE:-nginx}"
       dockerfile: Dockerfile
-    image: "m2test/webserver-${WEBSERVER_TYPE:-nginx}:latest"
+      args:
+        WEBSERVER_VERSION: "${WEBSERVER_VERSION:?WEBSERVER_VERSION is required}"
+    image: "m2test/webserver-${WEBSERVER_TYPE:-nginx}:${WEBSERVER_VERSION:?WEBSERVER_VERSION is required}"
     ports:
       - "${WEBSERVER_PORT:-0}:80"
     volumes:

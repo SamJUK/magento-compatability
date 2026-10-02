@@ -470,6 +470,7 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 		"SEARCH_TYPE=opensearch",
 		"SEARCH_HOST_FLAG_STYLE=opensearch",
 		"INSTALL_SAMPLE_DATA=0",
+		"QUEUE_PORT=5672",
 	}
 	envSet := make(map[string]bool, len(env))
 	for _, kv := range env {
@@ -633,6 +634,8 @@ func TestIsTransientComposerNetworkFailure(t *testing.T) {
 		{name: "curl 28", log: "curl error 28 while downloading packages.json", want: true},
 		{name: "curl 55", log: "curl error 55 while downloading https://mage-os.hypernode.com/mirror/p2/magento/module-inventory-in-store-pickup-admin-ui.json: Send failure: Broken pipe", want: true},
 		{name: "curl 56", log: "curl error 56 while downloading packages.json", want: true},
+		{name: "upstream 504", log: "In CurlDownloader.php line 671:\n  The \"https://repo.packagist.org/p2/facebook/php-webdriver.json\" file could\n  not be downloaded (HTTP/2 504 )", want: true},
+		{name: "upstream 404", log: "The \"https://repo.packagist.org/p2/nope/nope.json\" file could not be downloaded (HTTP/2 404 )", want: false},
 		{name: "different failure", log: "PHP Fatal error: something else", want: false},
 	}
 
@@ -876,6 +879,39 @@ func TestClassifyStepFailure(t *testing.T) {
 				Category:    "harness",
 				Code:        "service_unhealthy",
 				Summary:     "A dependency container started but never passed its healthcheck before stack startup gave up.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "release without stomp",
+			stepName: "install",
+			log:      "  The \"--stomp-host\" option does not exist.  ",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "stomp_unsupported",
+				Summary:     "This release has no STOMP support (Magento_Stomp), so it cannot use ActiveMQ Artemis.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "typed bulk endpoint on OpenSearch 2+",
+			stepName: "smoke",
+			log:      "Fatal error: Uncaught Elasticsearch\\Common\\Exceptions\\BadRequest400Exception: {\"error\":\"no handler found for uri [/magento2_product_1_v1/document/_bulk] and method [POST]\"}",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "search_mapping_types_removed",
+				Summary:     "This release indexes through mapping-type endpoints that the search engine has removed, so installs succeed but saving a product fails.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "order success redirected to cart",
+			stepName: "playwright",
+			log:      "[2/3] [chromium] › tests/checkout.spec.ts:30:7 › Checkout › guest can place an order\nTimeoutError: page.waitForURL: Timeout 30000ms exceeded.\n  navigated to \"http://localhost:35293/checkout/cart/\"",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "order_success_redirect",
+				Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen on 2.4.4 when PHP-FPM ran out of workers; it does not happen every run.",
 				LikelyFlaky: true,
 			},
 		},
@@ -1145,5 +1181,14 @@ func TestClassifyStepFailure(t *testing.T) {
 				t.Fatalf("classifyStepFailure(...) = %#v, want %#v", *got, *tc.want)
 			}
 		})
+	}
+}
+
+func TestQueuePort(t *testing.T) {
+	if got := queuePort(matrix.Combination{QueueType: "artemis"}); got != "61613" {
+		t.Errorf("artemis: got %s, want 61613", got)
+	}
+	if got := queuePort(matrix.Combination{QueueType: "rabbitmq"}); got != "5672" {
+		t.Errorf("rabbitmq: got %s, want 5672", got)
 	}
 }

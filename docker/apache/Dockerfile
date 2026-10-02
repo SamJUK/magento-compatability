@@ -1,6 +1,5 @@
-FROM php:${PHP_VERSION:-8.3}-fpm AS php_base
-
-FROM httpd:2.4-alpine
+ARG WEBSERVER_VERSION=2.4
+FROM httpd:${WEBSERVER_VERSION}-alpine
 
 LABEL maintainer="magento2-supported-versions"
 

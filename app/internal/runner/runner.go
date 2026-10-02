@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -149,6 +150,21 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The harness invoked setup:install with OpenSearch host flags that this Magento version does not support.",
 			LikelyFlaky: false,
 		}
+	case stepName == "install" && (strings.Contains(text, "the \"--stomp-host\" option does not exist") ||
+		strings.Contains(text, "the \"--queue-default-connection\" option does not exist")):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "stomp_unsupported",
+			Summary:     "This release has no STOMP support (Magento_Stomp), so it cannot use ActiveMQ Artemis.",
+			LikelyFlaky: false,
+		}
+	case stepName == "smoke" && strings.Contains(text, "no handler found for uri") && strings.Contains(text, "/_bulk"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "search_mapping_types_removed",
+			Summary:     "This release indexes through mapping-type endpoints that the search engine has removed, so installs succeed but saving a product fails.",
+			LikelyFlaky: false,
+		}
 	case stepName == "install" && strings.Contains(text, "no alive nodes found in your cluster"):
 		return &result.Failure{
 			Category:    "harness",
@@ -183,6 +199,14 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Category:    "harness",
 			Code:        "pagebuilder_render_lock",
 			Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
+			LikelyFlaky: true,
+		}
+	case stepName == "playwright" && strings.Contains(text, "checkout.spec.ts") &&
+		strings.Contains(text, "page.waitforurl") && strings.Contains(text, "/checkout/cart/\""):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "order_success_redirect",
+			Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen on 2.4.4 when PHP-FPM ran out of workers; it does not happen every run.",
 			LikelyFlaky: true,
 		}
 	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
@@ -421,13 +445,22 @@ func buildMagentoEnv(c matrix.Combination, searchFlag string, installSampleData 
 		"SEARCH_PORT=9200",
 		"CACHE_HOST=cache",
 		"CACHE_PORT=6379",
+		"QUEUE_TYPE=" + c.QueueType,
 		"QUEUE_HOST=queue",
-		"QUEUE_PORT=5672",
+		"QUEUE_PORT=" + queuePort(c),
 		"QUEUE_USER=magento",
 		"QUEUE_PASSWORD=magento",
 		"MAGENTO_BASE_URL=http://localhost",
 		"INSTALL_SAMPLE_DATA=" + sampleDataValue,
 	}
+}
+
+// queuePort is the broker port Magento connects to: STOMP for Artemis, AMQP otherwise.
+func queuePort(c matrix.Combination) string {
+	if c.QueueType == "artemis" {
+		return "61613"
+	}
+	return "5672"
 }
 
 // resolveBaseURL discovers the host-side mapped port and returns the base URL
@@ -456,6 +489,10 @@ func buildInstallArgs(env []string, baseURL string) []string {
 	return args
 }
 
+// composerUpstream5xx matches a package repository answering with a server
+// error, e.g. `could not be downloaded (HTTP/2 504 )`.
+var composerUpstream5xx = regexp.MustCompile(`could not be downloaded \(http/[0-9.]+ 5[0-9]{2}`)
+
 func isTransientComposerNetworkFailure(log string) bool {
 	log = compactWhitespace(strings.ToLower(log))
 	for _, sig := range transientComposerCurlErrors {
@@ -463,7 +500,7 @@ func isTransientComposerNetworkFailure(log string) bool {
 			return true
 		}
 	}
-	return false
+	return composerUpstream5xx.MatchString(log)
 }
 
 func isRetryableInstallFailure(log string) bool {

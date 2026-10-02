@@ -60,6 +60,7 @@ const TYPE_LABELS: Record<string, string> = {
   redis: 'Redis',
   valkey: 'Valkey',
   rabbitmq: 'RabbitMQ',
+  artemis: 'ActiveMQ Artemis',
   apache: 'Apache',
   nginx: 'Nginx',
 };
@@ -68,6 +69,7 @@ const SHORT_TYPE_LABELS: Record<string, string> = {
   elasticsearch: 'ES',
   opensearch: 'OS',
   mariadb: 'Maria',
+  artemis: 'Artemis',
 };
 
 const DIM_LABELS: Record<DimKey, string> = {

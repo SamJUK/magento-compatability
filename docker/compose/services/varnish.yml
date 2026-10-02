@@ -13,6 +13,8 @@ services:
     build:
       context: ../varnish
       dockerfile: Dockerfile
+      args:
+        VARNISH_VERSION: "${VARNISH_VERSION:-7.7}"
     image: "m2test/varnish:${VARNISH_VERSION:-7.7}"
     ports:
       - "${WEBSERVER_PORT:-0}:80"

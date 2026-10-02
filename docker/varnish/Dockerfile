@@ -1,4 +1,5 @@
-FROM varnish:7.7
+ARG VARNISH_VERSION=7.7
+FROM varnish:${VARNISH_VERSION}
 
 LABEL maintainer="magento2-supported-versions"
 

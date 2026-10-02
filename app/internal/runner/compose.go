@@ -121,6 +121,7 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		"COMPOSE_PARALLEL_LIMIT=1",
 		"PHP_VERSION="+c.PHP,
 		"WEBSERVER_TYPE="+c.WebserverType,
+		"WEBSERVER_VERSION="+c.WebserverVersion,
 		"DB_VERSION="+c.DBVersion,
 		"SEARCH_VERSION="+c.SearchVersion,
 		"CACHE_VERSION="+c.CacheVersion,
