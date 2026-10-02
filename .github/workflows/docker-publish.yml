@@ -98,6 +98,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
@@ -106,3 +107,30 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Image reference
+        id: image
+        run: |
+          echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "ref=${{ fromJSON(steps.meta.outputs.json).tags[0] }}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: site.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Record the deploy in Lookout
+        env:
+          LOOKOUT_DEPLOY_TOKEN: ${{ secrets.LOOKOUT_DEPLOY_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          curl -fsS -X POST "https://lookout.sdj.pw/deploy/$LOOKOUT_DEPLOY_TOKEN" \
+            -F label="$GITHUB_SHA" -F environment=production \
+            -F 'artifacts[0][name]=site' -F 'artifacts[0][kind]=image' \
+            -F "artifacts[0][ref]=$IMAGE_REF" -F "artifacts[0][digest]=$IMAGE_DIGEST" \
+            -F 'artifacts[0][sbom]=@site.cdx.json'
