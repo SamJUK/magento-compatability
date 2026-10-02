@@ -485,11 +485,10 @@ func TestBuildMagentoEnv_ContainsExpectedKeys(t *testing.T) {
 func TestPlaywrightEnv_ReplacesBaseURLAndReportFile(t *testing.T) {
 	t.Setenv("MAGENTO_BASE_URL", "http://stale.example")
 	t.Setenv("PLAYWRIGHT_REPORT_FILE", "old-report.json")
-	t.Setenv("PLAYWRIGHT_SAMPLE_DATA", "1")
 	t.Setenv("FORCE_COLOR", "1")
 	t.Setenv("NO_COLOR", "1")
 
-	env := playwrightEnv("http://localhost:4321", "playwright-report/fresh.json", false)
+	env := playwrightEnv("http://localhost:4321", "playwright-report/fresh.json")
 	envSet := make(map[string]bool, len(env))
 	for _, kv := range env {
 		envSet[kv] = true
@@ -501,17 +500,11 @@ func TestPlaywrightEnv_ReplacesBaseURLAndReportFile(t *testing.T) {
 	if !envSet["PLAYWRIGHT_REPORT_FILE=playwright-report/fresh.json"] {
 		t.Fatalf("playwrightEnv: missing updated report file")
 	}
-	if !envSet["PLAYWRIGHT_SAMPLE_DATA=0"] {
-		t.Fatalf("playwrightEnv: missing updated sample-data flag")
-	}
 	if envSet["MAGENTO_BASE_URL=http://stale.example"] {
 		t.Fatalf("playwrightEnv: stale base URL leaked into subprocess environment")
 	}
 	if envSet["PLAYWRIGHT_REPORT_FILE=old-report.json"] {
 		t.Fatalf("playwrightEnv: stale report path leaked into subprocess environment")
-	}
-	if envSet["PLAYWRIGHT_SAMPLE_DATA=1"] {
-		t.Fatalf("playwrightEnv: stale sample-data flag leaked into subprocess environment")
 	}
 	if envSet["FORCE_COLOR=1"] {
 		t.Fatalf("playwrightEnv: FORCE_COLOR should not leak into subprocess environment")
@@ -638,6 +631,7 @@ func TestIsTransientComposerNetworkFailure(t *testing.T) {
 		{name: "curl 6", log: "curl error 6 while downloading packages.json", want: true},
 		{name: "curl 7", log: "curl error 7 while downloading packages.json", want: true},
 		{name: "curl 28", log: "curl error 28 while downloading packages.json", want: true},
+		{name: "curl 55", log: "curl error 55 while downloading https://mage-os.hypernode.com/mirror/p2/magento/module-inventory-in-store-pickup-admin-ui.json: Send failure: Broken pipe", want: true},
 		{name: "curl 56", log: "curl error 56 while downloading packages.json", want: true},
 		{name: "different failure", log: "PHP Fatal error: something else", want: false},
 	}
@@ -860,6 +854,28 @@ func TestClassifyStepFailure(t *testing.T) {
 				Category:    "infrastructure",
 				Code:        "storefront_timeout",
 				Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "page builder render lock",
+			stepName: "playwright",
+			log:      "console error: [2026-10-01 00:03:04+01:00] [ERROR] Page Builder was rendering for 5 seconds without releasing locks.\nTimeoutError: page.waitForURL: Timeout 120000ms exceeded.",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "pagebuilder_render_lock",
+				Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
+				LikelyFlaky: true,
+			},
+		},
+		{
+			name:     "dependency never healthy",
+			stepName: "stack_up",
+			log:      " Container m2test-322341b77290c18a-8c077f76-queue-1 Error dependency queue failed to start\nm2test-322341b77290c18a-8c077f76-queue-1 rabbitmq:4.2-alpine Up 2 minutes (health: starting)",
+			want: &result.Failure{
+				Category:    "harness",
+				Code:        "service_unhealthy",
+				Summary:     "A dependency container started but never passed its healthcheck before stack startup gave up.",
 				LikelyFlaky: true,
 			},
 		},

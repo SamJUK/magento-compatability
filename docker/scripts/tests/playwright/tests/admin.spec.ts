@@ -1,6 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
 
-const adminEnabled = process.env.PLAYWRIGHT_ADMIN === '1';
 const adminPath = normaliseAdminPath(process.env.PLAYWRIGHT_ADMIN_PATH ?? '/admin');
 const adminUser = process.env.PLAYWRIGHT_ADMIN_USER ?? 'admin';
 const adminPassword = process.env.PLAYWRIGHT_ADMIN_PASSWORD ?? 'Admin123!';
@@ -57,10 +56,16 @@ async function dismissAdminModals(page: Page): Promise<void> {
 }
 
 test.describe('Admin', () => {
-  test.skip(!adminEnabled, 'requires PLAYWRIGHT_ADMIN=1');
+  // Developer mode builds each admin page's JS and CSS on first request, which
+  // can take well over the storefront defaults on a loaded host.
+  test.use({ actionTimeout: 60_000, navigationTimeout: 90_000 });
 
   test('admin can create a CMS block', async ({ page }) => {
-    test.slow();
+    test.setTimeout(300_000);
+
+    // Logged so a failure in the results log shows which request or script broke.
+    page.on('response', (r) => { if (r.status() >= 400) console.log(`HTTP ${r.status()} ${r.url()}`); });
+    page.on('console', (m) => { if (m.type() === 'error') console.log(`console error: ${m.text()}`); });
 
     await loginToAdmin(page);
 
@@ -88,8 +93,10 @@ test.describe('Admin', () => {
     await expect(saveButton).toBeVisible({ timeout: 20_000 });
     await saveButton.click();
 
-    const successMessage = page.locator('.message-success').first();
-    await expect(successMessage).toContainText(/saved/i, { timeout: 30_000 });
-    await expect(page.locator('input[name="identifier"]')).toHaveValue(identifier);
+    // The "saved" flash message does not always render (seen on 2.4.4-p13), so
+    // check what was persisted: the redirect to the new block and its
+    // identifier loaded back from the database.
+    await page.waitForURL(/\/cms\/block\/edit\/block_id\/\d+/);
+    await expect(page.locator('input[name="identifier"]')).toHaveValue(identifier, { timeout: 30_000 });
   });
 });

@@ -85,13 +85,40 @@
       "id": "308e261",
       "kind": "patch",
       "title": "Elasticsearch XSD rejected by libxml2 2.12+",
-      "detail": "Fixes \"complex type 'mixedDataType': The content model is not deterministic\". Needed wherever PHP links libxml2 2.12 or newer. Patch by Pieter Hoste.",
+      "detail": "Fixes \"complex type 'mixedDataType': The content model is not deterministic\" when a product is saved or the search index rebuilt. Needed wherever PHP links libxml2 2.12 or newer. Patch by Pieter Hoste, shipped upstream in 2.4.8 and Mage-OS 1.1.0.",
       "product": "magento",
       "versions": [
+        "2.4.4",
+        "2.4.5",
+        "2.4.6",
         "2.4.7"
       ],
       "environment": "libxml2 2.12+",
-      "source": "https://github.com/magento/magento2/commit/308e26105c97006d74e87d7c9e4c29d1ad5873f9"
+      "source": "https://github.com/magento/magento2/commit/308e26105c97006d74e87d7c9e4c29d1ad5873f9",
+      "php": [
+        "8.1",
+        "8.2",
+        "8.3",
+        "8.4"
+      ]
+    },
+    {
+      "id": "308e261-mageos",
+      "kind": "patch",
+      "title": "Elasticsearch XSD rejected by libxml2 2.12+",
+      "detail": "Fixes \"complex type 'mixedDataType': The content model is not deterministic\" when a product is saved or the search index rebuilt. Needed wherever PHP links libxml2 2.12 or newer. Patch by Pieter Hoste, shipped upstream in 2.4.8 and Mage-OS 1.1.0.",
+      "product": "mageos",
+      "versions": [
+        "1.0"
+      ],
+      "environment": "libxml2 2.12+",
+      "source": "https://github.com/magento/magento2/commit/308e26105c97006d74e87d7c9e4c29d1ad5873f9",
+      "php": [
+        "8.1",
+        "8.2",
+        "8.3",
+        "8.4"
+      ]
     },
     {
       "id": "musl-glob-brace-magento",

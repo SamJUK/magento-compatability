@@ -1,17 +1,10 @@
 import { test, expect, Page } from '@playwright/test';
 
-/**
- * Checkout flow tests — add a product to cart and complete a guest checkout.
- * These assertions are opt-in because they require Magento sample data.
- */
-
-const sampleDataEnabled = process.env.PLAYWRIGHT_SAMPLE_DATA === '1';
+// Buys the product seeded by scripts/tests/seed-checkout-product.php as a guest.
 
 async function addProductToCart(page: Page): Promise<void> {
-  // Use the Joust Duffle Bag (SKU 24-MB01) — a known simple product in Luma
-  // sample data with no configurable options.
-  const response = await page.goto('/joust-duffle-bag.html', { waitUntil: 'domcontentloaded' });
-  expect(response?.ok(), 'sample-data product page should load successfully').toBeTruthy();
+  const response = await page.goto('/e2e-checkout-product.html', { waitUntil: 'domcontentloaded' });
+  expect(response?.ok(), 'seeded product page should load successfully').toBeTruthy();
 
   // Wait for the server-rendered product form — no JS required.
   await page.waitForSelector('#product_addtocart_form', { timeout: 30_000 });
@@ -34,10 +27,12 @@ async function addProductToCart(page: Page): Promise<void> {
 }
 
 test.describe('Checkout', () => {
-  test.skip(!sampleDataEnabled, 'requires Magento sample data');
-
-  test('guest can place an order with sample data installed', async ({ page }) => {
+  test('guest can place an order', async ({ page }) => {
     test.slow();
+
+    // Logged so a failure in the results log shows which request or script broke.
+    page.on('response', (r) => { if (r.status() >= 400) console.log(`HTTP ${r.status()} ${r.url()}`); });
+    page.on('console', (m) => { if (m.type() === 'error') console.log(`console error: ${m.text()}`); });
 
     await addProductToCart(page);
 
@@ -86,7 +81,15 @@ test.describe('Checkout', () => {
     await nextButton.click();
 
     // ── Step 2: Payment ─────────────────────────────────────────────────────
-    const placeOrderButton = page.locator('button.action.primary.checkout');
+    // Check / Money order is the only method enabled on a fresh install, so
+    // Magento usually preselects it and hides the radio.
+    const checkmo = page.locator('#checkmo');
+    await expect(checkmo).toBeAttached({ timeout: 20_000 });
+    if (await checkmo.isVisible()) {
+      await checkmo.check();
+    }
+
+    const placeOrderButton = page.locator('.payment-method._active button.action.primary.checkout');
     await expect(placeOrderButton).toBeVisible({ timeout: 20_000 });
     await expect(placeOrderButton).toBeEnabled({ timeout: 20_000 });
     await placeOrderButton.click();
