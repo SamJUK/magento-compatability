@@ -911,7 +911,7 @@ func TestClassifyStepFailure(t *testing.T) {
 			want: &result.Failure{
 				Category:    "harness",
 				Code:        "order_success_redirect",
-				Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen in about 1 run in 500 and passes on rerun.",
+				Summary:     "The guest order went through but Magento sent the browser to an empty cart instead of the success page. Seen on 2.4.4 when PHP-FPM ran out of workers; it does not happen every run.",
 				LikelyFlaky: true,
 			},
 		},
