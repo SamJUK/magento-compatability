@@ -14,6 +14,7 @@
 #   SEARCH_HOST_FLAG_STYLE — opensearch | elasticsearch
 #   SEARCH_HOST / SEARCH_PORT
 #   CACHE_HOST / CACHE_PORT
+#   QUEUE_TYPE — rabbitmq (AMQP) or artemis (STOMP)
 #   QUEUE_HOST / QUEUE_PORT / QUEUE_USER / QUEUE_PASSWORD
 #   MAGENTO_BASE_URL — e.g. http://localhost:32768
 
@@ -60,6 +61,7 @@ php -v
 : "${SEARCH_PORT:=9200}"
 : "${CACHE_HOST:=cache}"
 : "${CACHE_PORT:=6379}"
+: "${QUEUE_TYPE:=rabbitmq}"
 : "${QUEUE_HOST:=queue}"
 : "${QUEUE_PORT:=5672}"
 : "${QUEUE_USER:=magento}"
@@ -357,6 +359,24 @@ else
   SEARCH_PORT_FLAG="--elasticsearch-port=${SEARCH_PORT}"
 fi
 
+if [[ "${QUEUE_TYPE}" == "artemis" ]]; then
+  QUEUE_FLAGS=(
+    --queue-default-connection=stomp
+    --stomp-host="${QUEUE_HOST}"
+    --stomp-port="${QUEUE_PORT}"
+    --stomp-user="${QUEUE_USER}"
+    --stomp-password="${QUEUE_PASSWORD}"
+  )
+else
+  QUEUE_FLAGS=(
+    --amqp-host="${QUEUE_HOST}"
+    --amqp-port="${QUEUE_PORT}"
+    --amqp-user="${QUEUE_USER}"
+    --amqp-password="${QUEUE_PASSWORD}"
+    --amqp-virtualhost="/"
+  )
+fi
+
 bin/magento setup:install \
   --base-url="${MAGENTO_BASE_URL}/" \
   --db-host="${DB_HOST}:${DB_PORT}" \
@@ -374,11 +394,7 @@ bin/magento setup:install \
   --session-save-redis-host="${CACHE_HOST}" \
   --session-save-redis-port="${CACHE_PORT}" \
   --session-save-redis-db=1 \
-  --amqp-host="${QUEUE_HOST}" \
-  --amqp-port="${QUEUE_PORT}" \
-  --amqp-user="${QUEUE_USER}" \
-  --amqp-password="${QUEUE_PASSWORD}" \
-  --amqp-virtualhost="/" \
+  "${QUEUE_FLAGS[@]}" \
   --admin-firstname="Admin" \
   --admin-lastname="User" \
   --admin-email="${MAGENTO_ADMIN_EMAIL}" \

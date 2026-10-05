@@ -1,6 +1,6 @@
 services:
   queue:
-    image: "apache/activemq-artemis:${QUEUE_VERSION:-2.39.0}"
+    image: "apache/activemq-artemis:${QUEUE_VERSION:-2.44.0}"
     environment:
       ARTEMIS_USER: magento
       ARTEMIS_PASSWORD: magento
@@ -9,7 +9,7 @@ services:
     networks:
       - magento
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8161/console | grep -q 'ActiveMQ'"]
+      test: ["CMD-SHELL", "curl -sfL http://localhost:8161/console | grep -q 'ActiveMQ'"]
       interval: 10s
       timeout: 10s
       retries: 20
