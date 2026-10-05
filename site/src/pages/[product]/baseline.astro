@@ -37,5 +37,5 @@ const missing = rows.filter((r) => !r.result).map((r) => r.version);
     <p class="mt-6 text-muted">Not run yet: <span class="font-mono">{missing.join(', ')}</span></p>
   )}
 
-  <LogDialog results={results} />
+  <LogDialog />
 </Base>
