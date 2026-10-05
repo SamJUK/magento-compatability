@@ -10,6 +10,8 @@ const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
 const stats = getGlobalStats();
 const dims = getDimensions();
 const columns = dims.flatMap((d) => d.options.map((o) => ({ ...o, dimLabel: d.label })));
+// Rarely the deciding factor, so their columns start hidden behind the toggle above the grid.
+const COLLAPSED = new Set(['cache', 'queue', 'webserver', 'varnish']);
 
 // Newest release of each line: 2.4.8-p5 for Magento's 2.4.8. Mage-OS follows semver, so its
 // service support only moves between majors and one row per major (3.5.0 for 3.x) is enough.
@@ -62,20 +64,25 @@ const how = [
   </section>
 
   <section class="mt-8 rounded-2xl border border-line bg-surface" aria-label="Newest release of each line against every service version">
+    <label class="flex items-center justify-end gap-2 px-3 pt-3 text-sm text-muted cursor-pointer">
+      <input type="checkbox" data-show-collapsed class="accent-brand" />
+      Show cache, queue, web server and Varnish
+    </label>
     <div class="relative overflow-x-auto">
-      <table data-grid class="border-separate border-spacing-0 text-xs">
+      <table data-grid class="w-full border-separate border-spacing-0 text-xs">
         <thead>
           <tr>
             <th scope="col" rowspan="2" class="sticky left-0 z-10 bg-surface text-left px-3 pt-3 pb-1.5 font-display text-sm">Release</th>
-            <th scope="col" rowspan="2" class="text-right px-1.5 pt-3 pb-1.5 font-mono text-[10px] font-medium text-muted align-bottom">pass</th>
+            <th scope="col" rowspan="2" class="text-right px-1.5 pt-3 pb-1.5 font-mono text-[10px] font-medium text-muted align-bottom" title="Passing runs across every service, hidden columns included">pass</th>
             {dims.map((d) => (
-              <th scope="colgroup" colspan={d.options.length} class="text-left px-1.5 pt-3 pb-0.5 font-display text-sm border-l border-line">{d.label}</th>
+              <th scope="colgroup" colspan={d.options.length} data-collapsed={COLLAPSED.has(d.key) || undefined} class="text-left px-1.5 pt-3 pb-0.5 font-display text-sm border-l border-line">{d.label}</th>
             ))}
           </tr>
           <tr>
             {columns.map((c, i) => (
               <th
                 scope="col"
+                data-collapsed={COLLAPSED.has(c.key) || undefined}
                 class:list={['px-px pb-1.5 pt-0.5 font-mono text-[10px] font-medium text-muted whitespace-nowrap align-bottom', (i === 0 || columns[i - 1].key !== c.key) && 'border-l border-line']}
                 title={c.label}
               >{c.short.split(' ').map((part) => <span class="block leading-tight">{part}</span>)}</th>
@@ -97,7 +104,7 @@ const how = [
                 </th>
                 <td class="px-1.5 py-0.5 border-t border-line text-right font-mono text-[10px] text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
                 {r.cells.map((c, i) => (
-                  <td class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
+                  <td data-collapsed={COLLAPSED.has(columns[i].key) || undefined} class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
                     <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} title={c.title} class="min-w-6 h-6 px-0.5" />
                   </td>
                 ))}
@@ -156,3 +163,9 @@ const how = [
     </ol>
   </section>
 </Base>
+
+<style>
+  section:has([data-show-collapsed]:not(:checked)) [data-collapsed] {
+    display: none;
+  }
+</style>
