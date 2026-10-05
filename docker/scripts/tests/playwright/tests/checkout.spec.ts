@@ -14,13 +14,13 @@ async function addProductToCart(page: Page): Promise<void> {
   // a generous timeout before failing.
   const addToCartButton = page.locator('#product-addtocart-button, button.tocart').first();
   await expect(addToCartButton).toBeEnabled({ timeout: 120_000 });
+  // Wait for the add request itself: the "added" flash message does not always render
+  // (seen on Mage-OS 1.0.2 behind Varnish 8.0 with the item already in the minicart).
+  const added = page.waitForResponse((r) => r.url().includes('/checkout/cart/add') && r.request().method() === 'POST', { timeout: 60_000 });
   await addToCartButton.click();
+  expect((await added).status(), 'add to cart request should succeed').toBeLessThan(400);
 
-  const successMessage = page.locator('[data-ui-id="message-success"], .message-success').first();
-  await expect(successMessage).toContainText(/added/i, { timeout: 30_000 });
-
-  // After Magento redirects back (usually to the product page), confirm the
-  // cart now contains the item by navigating to the cart page.
+  // Confirm the cart now contains the item.
   await page.goto('/checkout/cart/');
   const cartItem = page.locator('.cart.item, .cart-item, .items.data.table');
   await expect(cartItem.first()).toBeVisible({ timeout: 20_000 });
