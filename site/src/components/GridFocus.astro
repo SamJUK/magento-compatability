@@ -1,41 +1,33 @@
 ---
-// Row-and-column focus for any table[data-grid]: hover dims the rest a little, a click locks it
-// and dims harder. A second click on the locked cell follows its link; Escape releases it.
+// Row-and-column focus for any table[data-grid]: hovering a cell dims the rest a little.
+// Clicks are left alone, so a cell's link or log dialog opens on the first click.
 ---
 
 <style is:global>
-  table[data-grid] td,
-  table[data-grid] thead th[data-col] {
+  table[data-grid] td {
     transition: opacity 120ms ease;
   }
-  table[data-grid][data-focus='hover'] td.gf-cell:not(.gf-on) {
+  table[data-grid][data-focus] td.gf-cell:not(.gf-on) {
     opacity: 0.55;
-  }
-  table[data-grid][data-focus='lock'] td.gf-cell:not(.gf-on),
-  table[data-grid][data-focus='lock'] thead th[data-col]:not(.gf-on) {
-    opacity: 0.25;
   }
 </style>
 
 <script>
-  let locked: HTMLTableCellElement | null = null;
-
   const cellOf = (target: EventTarget | null) => {
     const td = (target as Element | null)?.closest?.('table[data-grid] td') as HTMLTableCellElement | null;
     return td?.querySelector('[data-status]') ? td : null;
   };
   const key = (td: HTMLTableCellElement) => td.dataset.col ?? String(td.cellIndex);
 
-  function focus(td: HTMLTableCellElement, mode: 'hover' | 'lock') {
+  function focus(td: HTMLTableCellElement) {
     const table = td.closest('table')!;
     const k = key(td);
-    table.dataset.focus = mode;
+    table.dataset.focus = '';
     for (const c of table.querySelectorAll<HTMLTableCellElement>('tbody td')) {
       if (!c.querySelector('[data-status]')) continue;
       c.classList.add('gf-cell');
       c.classList.toggle('gf-on', c.parentElement === td.parentElement || key(c) === k);
     }
-    table.querySelectorAll<HTMLElement>('thead th[data-col]').forEach((th) => th.classList.toggle('gf-on', th.dataset.col === k));
   }
 
   function clear(table: HTMLTableElement) {
@@ -43,32 +35,12 @@
     table.querySelectorAll('.gf-on').forEach((el) => el.classList.remove('gf-on'));
   }
 
-  function unlock() {
-    if (locked) clear(locked.closest('table')!);
-    locked = null;
-  }
-
   document.addEventListener('mouseover', (e) => {
     const td = cellOf(e.target);
-    if (!locked && td) focus(td, 'hover');
+    if (td) focus(td);
   });
   document.addEventListener('mouseout', (e) => {
     const table = (e.target as Element).closest?.('table[data-grid]') as HTMLTableElement | null;
-    if (!locked && table && !table.contains(e.relatedTarget as Node)) clear(table);
-  });
-  document.addEventListener('click', (e) => {
-    const td = cellOf(e.target);
-    if (!td) {
-      if (locked && !(e.target as Element).closest?.('table[data-grid]')) unlock();
-      return;
-    }
-    if (td === locked) return;
-    e.preventDefault();
-    unlock();
-    locked = td;
-    focus(td, 'lock');
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') unlock();
+    if (table && !table.contains(e.relatedTarget as Node)) clear(table);
   });
 </script>
