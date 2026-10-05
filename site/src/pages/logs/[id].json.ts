@@ -1,6 +1,7 @@
 import type { APIRoute, GetStaticPaths } from 'astro';
-import { STEPS, STEP_LABELS } from '@lib/compat.js';
+import { firstFailure, option, PRODUCT_LABELS, STEPS, STEP_LABELS } from '@lib/compat.js';
 import { getAllResults } from '@lib/results.js';
+import { neededWorkarounds } from '@lib/workarounds.js';
 import type { TestResult } from '@lib/types.js';
 
 // Logs are served per run rather than inlined in the pages: crawlers treat file paths inside
@@ -9,8 +10,23 @@ export const getStaticPaths: GetStaticPaths = () => getAllResults().map((r) => (
 
 export const GET: APIRoute = ({ props }) => {
   const r = props.r as TestResult;
+  const s = r.services;
+  const failure = r.overall_status === 'pass' ? undefined : firstFailure(r);
   const entry = {
-    label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
+    release: `${PRODUCT_LABELS[r.product] ?? r.product} ${r.version}`,
+    href: `/${r.product}/${r.version}`,
+    status: r.overall_status,
+    failure: failure && { step: STEP_LABELS[failure.step], summary: failure.summary },
+    extra: neededWorkarounds(r.workarounds).map((w) => w.title),
+    stack: [
+      option('php', 'php', s.php),
+      option('db', s.db.type, s.db.version),
+      option('search', s.search.type, s.search.version),
+      option('cache', s.cache.type, s.cache.version),
+      option('queue', s.queue.type, s.queue.version),
+      option('webserver', s.webserver, ''),
+      option('varnish', 'varnish', s.varnish),
+    ].map((o) => o.label),
     timestamp: r.timestamp,
     steps: STEPS.filter((s) => r.steps?.[s]).map((s) => ({
       name: STEP_LABELS[s],

@@ -82,7 +82,7 @@ const DIM_LABELS: Record<DimKey, string> = {
   varnish: 'Varnish',
 };
 
-function option(key: DimKey, type: string, version: string): ServiceOption {
+export function option(key: DimKey, type: string, version: string): ServiceOption {
   const typeLabel = TYPE_LABELS[type] ?? type;
   let label: string;
   let short: string;

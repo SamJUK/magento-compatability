@@ -1,6 +1,7 @@
 ---
 // Renders one log viewer per page. Open it from any element with data-log-id="<result id>";
-// the run's logs are fetched from /logs/<result id>.json when it opens.
+// the run's summary and logs are fetched from /logs/<result id>.json when it opens. A link
+// with data-log-id still follows its href on a modified or middle click.
 ---
 
 <dialog
@@ -17,6 +18,7 @@
       <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
     </button>
   </div>
+  <div id="log-dialog-summary" class="px-5 py-4 border-b border-line flex flex-col gap-3 text-sm" hidden></div>
   <div class="flex gap-5 px-5 border-b border-line text-sm font-semibold" role="tablist">
     <button type="button" role="tab" data-tab="steps" class="log-tab py-3 border-b-2 -mb-px cursor-pointer">Step logs</button>
     <button type="button" role="tab" data-tab="containers" class="log-tab py-3 border-b-2 -mb-px cursor-pointer">Container logs</button>
@@ -26,7 +28,12 @@
 
 <script>
   type Entry = {
-    label: string;
+    release: string;
+    href: string;
+    status: 'pass' | 'fail';
+    failure?: { step: string; summary: string };
+    extra: string[];
+    stack: string[];
     timestamp: string;
     steps: Array<{ name: string; status: string; duration: number; log: string }>;
     containers: Array<{ name: string; log: string }>;
@@ -35,6 +42,7 @@
   const cache = new Map<string, Promise<Entry>>();
   const dialog = document.getElementById('log-dialog') as HTMLDialogElement;
   const body = document.getElementById('log-dialog-body')!;
+  const summary = document.getElementById('log-dialog-summary')!;
   const tabs = [...document.querySelectorAll<HTMLButtonElement>('.log-tab')];
   let entry: Entry | undefined;
   let current = '';
@@ -46,6 +54,28 @@
       <div class="flex items-center gap-3 px-4 py-2 bg-sunken text-xs font-semibold">${title}${meta}</div>
       <pre class="px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all max-h-72 overflow-y-auto">${esc(log || '(empty)')}</pre>
     </div>`;
+
+  function renderSummary(e: Entry) {
+    const verdict = e.status === 'fail'
+      ? { glyph: '✕', tone: 'bg-fail text-fail-ink border border-dashed border-fail-line', text: `Fails at ${e.failure?.step.toLowerCase() ?? 'an unknown step'}` }
+      : e.extra.length
+        ? { glyph: '✓+', tone: 'bg-pass text-pass-ink', text: 'Works with an extra patch or module' }
+        : { glyph: '✓', tone: 'bg-pass text-pass-ink', text: 'Installs and passes every check' };
+    const steps = e.steps
+      .map((s) => `<span class="${s.status === 'pass' ? 'text-pass dark:text-pass-ink' : 'text-fail-line'}">${s.status === 'pass' ? '✓' : '✕'} ${esc(s.name)}</span>`)
+      .join('');
+    summary.innerHTML = `
+      <div class="flex items-center gap-3">
+        <span class="inline-grid place-items-center min-w-8 h-8 px-1.5 rounded-md font-mono text-sm font-semibold ${verdict.tone}" aria-hidden="true">${verdict.glyph}</span>
+        <span class="font-semibold text-base">${esc(verdict.text)}</span>
+        <a href="${esc(e.href)}" class="ml-auto shrink-0 text-sm">Every ${esc(e.release)} result →</a>
+      </div>
+      ${e.failure ? `<p class="leading-relaxed">${esc(e.failure.summary)}</p>` : ''}
+      ${e.extra.map((t) => `<p class="leading-relaxed">Extra step: ${esc(t)}.</p>`).join('')}
+      <p class="font-mono text-xs text-muted">${e.stack.map(esc).join(' · ')}</p>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold">${steps}</div>`;
+    summary.hidden = false;
+  }
 
   function render() {
     if (!entry) return;
@@ -75,7 +105,8 @@
 
   document.addEventListener('click', (e) => {
     const trigger = (e.target as Element).closest<HTMLElement>('[data-log-id]');
-    if (!trigger) return;
+    if (!trigger || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
     const id = trigger.dataset.logId!;
     if (!cache.has(id)) {
       cache.set(id, fetch(`/logs/${id}.json`).then((r) => (r.ok ? r.json() : Promise.reject(r.status))));
@@ -85,14 +116,16 @@
     tab = 'steps';
     document.getElementById('log-dialog-title')!.textContent = 'Run logs';
     document.getElementById('log-dialog-time')!.textContent = '';
+    summary.hidden = true;
     body.innerHTML = '<p class="text-sm text-muted">Loading logs…</p>';
     dialog.showModal();
     cache.get(id)!.then(
       (e) => {
         if (current !== id) return;
         entry = e;
-        document.getElementById('log-dialog-title')!.textContent = e.label;
+        document.getElementById('log-dialog-title')!.textContent = e.release;
         document.getElementById('log-dialog-time')!.textContent = new Date(e.timestamp).toLocaleString('en-GB');
+        renderSummary(e);
         render();
       },
       () => {

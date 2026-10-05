@@ -6,6 +6,8 @@ interface Props {
   /** Marks the recommended stack for page scripts; not shown in the grid. */
   recommended?: boolean;
   href?: string;
+  /** Result id: a click opens that run in the page's LogDialog instead of following href. */
+  logId?: string;
   /** Accessible description, e.g. "2.4.8-p5 with PHP 8.5: fails" */
   title: string;
   /** The run only passed with an extra patch, module or Composer fix. */
@@ -15,7 +17,7 @@ interface Props {
   class?: string;
 }
 
-const { status, recommended = false, extra = false, href, title, text, class: className = '' } = Astro.props;
+const { status, recommended = false, extra = false, href, logId, title, text, class: className = '' } = Astro.props;
 
 const glyph = text ?? (status === 'pass' ? (extra ? '✓+' : '✓') : status === 'fail' ? '✕' : '·');
 const tone = {
@@ -27,6 +29,6 @@ const classes = `inline-grid place-items-center px-1.5 rounded-md font-mono text
 const Tag = href ? 'a' : 'span';
 ---
 
-<Tag href={href} class={classes} title={title} aria-label={title} data-status={status} data-rec={recommended ? '1' : undefined}>
+<Tag href={href} class={classes} title={title} aria-label={title} data-status={status} data-rec={recommended ? '1' : undefined} data-log-id={logId}>
   <span aria-hidden="true">{glyph}</span>
 </Tag>

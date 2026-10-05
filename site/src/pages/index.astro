@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import LogDialog from '../components/LogDialog.astro';
 import StatusCell from '../components/StatusCell.astro';
 import { getGlobalStats } from '@lib/results.js';
 import { getProductNames } from '@lib/matrix.js';
@@ -105,7 +106,7 @@ const how = [
                 <td class="px-1.5 py-0.5 border-t border-line text-right font-mono text-[10px] text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
                 {r.cells.map((c, i) => (
                   <td data-collapsed={COLLAPSED.has(columns[i].key) || undefined} class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
-                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} title={c.title} class="min-w-6 h-6 px-0.5" />
+                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} logId={c.result?.id} title={c.title} class="min-w-6 h-6 px-0.5" />
                   </td>
                 ))}
               </tr>
@@ -162,6 +163,8 @@ const how = [
       ))}
     </ol>
   </section>
+
+  <LogDialog />
 </Base>
 
 <style>
