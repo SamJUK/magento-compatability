@@ -1,6 +1,9 @@
 services:
   queue:
     image: "rabbitmq:${QUEUE_VERSION:-4.2}-alpine"
+    # The healthcheck runs as the container user. As root it can create
+    # .erlang.cookie before the server does, which then cannot read it.
+    user: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: magento
       RABBITMQ_DEFAULT_PASS: magento

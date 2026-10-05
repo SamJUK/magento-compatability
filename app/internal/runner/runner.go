@@ -30,6 +30,7 @@ var transientComposerCurlErrors = []string{
 	"curl error 6",
 	"curl error 7",
 	"curl error 28",
+	"curl error 55",
 	"curl error 56",
 }
 
@@ -177,6 +178,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The host has no browser build for this Playwright version; run npx playwright install chromium.",
 			LikelyFlaky: false,
 		}
+	case stepName == "playwright" && strings.Contains(text, "without releasing locks"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "pagebuilder_render_lock",
+			Summary:     "Page Builder never released its render lock, so the admin save hung. This is magento/magento2#39076, which hits at random whatever the stack.",
+			LikelyFlaky: true,
+		}
 	case stepName == "playwright" && strings.Contains(text, "page.goto: timeout"):
 		return &result.Failure{
 			Category:    "infrastructure",
@@ -211,6 +219,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Category:    "harness",
 			Code:        "service_startup",
 			Summary:     "A dependency container exited during stack startup before Magento install began.",
+			LikelyFlaky: true,
+		}
+	case stepName == "stack_up" && strings.Contains(text, "dependency ") && strings.Contains(text, " failed to start"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "service_unhealthy",
+			Summary:     "A dependency container started but never passed its healthcheck before stack startup gave up.",
 			LikelyFlaky: true,
 		}
 	case stepName == "stack_up" && text == "":
@@ -636,7 +651,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		recordStep("playwright", result.StatusSkip, 0, "Playwright skipped — no playwright dir configured")
 	} else {
 		t = time.Now()
-		pwLog, pwErr := runPlaywright(ctx, cfg.PlaywrightDir, baseURL, c.ID(), cfg.InstallSampleData)
+		pwLog, pwErr := runPlaywright(ctx, cfg.PlaywrightDir, baseURL, c.ID())
 		dur = time.Since(t).Seconds()
 		if pwErr != nil {
 			recordStep("playwright", result.StatusFail, dur, pwLog)
@@ -705,31 +720,25 @@ func captureContainerLogs(ctx context.Context, cp *Compose, maxLog int64) map[st
 // playwrightEnv returns the subprocess environment for Playwright: the current
 // process env with MAGENTO_BASE_URL replaced so tests hit the right stack.
 // PLAYWRIGHT_BROWSERS_PATH is intentionally left alone — let it use the cache.
-func playwrightEnv(baseURL, reportFile string, sampleDataEnabled bool) []string {
+func playwrightEnv(baseURL, reportFile string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "MAGENTO_BASE_URL=") &&
 			!strings.HasPrefix(kv, "PLAYWRIGHT_REPORT_FILE=") &&
-			!strings.HasPrefix(kv, "PLAYWRIGHT_SAMPLE_DATA=") &&
 			!strings.HasPrefix(kv, "FORCE_COLOR=") &&
 			!strings.HasPrefix(kv, "NO_COLOR=") {
 			env = append(env, kv)
 		}
 	}
-	sampleDataValue := "0"
-	if sampleDataEnabled {
-		sampleDataValue = "1"
-	}
 	return append(env,
 		"MAGENTO_BASE_URL="+baseURL,
 		"PLAYWRIGHT_REPORT_FILE="+reportFile,
-		"PLAYWRIGHT_SAMPLE_DATA="+sampleDataValue,
 	)
 }
 
 // runPlaywright executes the Playwright test suite on the host machine.
 // playwrightDir is the path to the tests/playwright directory.
-func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID string, sampleDataEnabled bool) (string, error) {
+func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID string) (string, error) {
 	npx, err := exec.LookPath("npx")
 	if err != nil {
 		return "npx not found in PATH — cannot run Playwright", fmt.Errorf("npx not found: %w", err)
@@ -739,7 +748,7 @@ func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID st
 	reportFile := filepath.Join("playwright-report", combinationID+".json")
 	cmd := exec.CommandContext(ctx, npx, "playwright", "test", "--project", "chromium", "--output", outputDir)
 	cmd.Dir = playwrightDir
-	cmd.Env = playwrightEnv(baseURL, reportFile, sampleDataEnabled)
+	cmd.Env = playwrightEnv(baseURL, reportFile)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
