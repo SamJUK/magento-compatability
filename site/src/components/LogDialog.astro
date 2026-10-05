@@ -1,35 +1,7 @@
 ---
-// Renders one log viewer per page. Open it from any element with data-log-id="<result id>".
-import { STEPS, STEP_LABELS } from '@lib/compat.js';
-import type { TestResult } from '@lib/types.js';
-
-interface Props {
-  results: TestResult[];
-}
-
-const { results } = Astro.props;
-
-const data = Object.fromEntries(
-  results.map((r) => [
-    r.id,
-    {
-      label: `${r.product} ${r.version} · PHP ${r.services.php} · ${r.services.db.type} ${r.services.db.version} · ${r.services.search.type} ${r.services.search.version}`,
-      timestamp: r.timestamp,
-      steps: STEPS.filter((s) => r.steps?.[s]).map((s) => ({
-        name: STEP_LABELS[s],
-        status: r.steps[s].status,
-        duration: r.steps[s].duration_s,
-        log: r.steps[s].log,
-      })),
-      containers: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
-    },
-  ]),
-);
-// Logs can contain "</script>", so keep "<" out of the embedded JSON.
-const json = JSON.stringify(data).replace(/</g, '\\u003c');
+// Renders one log viewer per page. Open it from any element with data-log-id="<result id>";
+// the run's logs are fetched from /logs/<result id>.json when it opens.
 ---
-
-<script is:inline type="application/json" id="log-data" set:html={json}></script>
 
 <dialog
   id="log-dialog"
@@ -60,11 +32,12 @@ const json = JSON.stringify(data).replace(/</g, '\\u003c');
     containers: Array<{ name: string; log: string }>;
   };
 
-  const data: Record<string, Entry> = JSON.parse(document.getElementById('log-data')!.textContent || '{}');
+  const cache = new Map<string, Promise<Entry>>();
   const dialog = document.getElementById('log-dialog') as HTMLDialogElement;
   const body = document.getElementById('log-dialog-body')!;
   const tabs = [...document.querySelectorAll<HTMLButtonElement>('.log-tab')];
   let entry: Entry | undefined;
+  let current = '';
   let tab = 'steps';
 
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -103,13 +76,31 @@ const json = JSON.stringify(data).replace(/</g, '\\u003c');
   document.addEventListener('click', (e) => {
     const trigger = (e.target as Element).closest<HTMLElement>('[data-log-id]');
     if (!trigger) return;
-    entry = data[trigger.dataset.logId!];
-    if (!entry) return;
-    document.getElementById('log-dialog-title')!.textContent = entry.label;
-    document.getElementById('log-dialog-time')!.textContent = new Date(entry.timestamp).toLocaleString('en-GB');
+    const id = trigger.dataset.logId!;
+    if (!cache.has(id)) {
+      cache.set(id, fetch(`/logs/${id}.json`).then((r) => (r.ok ? r.json() : Promise.reject(r.status))));
+    }
+    current = id;
+    entry = undefined;
     tab = 'steps';
-    render();
+    document.getElementById('log-dialog-title')!.textContent = 'Run logs';
+    document.getElementById('log-dialog-time')!.textContent = '';
+    body.innerHTML = '<p class="text-sm text-muted">Loading logs…</p>';
     dialog.showModal();
+    cache.get(id)!.then(
+      (e) => {
+        if (current !== id) return;
+        entry = e;
+        document.getElementById('log-dialog-title')!.textContent = e.label;
+        document.getElementById('log-dialog-time')!.textContent = new Date(e.timestamp).toLocaleString('en-GB');
+        render();
+      },
+      () => {
+        cache.delete(id);
+        if (current !== id) return;
+        body.innerHTML = '<p class="text-sm text-muted">Could not load the logs for this run.</p>';
+      },
+    );
   });
   for (const t of tabs) t.addEventListener('click', () => ((tab = t.dataset.tab!), render()));
   document.getElementById('log-dialog-close')!.addEventListener('click', () => dialog.close());
