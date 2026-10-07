@@ -5,6 +5,7 @@ import RunTable from '../../components/RunTable.astro';
 import { getProducts, getVersionsForProduct } from '@lib/matrix.js';
 import { getResultsForVersion, getVersionSummary } from '@lib/results.js';
 import { neededWorkarounds, workaroundUsage } from '@lib/workarounds.js';
+import { pairHref } from '@lib/pair.js';
 import {
   formatDate,
   formatDuration,
@@ -69,9 +70,20 @@ const tone = {
 const glyph = { pass: '✓', fail: '✕', untested: '·' };
 ---
 
-<Base title={`${label} ${version}`} description={`${label} ${version}: ${summary.passCount} of ${tested} tested setups install and pass, and why the rest fail.`}>
+<Base
+  title={`${label} ${version} system requirements & compatibility`}
+  description={`${label} ${version}: ${summary.passCount} of ${tested} tested PHP, database, search, cache and queue setups install and pass, and why the rest fail.`}
+  jsonLd={{
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: label, item: new URL(`/${product}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 2, name: `${label} ${version}`, item: new URL(`/${product}/${version}/`, Astro.site).href },
+    ],
+  }}
+>
   <nav class="text-sm text-muted" aria-label="Breadcrumb">
-    <a href={`/${product}`} class="text-muted">{label}</a>
+    <a href={`/${product}/`} class="text-muted">{label}</a>
     {release && <span> / {release.line} line</span>}
   </nav>
 
@@ -88,7 +100,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
       <nav class="flex flex-wrap gap-1.5" aria-label={`Other ${release!.line} releases`}>
         {siblings.map((s) => (
           <a
-            href={`/${product}/${s.version}`}
+            href={`/${product}/${s.version}/`}
             aria-current={s.version === version ? 'page' : undefined}
             class:list={['px-3 py-2 rounded-lg font-mono text-sm no-underline', s.version === version ? 'bg-ink text-ground' : 'border border-line text-ink hover:border-brand']}
           >{patchLabel(product, s.version)}</a>
@@ -191,7 +203,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
                     const needs = extra ? `, needs ${extraOf(c).map((w) => w.title).join('; ')}` : '';
                     return (
                       <a
-                        href={o.href}
+                        href={release ? pairHref(product, release.line, o) : o.href}
                         title={`${o.label}: ${verdict}${c.recommended ? ' (recommended)' : ''}${needs}`}
                         class:list={[chip, tone[c.status]]}
                       >

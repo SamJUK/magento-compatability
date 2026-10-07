@@ -43,7 +43,7 @@ const recPassing = rows.filter((r) => r.cells.some((c) => c.recommended && c.sta
 const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.status !== 'untested'));
 ---
 
-<Base title={`${label} matrix`} description={`Every ${label} release against every PHP, database and search version we test, with an upgrade planner.`}>
+<Base title={`${label} version compatibility matrix`} description={`Every ${label} version against every PHP, MySQL, MariaDB, OpenSearch and Elasticsearch version we test, with an upgrade planner that keeps your services running at each step.`}>
   <div class="flex flex-wrap items-end justify-between gap-6">
     <div class="flex flex-col gap-3 max-w-3xl">
       <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Plan a {label} upgrade</h1>
@@ -55,7 +55,7 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
     <nav class="flex gap-1 p-1 rounded-xl bg-sunken" aria-label="Product">
       {getProductNames().map((p) => (
         <a
-          href={`/${p}`}
+          href={`/${p}/`}
           aria-current={p === product ? 'page' : undefined}
           class:list={['px-4 py-2.5 rounded-lg font-semibold no-underline', p === product ? 'bg-ink text-ground' : 'text-muted hover:text-ink']}
         >{PRODUCT_LABELS[p] ?? p}</a>
@@ -127,12 +127,12 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
           {rows.map((r) => (
             <tr class="bg-surface" data-version={r.version} data-latest={r.latest ? '1' : undefined} hidden={!r.latest} id={r.firstOfLine ? `line-${r.line}` : undefined}>
               <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-4 py-1.5 border-t border-line whitespace-nowrap">
-                <a href={`/${product}/${r.version}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
+                <a href={`/${product}/${r.version}/`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
                 <span data-tag class="ml-1.5 px-1.5 py-0.5 rounded bg-brand text-on-brand text-[10px] font-bold" hidden></span>
               </th>
               {r.cells.map((c, i) => (
                 <td data-col={i} class:list={['px-0.5 py-1 text-center border-t border-line', i > 0 && columns[i - 1].key !== columns[i].key && 'border-l']}>
-                  <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${product}/${r.version}`} title={c.title} class="min-w-8 h-8" />
+                  <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${product}/${r.version}/`} title={c.title} class="min-w-8 h-8" />
                 </td>
               ))}
             </tr>
@@ -154,7 +154,7 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
   <p class="mt-6 text-muted">
     Cache, queue, web server and Varnish results are on each release page.
     The recommended stack ({product === 'magento' ? "Adobe's" : "Mage-OS's"} system requirements) passes on {recPassing.length} of {recTested.length} tested {label} releases.{' '}
-    <a href={`/${product}/baseline`}>See every recommended-stack run</a>.
+    <a href={`/${product}/baseline/`}>See every recommended-stack run</a>.
   </p>
 </Base>
 

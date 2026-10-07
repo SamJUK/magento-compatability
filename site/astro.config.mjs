@@ -1,4 +1,5 @@
 import { defineConfig, fontProviders } from 'astro/config';
+import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -38,6 +39,9 @@ const devCacheRefreshPlugin = {
 export default defineConfig({
   output: 'static',
   site: 'https://magento.works',
+  // Links are emitted with a trailing slash so nginx serves them without a 301 hop.
+  trailingSlash: 'always',
+  integrations: [sitemap({ filter: (page) => !page.endsWith('/404/') })],
   fonts: [
     {
       provider: fontProviders.fontsource(),

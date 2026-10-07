@@ -171,7 +171,7 @@ const selectClass =
         return a;
       }),
     );
-    $<HTMLAnchorElement>('qc-release').href = `/${p.id}/${r.v}`;
+    $<HTMLAnchorElement>('qc-release').href = `/${p.id}/${r.v}/`;
     $('qc-release').textContent = `Every setup for ${r.v} →`;
     renderMatrix(p, r, i);
   }
@@ -210,7 +210,7 @@ const selectClass =
         tr.className = mine ? 'bg-sunken' : '';
         const name = document.createElement('th');
         name.className = 'sticky left-0 bg-inherit text-left px-3 py-0.5 border-t border-line font-mono text-xs font-medium whitespace-nowrap';
-        const link = Object.assign(document.createElement('a'), { href: `/${prod.id}/${shown.v}`, textContent: shown.v, className: 'text-ink no-underline hover:text-brand' });
+        const link = Object.assign(document.createElement('a'), { href: `/${prod.id}/${shown.v}/`, textContent: shown.v, className: 'text-ink no-underline hover:text-brand' });
         name.append(link);
         tr.append(name);
         for (const c of cols) {
