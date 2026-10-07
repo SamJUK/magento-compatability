@@ -52,7 +52,11 @@ const how = [
 ];
 ---
 
-<Base title="Compatibility matrix" description="The newest patch of every Magento and Mage-OS line, tested against every PHP, database, search, cache, queue, web server and Varnish version.">
+<Base
+  title="Magento & Mage-OS compatibility matrix"
+  description="Which Magento 2 and Mage-OS versions work with which PHP, MySQL, MariaDB, OpenSearch, Elasticsearch, Redis, Valkey and RabbitMQ versions. Tested by real installs, not read from the docs."
+  jsonLd={{ '@context': 'https://schema.org', '@type': 'WebSite', name: 'magento.works', url: Astro.site?.href, description: 'Magento and Mage-OS compatibility, tested by real installs in Docker.' }}
+>
   <section class="flex flex-wrap items-end justify-between gap-4">
     <div class="flex flex-col gap-2">
       <h1 class="font-display font-extrabold text-3xl sm:text-4xl tracking-tight">Magento and Mage-OS compatibility</h1>
@@ -61,7 +65,7 @@ const how = [
         Last run {formatDate(stats.lastRun)}.
       </p>
     </div>
-    <a href="/check" class="inline-flex items-center h-11 px-4 rounded-lg bg-brand text-on-brand font-semibold no-underline">Will it run on my stack? →</a>
+    <a href="/check/" class="inline-flex items-center h-11 px-4 rounded-lg bg-brand text-on-brand font-semibold no-underline">Will it run on my stack? →</a>
   </section>
 
   <section class="mt-8 rounded-2xl border border-line bg-surface" aria-label="Newest release of each line against every service version">
@@ -94,19 +98,19 @@ const how = [
           <tbody>
             <tr>
               <th scope="colgroup" colspan={columns.length + 2} class="sticky left-0 bg-sunken text-left px-3 py-1.5 border-t border-line font-display text-sm">
-                <a href={`/${p.product}`} class="text-ink no-underline hover:text-brand">{p.label}</a>
+                <a href={`/${p.product}/`} class="text-ink no-underline hover:text-brand">{p.label}</a>
               </th>
             </tr>
             {p.rows.map((r) => (
               <tr class="bg-surface">
                 <th scope="row" class="sticky left-0 z-10 bg-inherit text-left px-3 py-0.5 border-t border-line whitespace-nowrap">
-                  <a href={`/${p.product}/${r.version}`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
+                  <a href={`/${p.product}/${r.version}/`} class="font-mono font-medium text-ink no-underline hover:text-brand">{r.version}</a>
                   {p.product !== 'magento' && <span class="ml-1 font-mono text-[10px] text-muted">{r.line}</span>}
                 </th>
                 <td class="px-1.5 py-0.5 border-t border-line text-right font-mono text-[10px] text-muted whitespace-nowrap">{r.passed}/{r.tested}</td>
                 {r.cells.map((c, i) => (
                   <td data-collapsed={COLLAPSED.has(columns[i].key) || undefined} class:list={['p-px text-center border-t border-line', (i === 0 || columns[i - 1].key !== columns[i].key) && 'border-l']}>
-                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}`} logId={c.result?.id} title={c.title} class="min-w-6 h-6 px-0.5" />
+                    <StatusCell status={c.status} recommended={c.recommended} extra={c.extra} href={`/${p.product}/${r.version}/`} logId={c.result?.id} title={c.title} class="min-w-6 h-6 px-0.5" />
                   </td>
                 ))}
               </tr>
@@ -127,12 +131,12 @@ const how = [
   <section class="mt-20 flex flex-col gap-6" aria-labelledby="data">
     <h2 id="data" class="font-display font-extrabold text-3xl sm:text-4xl tracking-tight">Take the data with you</h2>
     <div class="grid gap-6 md:grid-cols-3">
-      <a href="/api" class="rounded-2xl bg-panel text-panel-ink p-6 flex flex-col gap-3 no-underline">
+      <a href="/api/" class="rounded-2xl bg-panel text-panel-ink p-6 flex flex-col gap-3 no-underline">
         <span class="font-display font-bold text-xl">JSON API</span>
         <span class="text-sm text-panel-muted leading-relaxed">Static files on a CDN. No key, no rate limit.</span>
         <code class="mt-auto font-mono text-xs rounded-md bg-black/25 px-3 py-2 break-all">GET /api/v1/magento/2.4.8-p5.json</code>
       </a>
-      <a href="/api" class="rounded-2xl bg-panel text-panel-ink p-6 flex flex-col gap-3 no-underline">
+      <a href="/api/" class="rounded-2xl bg-panel text-panel-ink p-6 flex flex-col gap-3 no-underline">
         <span class="font-display font-bold text-xl">GitHub Actions matrix</span>
         <span class="text-sm text-panel-muted leading-relaxed">Test your module against every stack that passed.</span>
         <code class="mt-auto font-mono text-xs rounded-md bg-black/25 px-3 py-2 break-all">GET /api/v1/magento/github-matrix.json</code>

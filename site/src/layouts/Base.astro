@@ -7,11 +7,14 @@ import '../styles/global.css';
 interface Props {
   title: string;
   description?: string;
+  /** schema.org objects for a JSON-LD script in the head. */
+  jsonLd?: object | object[];
 }
 
 const {
   title,
   description = 'Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.',
+  jsonLd,
 } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const path = Astro.url.pathname;
@@ -20,11 +23,11 @@ const pageGroup = Astro.routePattern === '/' ? 'home' : Astro.routePattern.repla
 const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
 
 const nav = [
-  { href: '/check', label: 'Will it run?' },
-  { href: '/magento', label: 'Magento' },
-  { href: '/mageos', label: 'Mage-OS' },
-  { href: '/software', label: 'Services' },
-  { href: '/api', label: 'API' },
+  { href: '/check/', label: 'Will it run?' },
+  { href: '/magento/', label: 'Magento' },
+  { href: '/mageos/', label: 'Mage-OS' },
+  { href: '/software/', label: 'Services' },
+  { href: '/api/', label: 'API' },
 ];
 ---
 
@@ -36,6 +39,14 @@ const nav = [
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalURL} />
     <title>{title} · magento.works</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="magento.works" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta name="twitter:card" content="summary" />
+    <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+    {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd).replaceAll('<', '\\u003c')} />}
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="author" type="text/plain" href="/humans.txt" />
     <script is:inline>
@@ -60,7 +71,7 @@ const nav = [
 
         <nav class="flex flex-wrap items-center gap-1 text-sm font-semibold" aria-label="Main">
           {nav.map(({ href, label }) => {
-            const active = path === href || path.startsWith(`${href}/`);
+            const active = path.startsWith(href);
             return (
               <a
                 href={href}
@@ -99,7 +110,7 @@ const nav = [
       <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-3 justify-between text-sm text-muted">
         <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
         <span class="flex flex-wrap gap-x-5 gap-y-2">
-          <a href="/api" class="text-muted hover:text-ink">API</a>
+          <a href="/api/" class="text-muted hover:text-ink">API</a>
           <a href="/api/v1/results.json" class="text-muted hover:text-ink">results.json</a>
           <a href={GITHUB_URL} class="text-muted hover:text-ink">GitHub</a>
           <a href="mailto:hello@magento.works" class="text-muted hover:text-ink">hello@magento.works</a>

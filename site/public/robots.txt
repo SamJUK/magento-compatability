@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /logs/
+
+Sitemap: https://magento.works/sitemap-index.xml

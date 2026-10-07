@@ -14,7 +14,7 @@ export const GET: APIRoute = ({ props }) => {
   const failure = r.overall_status === 'pass' ? undefined : firstFailure(r);
   const entry = {
     release: `${PRODUCT_LABELS[r.product] ?? r.product} ${r.version}`,
-    href: `/${r.product}/${r.version}`,
+    href: `/${r.product}/${r.version}/`,
     status: r.overall_status,
     failure: failure && { step: STEP_LABELS[failure.step], summary: failure.summary },
     extra: neededWorkarounds(r.workarounds).map((w) => w.title),

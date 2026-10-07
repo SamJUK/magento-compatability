@@ -106,7 +106,7 @@ export function option(key: DimKey, type: string, version: string): ServiceOptio
     version,
     label,
     short,
-    href: `/software/${key}/${type}-${version}`,
+    href: `/software/${key}/${type}-${version}/`,
   };
 }
 

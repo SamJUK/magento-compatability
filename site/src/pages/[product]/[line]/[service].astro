@@ -1,0 +1,153 @@
+---
+import Base from '../../../layouts/Base.astro';
+import StatusCell from '../../../components/StatusCell.astro';
+import { formatDate, getOption, patchLabel } from '@lib/compat.js';
+import { getPair, pairAnswer, pairPaths, pairQuestion } from '@lib/pair.js';
+
+export function getStaticPaths() {
+  return pairPaths();
+}
+
+const { product, line, service } = Astro.params;
+const { key } = Astro.props;
+const option = getOption(key, service)!;
+const pair = getPair(product, line, option)!;
+const question = pairQuestion(pair);
+const answer = pairAnswer(pair);
+const source = product === 'magento' ? 'Adobe' : 'Mage-OS';
+
+const verdictWord = { yes: 'Yes', partly: 'Partly', no: 'No', untested: 'Not tested yet' }[pair.verdict];
+const tone = {
+  yes: 'bg-pass text-pass-ink',
+  partly: 'bg-sunken text-ink border border-line',
+  no: 'bg-fail text-fail-ink border border-dashed border-fail-line',
+  untested: 'bg-sunken text-muted border border-dotted border-line',
+}[pair.verdict];
+const count = (s: { passing: number; tested: number }) => (s.tested === 0 ? 'not tested' : `${s.passing} of ${s.tested}`);
+const chipTone = (s: { passing: number; tested: number }) =>
+  s.tested === 0 ? 'border border-dotted border-line text-muted' : s.passing === s.tested ? 'bg-pass text-pass-ink' : s.passing === 0 ? 'bg-fail text-fail-ink border border-dashed border-fail-line' : 'border border-line text-ink';
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [{ '@type': 'Question', name: question, acceptedAnswer: { '@type': 'Answer', text: answer } }],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: pair.label, item: new URL(`/${product}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 2, name: `${pair.label} ${line}`, item: new URL(`/${product}/${pair.newest}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 3, name: option.label, item: new URL(pair.href, Astro.site).href },
+    ],
+  },
+];
+---
+
+<Base title={question} description={answer} jsonLd={jsonLd}>
+  <nav class="text-sm text-muted" aria-label="Breadcrumb">
+    <a href={`/${product}/`} class="text-muted">{pair.label}</a>
+    <span> / </span>
+    <a href={`/${product}/${pair.newest}/`} class="text-muted">{line} line</a>
+    <span> / </span>
+    <a href={option.href} class="text-muted">{option.label}</a>
+  </nav>
+
+  <h1 class="mt-2 font-display font-extrabold text-4xl sm:text-5xl tracking-tight">{question}</h1>
+
+  <p class:list={['mt-6 rounded-2xl p-6 sm:p-8 text-lg leading-relaxed max-w-4xl', tone]}>
+    <strong class="font-display font-extrabold text-2xl block mb-2">{verdictWord}</strong>
+    {answer.replace(/^(Yes|No|Partly|Not tested yet)\.\s*/, '')}
+  </p>
+
+  <p class="mt-4 text-sm text-muted">
+    {pair.lastRun ? `Last run ${formatDate(pair.lastRun)}. ` : ''}
+    Each run is the stack {source} recommends for the release with only the {pair.dim.label.toLowerCase()} swapped for {option.label}, installed in Docker, compiled and put through storefront, checkout and admin browser tests.
+  </p>
+
+  <section class="mt-10" aria-labelledby="releases">
+    <h2 id="releases" class="font-display font-extrabold text-2xl tracking-tight">Every {pair.label} {line} release on {option.label}</h2>
+    <div class="mt-4 flex flex-wrap gap-2">
+      {pair.releases.map(({ version, cell }) => (
+        <StatusCell
+          status={cell.status}
+          recommended={cell.recommended}
+          href={`/${product}/${version}/`}
+          text={patchLabel(product, version)}
+          title={`${pair.label} ${version} on ${option.label}: ${cell.status === 'pass' ? 'works' : cell.status === 'fail' ? 'fails' : 'not tested'}`}
+          class="min-w-14 h-11 px-3 text-sm"
+        />
+      ))}
+    </div>
+    <p class="mt-3 text-sm text-muted">Each cell links to the release page with every setup and run log.</p>
+  </section>
+
+  {pair.failures.length > 0 && (
+    <section class="mt-10" aria-labelledby="why">
+      <h2 id="why" class="font-display font-extrabold text-2xl tracking-tight">Why it failed</h2>
+      <ul class="mt-4 flex flex-col gap-3 max-w-3xl">
+        {pair.failures.map((f) => (
+          <li class="rounded-xl border border-line bg-surface p-5">
+            <p class="font-semibold leading-snug">{f.summary}</p>
+            <p class="mt-1 text-sm text-muted">
+              Stopped at {f.step.toLowerCase()} on {f.versions.map((v) => patchLabel(product, v)).join(', ')}.
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  {pair.fixes.length > 0 && (
+    <section class="mt-10 rounded-2xl border border-line border-l-4 border-l-rec bg-surface p-6 max-w-3xl" aria-labelledby="fixes">
+      <h2 id="fixes" class="font-display font-bold text-2xl">Needs an extra step</h2>
+      <p class="mt-1 text-muted">Some passing runs needed a fix the release does not ship. The release pages explain how to apply each one.</p>
+      <ul class="mt-3 list-disc pl-5 flex flex-col gap-1">
+        {pair.fixes.map((f) => <li>{f}</li>)}
+      </ul>
+    </section>
+  )}
+
+  <div class="mt-12 grid gap-10 lg:grid-cols-2">
+    <section aria-labelledby="siblings">
+      <h2 id="siblings" class="font-display font-extrabold text-2xl tracking-tight">Other {pair.dim.label.toLowerCase()} versions for {pair.label} {line}</h2>
+      <ul class="mt-4 flex flex-wrap gap-2">
+        {pair.siblings.map((s) => (
+          <li>
+            <a
+              href={s.href}
+              aria-current={s.option.id === option.id ? 'page' : undefined}
+              class:list={['inline-flex items-center gap-2 min-h-11 px-3 rounded-lg font-mono text-sm no-underline', chipTone(s), s.option.id === option.id && 'ring-2 ring-brand']}
+            >
+              {s.option.label}
+              <span class="font-sans text-xs opacity-80">{count(s)}</span>
+              {s.option.id === pair.recommended?.id && <span class="font-sans text-[10px] font-bold uppercase tracking-wider opacity-80">recommended</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    {pair.otherLines.length > 0 && (
+      <section aria-labelledby="lines">
+        <h2 id="lines" class="font-display font-extrabold text-2xl tracking-tight">{option.label} on other {pair.label} lines</h2>
+        <ul class="mt-4 flex flex-wrap gap-2">
+          {pair.otherLines.map((l) => (
+            <li>
+              <a href={l.href} class:list={['inline-flex items-center gap-2 min-h-11 px-3 rounded-lg font-mono text-sm no-underline', chipTone(l)]}>
+                {pair.label} {l.line}
+                <span class="font-sans text-xs opacity-80">{count(l)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+  </div>
+
+  <p class="mt-12 text-muted">
+    See <a href={option.href}>every Magento and Mage-OS release on {option.label}</a>, or
+    <a href={`/${product}/${pair.newest}/`}>every setup for {pair.label} {pair.newest}</a>.
+  </p>
+</Base>
