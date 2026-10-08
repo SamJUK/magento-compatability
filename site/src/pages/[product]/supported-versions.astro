@@ -1,0 +1,189 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getProductNames } from '@lib/matrix.js';
+import { formatDate, getLines, PRODUCT_LABELS } from '@lib/compat.js';
+import { ADOBE_POLICY, buildDate, CREDITS, getSupportTable, PHASE_LABELS, releasedOn, supportSentence, type Phase } from '@lib/lifecycle.js';
+
+export function getStaticPaths() {
+  return getProductNames().map((product) => ({ params: { product } }));
+}
+
+const { product } = Astro.params;
+const label = PRODUCT_LABELS[product] ?? product;
+const isMagento = product === 'magento';
+const table = getSupportTable(product);
+const mw = CREDITS.magentoWatch;
+
+const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+const linesIn = (p: Phase) => table.filter((s) => s.phase === p).map((s) => s.line);
+const verb = (xs: string[], one: string, many: string) => (xs.length === 1 ? one : many);
+const summary = (() => {
+  const [standard, extended, security, ended] = (['standard', 'extended', 'security', 'ended'] as Phase[]).map(linesIn);
+  return [
+    standard.length && `${label} ${list(standard)} ${verb(standard, 'is', 'are')} in Adobe's standard support.`,
+    extended.length && `${list(extended)} ${verb(extended, 'is', 'are')} in extended support.`,
+    security.length && `${list(security)} ${verb(security, 'gets', 'get')} security fixes only.`,
+    ended.length && `${ended[0]} and everything older ${verb(ended, 'is', 'are')} end of life.`,
+  ].filter(Boolean).join(' ');
+})();
+
+const mageOSLines = isMagento
+  ? []
+  : getLines(product).map(({ line, releases }) => ({ line, releases: releases.slice().reverse().map((r) => ({ version: r.version, released: releasedOn(product, r.version) })) }));
+const newestMageOS = mageOSLines[0]?.releases[0];
+
+const title = isMagento ? 'Magento supported versions & end-of-life dates' : 'Mage-OS versions & release dates';
+const description = isMagento
+  ? `${summary} Release dates and Adobe's support dates for every Magento 2.4 line.`
+  : `Mage-OS ${newestMageOS?.version} is the newest release. Release dates for every Mage-OS version, and why there are no end-of-life dates.`;
+
+const tone: Record<Phase, string> = {
+  standard: 'bg-pass text-pass-ink',
+  extended: 'bg-sunken text-ink border border-line',
+  security: 'bg-sunken text-ink border border-dashed border-line',
+  ended: 'bg-fail text-fail-ink border border-dashed border-fail-line',
+};
+const cell = 'px-3 py-3 border-t border-line text-left align-top';
+const head = 'px-3 py-2 text-left text-xs font-bold uppercase tracking-wider text-muted whitespace-nowrap';
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: label, item: new URL(`/${product}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 2, name: isMagento ? 'Supported versions' : 'Versions', item: new URL(`/${product}/supported-versions/`, Astro.site).href },
+    ],
+  },
+  ...(isMagento
+    ? [{
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: [
+          { '@type': 'Question', name: 'Which Magento versions are still supported?', acceptedAnswer: { '@type': 'Answer', text: `As of ${formatDate(buildDate)}: ${summary}` } },
+          ...table.map((s) => ({
+            '@type': 'Question',
+            name: `When does Magento ${s.line} reach end of life?`,
+            acceptedAnswer: { '@type': 'Answer', text: supportSentence(s) },
+          })),
+        ],
+      }]
+    : []),
+];
+---
+
+<Base title={title} description={description} jsonLd={jsonLd}>
+  <nav class="text-sm text-muted" aria-label="Breadcrumb">
+    <a href={`/${product}/`} class="text-muted">{label}</a>
+  </nav>
+  <h1 class="mt-2 font-display font-extrabold text-4xl sm:text-5xl tracking-tight">
+    {isMagento ? 'Magento supported versions and end-of-life dates' : 'Mage-OS versions and release dates'}
+  </h1>
+
+  {isMagento ? (
+    <>
+      <p class="mt-4 text-lg leading-relaxed max-w-3xl">
+        <span class="text-muted">As of {formatDate(buildDate)}:</span> {summary}
+      </p>
+
+      <div class="mt-8 overflow-x-auto rounded-2xl border border-line bg-surface">
+        <table class="w-full text-sm">
+          <thead>
+            <tr>
+              <th class={head}>Line</th>
+              <th class={head}>Released</th>
+              <th class={head}>Newest patch we test</th>
+              <th class={head}>Standard support ends</th>
+              <th class={head}>Extended support ends</th>
+              <th class={head}>Security fixes end</th>
+              <th class={head}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table.map((s) => (
+              <tr id={`line-${s.line}`}>
+                <th scope="row" class={`${cell} font-mono font-semibold`}>{s.line}</th>
+                <td class={`${cell} whitespace-nowrap`}>{s.released ? formatDate(s.released) : '—'}</td>
+                <td class={`${cell} whitespace-nowrap`}>
+                  <a href={`/${product}/${s.newest}/`} class="font-mono">{s.newest}</a>
+                  {s.newestReleased && <span class="block text-xs text-muted">{formatDate(s.newestReleased)}</span>}
+                </td>
+                <td class={`${cell} whitespace-nowrap`}>{formatDate(s.standard)}</td>
+                <td class={`${cell} whitespace-nowrap`}>{s.extended ? formatDate(s.extended) : '—'}</td>
+                <td class={`${cell} whitespace-nowrap`}>{s.securityOnly ? formatDate(s.securityOnly) : '—'}</td>
+                <td class={cell}>
+                  <span class:list={['inline-block px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap', tone[s.phase]]}>{PHASE_LABELS[s.phase]}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-3 text-sm text-muted">
+        Each patch links to every PHP, database, search, cache and queue setup we tested it on.
+        Planning a move? The <a href={`/${product}/`}>upgrade planner</a> finds a route that keeps your services running.
+      </p>
+
+      <section class="mt-12 max-w-3xl flex flex-col gap-3 leading-relaxed" aria-labelledby="sources">
+        <h2 id="sources" class="font-display font-extrabold text-2xl tracking-tight">Where these dates come from</h2>
+        <p>
+          Support dates are Adobe's, from the <a href={ADOBE_POLICY.url} rel="noopener">Adobe Commerce lifecycle policy</a>,
+          last updated {formatDate(ADOBE_POLICY.updated)}. Adobe states them for Adobe Commerce. The policy gives no separate
+          dates for Magento Open Source, though every Open Source patch so far has shipped on the same day as its Adobe Commerce twin.
+        </p>
+        <p>
+          Extended support is free to Adobe Commerce customers on 2.4.6 and 2.4.7 and includes quality and security patches.
+          The security-only period for 2.4.4, 2.4.5 and 2.4.6 is a one-off that Adobe says it will not extend.
+        </p>
+        <p>
+          Release dates come from <a href={mw.url} rel="noopener">{mw.name}</a>, the lifecycle tracker
+          {' '}<a href={mw.authorUrl} rel="noopener">{mw.author}</a> runs for Magento Open Source, Adobe Commerce and Mage-OS.
+          It also tracks security bulletins and quality patches for each release, which this site does not.
+          2.4.2 and 2.4.3 have dropped off Adobe's page, so their end-of-life date is the one magento.watch records.
+        </p>
+        <p class="text-muted text-sm">Release dates refresh weekly. Statuses are worked out on the day the site was built.</p>
+      </section>
+    </>
+  ) : (
+    <>
+      <p class="mt-4 text-lg leading-relaxed max-w-3xl">
+        Mage-OS {newestMageOS?.version}{newestMageOS?.released && `, released ${formatDate(newestMageOS.released)},`} is the newest release.
+        Mage-OS does not publish end-of-support dates, so this page lists when each release came out.
+      </p>
+
+      <div class="mt-8 grid gap-6 md:grid-cols-3">
+        {mageOSLines.map(({ line, releases }) => (
+          <section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby={`line-${line}`}>
+            <h2 id={`line-${line}`} class="font-display font-bold text-xl">Mage-OS {line}</h2>
+            <table class="mt-3 w-full text-sm">
+              <tbody>
+                {releases.map((r) => (
+                  <tr>
+                    <th scope="row" class="py-2 border-t border-line text-left font-mono font-medium">
+                      <a href={`/${product}/${r.version}/`}>{r.version}</a>
+                    </th>
+                    <td class="py-2 border-t border-line text-right text-muted whitespace-nowrap">{r.released ? formatDate(r.released) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ))}
+      </div>
+
+      <section class="mt-12 max-w-3xl flex flex-col gap-3 leading-relaxed" aria-labelledby="sources">
+        <h2 id="sources" class="font-display font-extrabold text-2xl tracking-tight">Where these dates come from</h2>
+        <p>
+          Release dates come from the <a href={CREDITS.mageOSReleases.url} rel="noopener">{CREDITS.mageOSReleases.name}</a>.
+          Early versions were tagged without a GitHub release, so for those we use the date of the tagged commit.
+        </p>
+        <p>
+          <a href={mw.url} rel="noopener">{mw.name}</a> by <a href={mw.authorUrl} rel="noopener">{mw.author}</a> also
+          tracks Mage-OS releases, and its <a href="https://magento.watch/methodology" rel="noopener">methodology</a> notes the same gap:
+          no end-of-support dates are published.
+        </p>
+        <p class="text-muted text-sm">Release dates refresh weekly.</p>
+      </section>
+    </>
+  )}
+</Base>

@@ -7,6 +7,7 @@ GitHub: https://github.com/samjuk
 Hypernode: the Mage-OS mirror of Magento packages every install uses
 Mage-OS: repo.mage-os.org, and the fixes several patches here backport
 Pieter Hoste: the libxml2 2.12+ Elasticsearch XSD fix
+Lukasz Bajsarowicz: magento.watch, where every Magento release date on this site comes from
 
 /* SITE */
 Source: https://github.com/samjuk/magento-compatability

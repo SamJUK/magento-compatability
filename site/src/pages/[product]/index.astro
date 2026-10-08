@@ -154,7 +154,8 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
   <p class="mt-6 text-muted">
     Cache, queue, web server and Varnish results are on each release page.
     The recommended stack ({product === 'magento' ? "Adobe's" : "Mage-OS's"} system requirements) passes on {recPassing.length} of {recTested.length} tested {label} releases.{' '}
-    <a href={`/${product}/baseline/`}>See every recommended-stack run</a>.
+    <a href={`/${product}/baseline/`}>See every recommended-stack run</a>, or
+    <a href={`/${product}/supported-versions/`}>{product === 'magento' ? 'which versions are still supported' : 'when each release came out'}</a>.
   </p>
 </Base>
 
