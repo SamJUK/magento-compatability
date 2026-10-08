@@ -5,6 +5,7 @@ import { formatDate, getOption, patchLabel } from '@lib/compat.js';
 import { errorForCode, errorHref } from '@lib/errors.js';
 import { lineHubHref } from '@lib/hub.js';
 import { getPair, pairAnswer, pairQuestion } from '@lib/pair.js';
+import { supportFor, supportSentence } from '@lib/lifecycle.js';
 
 interface Props {
   product: string;
@@ -20,6 +21,7 @@ const pair = getPair(product, line, option)!;
 const question = pairQuestion(pair);
 const answer = pairAnswer(pair);
 const source = product === 'magento' ? 'Adobe' : 'Mage-OS';
+const support = supportFor(product, line);
 
 const verdictWord = { yes: 'Yes', partly: 'Partly', no: 'No', untested: 'Not tested yet' }[pair.verdict];
 const tone = {
@@ -77,6 +79,12 @@ const jsonLd = [
     {pair.lastRun ? `Last run ${formatDate(pair.lastRun)}. ` : ''}
     Each run is our baseline stack for the release, picked from {source}'s system requirements, with only the {pair.dim.label.toLowerCase()} swapped for {option.label}, installed in Docker, compiled and put through storefront, checkout and admin browser tests.
   </p>
+
+  {support && (
+    <p class="mt-2 text-sm text-muted">
+      {supportSentence(support)} <a href={`/${product}/supported-versions/#line-${line}`}>Every line's support dates</a>.
+    </p>
+  )}
 
   <section class="mt-10" aria-labelledby="releases">
     <h2 id="releases" class="font-display font-extrabold text-2xl tracking-tight">Every {pair.label} {line} release on {option.label}</h2>

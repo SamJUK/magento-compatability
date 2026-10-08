@@ -1,0 +1,51 @@
+name: Refresh Release Dates
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    name: Refresh release dates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Fetch release dates
+        working-directory: app
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./cmd/release-dates
+
+      - name: Open a pull request when dates changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- site/src/data/release-dates.json; then
+            echo "No new release dates."
+            exit 0
+          fi
+          branch=chore/release-dates
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -am 'chore(site): refresh release dates'
+          git push --force origin "$branch"
+          if [ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" != OPEN ]; then
+            gh pr create --base master --head "$branch" \
+              --title 'chore(site): refresh release dates' \
+              --body 'Weekly refresh from magento.watch and the Mage-OS GitHub releases. If a new Magento line appears, add its support dates to `site/src/data/adobe-support.yml`.'
+          fi
