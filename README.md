@@ -222,6 +222,23 @@ Pages:
 - `/magento/{version}` — recommended stack, one-service swaps and why each failure failed
 - `/software/{service}/{type}-{version}` — newest release that installs on a service version
 - `/magento/baseline` — the recommended-stack run for every release
+- `/magento/{line}/{type}-{version}` — one release line on one service version, yes or no up front
+- `/magento/supported-versions` — release dates and Adobe's support dates per line
+
+### Release and support dates
+
+`site/src/data/release-dates.json` is generated. Magento dates come from
+[magento.watch](https://magento.watch/) by [Lukasz Bajsarowicz](https://github.com/lbajsarowicz),
+Mage-OS dates from the [Mage-OS GitHub releases](https://github.com/mage-os/mageos-magento2/releases).
+A weekly workflow (`release-dates.yml`) opens a PR when they change. To refresh by hand:
+
+```bash
+cd app && go run ./cmd/release-dates
+```
+
+`site/src/data/adobe-support.yml` is maintained by hand from Adobe's
+[lifecycle policy](https://experienceleague.adobe.com/en/docs/commerce-operations/release/planning/lifecycle-policy).
+Add a row when a new Magento line ships.
 
 ---
 
