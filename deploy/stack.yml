@@ -1,0 +1,36 @@
+version: "3.8"
+
+# magento.works on the Swarm: the static site this repo's Dockerfile builds. TAG is the release version
+# (.github/workflows/deploy.yaml). magento.work and m2-compatability.sdj.pw redirect here at Cloudflare.
+services:
+  nginx:
+    image: ghcr.io/samjuk/magento-compatability:${TAG}
+    networks: [edge]
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget tries ::1 first and nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 2
+      placement:
+        constraints: [node.labels.web == true]
+      resources:
+        limits: { memory: 64M }
+      update_config:
+        order: start-first
+        failure_action: rollback
+        delay: 10s
+      labels:
+        traefik.enable: "true"
+        traefik.swarm.network: edge
+        traefik.http.routers.magentoworks.rule: "Host(`magento.works`)"
+        traefik.http.routers.magentoworks.entrypoints: websecure
+        traefik.http.routers.magentoworks.tls: "true"
+        traefik.http.services.magentoworks.loadbalancer.server.port: "80"
+
+networks:
+  edge:
+    external: true
