@@ -2,6 +2,9 @@ name: Deploy
 
 # Deploys a published image to the Swarm as the magentoworks stack (deploy/stack.yml). docker-publish.yml calls it
 # after every release; run it by hand to redeploy or roll back to an earlier version.
+#
+# The steps of SamJUK/infra-swarm-platform's reusable deploy, inline: this repo is public and that one private, and
+# GitHub lets only private repos call a private repo's workflows. The deploy itself is the manager's bin/deploy.sh.
 
 on:
   workflow_call:
@@ -29,12 +32,29 @@ concurrency:
 
 jobs:
   deploy:
-    uses: SamJUK/infra-swarm-platform/.github/workflows/deploy.yml@7922ebd30ce3fd5629f8c4352a3d2abf512018b2 # main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
-    secrets:
-      SWARM_SSH_KEY: ${{ secrets.SWARM_SSH_KEY }}
-      SWARM_MANAGER_HOST: ${{ secrets.SWARM_MANAGER_HOST }}
-    with:
-      stack: magentoworks
-      tag: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SWARM_SSH_KEY }}
+
+      - name: Deploy
+        env:
+          HOST: ${{ secrets.SWARM_MANAGER_HOST }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 0.0.13, got: $VERSION"; exit 1; }
+          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes "deploy@$HOST" "bin/deploy.sh magentoworks $VERSION" < deploy/stack.yml
+
+      - name: Show the stack on failure
+        if: failure()
+        env:
+          HOST: ${{ secrets.SWARM_MANAGER_HOST }}
+        run: ssh -o BatchMode=yes "deploy@$HOST" "docker stack ps magentoworks --no-trunc | head -30" || true
