@@ -233,3 +233,9 @@ Pages:
 - **Sample data** — not installed by default; set `INSTALL_SAMPLE_DATA=1` to enable
 - **Varnish** — when enabled, webserver listens on 8080 internally; Varnish fronts on port 80
 - **CTRL+C** — cancels cleanly; partial results are not written to disk
+
+## License
+
+OSL-3.0. Copyright (c) 2026 Sam James. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
+
+Releases up to v0.0.13 were published under MIT and stay under MIT.

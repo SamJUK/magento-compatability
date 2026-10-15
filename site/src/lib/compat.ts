@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+ * SPDX-License-Identifier: OSL-3.0
+ */
+
 import { getMatrix, getProductVersions } from './matrix.js';
 import { getResultsForVersion } from './results.js';
 import type { Baseline, StepResult, TestResult, TestServices } from './types.js';

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
 // Package matrix parses matrix.yml and generates test combinations using the
 // baseline-deviation strategy: one baseline run per product version, plus one
 // run per non-baseline option in each service dimension.

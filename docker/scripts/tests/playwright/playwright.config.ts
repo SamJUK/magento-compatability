@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+ * SPDX-License-Identifier: OSL-3.0
+ */
+
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.MAGENTO_BASE_URL ?? 'http://localhost';

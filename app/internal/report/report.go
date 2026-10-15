@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
 // Package report aggregates TestResult slices and writes MD, CSV, and JSON
 // output files — a direct Go replacement of reporter.sh.
 package report

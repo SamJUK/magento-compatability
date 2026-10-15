@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+# SPDX-License-Identifier: OSL-3.0
+
 ARG WEBSERVER_VERSION=1.30
 FROM nginx:${WEBSERVER_VERSION}-alpine
 

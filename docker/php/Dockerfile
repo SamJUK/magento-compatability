@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+# SPDX-License-Identifier: OSL-3.0
+
 ARG PHP_VERSION=8.3
 FROM composer/composer:2.2.26-bin AS composer-lts
 FROM composer/composer:2.9.8-bin AS composer-latest

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+# SPDX-License-Identifier: OSL-3.0
+
 # scripts/tests/smoke.sh — run Magento smoke tests inside the php-fpm container
 #
 # Called by the Go runner after install.sh succeeds:
