@@ -1,4 +1,8 @@
 <?php
+
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
 // Creates the in-stock simple product the Playwright checkout spec buys.
 
 use Magento\Catalog\Api\Data\ProductInterface;

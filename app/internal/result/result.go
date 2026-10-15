@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
 // Package result defines the canonical TestResult type and helpers for reading
 // and writing result JSON files (results/{product}/*.json).
 //

@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+ * SPDX-License-Identifier: OSL-3.0
+ */
+
 import { test, expect, Page } from '@playwright/test';
 
 // Buys the product seeded by scripts/tests/seed-checkout-product.php as a guest.

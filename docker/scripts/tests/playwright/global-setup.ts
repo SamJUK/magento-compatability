@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+ * SPDX-License-Identifier: OSL-3.0
+ */
+
 import { request, FullConfig } from '@playwright/test';
 
 const pages = ['/', '/e2e-checkout-product.html', process.env.PLAYWRIGHT_ADMIN_PATH ?? '/admin'];
