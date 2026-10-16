@@ -2,6 +2,9 @@
 import { Font } from 'astro:assets';
 import Logo from '../components/Logo.astro';
 import GridFocus from '../components/GridFocus.astro';
+import { formatDate } from '@lib/compat.js';
+import { getProducts } from '@lib/matrix.js';
+import { getGlobalStats } from '@lib/results.js';
 import '../styles/global.css';
 
 interface Props {
@@ -21,6 +24,8 @@ const path = Astro.url.pathname;
 // Lookout RUM page group: the route pattern, so "/[product]/[version]" -> "product-version".
 const pageGroup = Astro.routePattern === '/' ? 'home' : Astro.routePattern.replace(/[[\]]/g, '').slice(1).replaceAll('/', '-');
 const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
+const stats = getGlobalStats();
+const releaseCount = getProducts().reduce((n, p) => n + p.versions.length, 0);
 
 const nav = [
   { href: '/check/', label: 'Will it run?' },
@@ -92,7 +97,6 @@ const nav = [
               <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" />
             </svg>
           </button>
-          <span class="ml-2 px-2.5 py-1 rounded-full bg-sunken text-muted text-xs font-semibold">Alpha</span>
           {import.meta.env.DEV && (
             <button id="dev-refresh-btn" type="button" title="Re-read matrix.yml and results (dev only)" class="ml-2 px-2.5 py-1 rounded-md text-xs font-semibold border border-line text-muted hover:text-ink cursor-pointer">
               Refresh data
@@ -108,7 +112,7 @@ const nav = [
 
     <footer class="border-t border-line">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-3 justify-between text-sm text-muted">
-        <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
+        <span>{`Not affiliated with Adobe or the Mage-OS Association. ${stats.total.toLocaleString('en-GB')} installs of ${releaseCount} releases, last run ${formatDate(stats.lastRun)}. Untested means we have not run it, not that it fails.`}</span>
         <span class="flex flex-wrap gap-x-5 gap-y-2">
           <a href="/api/" class="text-muted hover:text-ink">API</a>
           <a href="/api/v1/results.json" class="text-muted hover:text-ink">results.json</a>
