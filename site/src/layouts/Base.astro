@@ -60,8 +60,9 @@ const nav = [
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <Font cssVariable="--font-bricolage" preload />
-    <Font cssVariable="--font-plex-sans" preload />
+    {/* Only the faces the first paint needs: headings and body text. */}
+    <Font cssVariable="--font-bricolage" preload={[{ weight: 700 }, { weight: 800 }]} />
+    <Font cssVariable="--font-plex-sans" preload={[{ weight: 400 }]} />
     <Font cssVariable="--font-plex-mono" />
   </head>
   <body class="min-h-screen flex flex-col bg-ground text-ink font-sans antialiased">
