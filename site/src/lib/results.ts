@@ -316,3 +316,23 @@ export function getGlobalStats() {
   const lastRun = timestamps.length > 0 ? timestamps[timestamps.length - 1] : null;
   return { total: results.length, passed, failed, lastRun };
 }
+
+/** schema.org Dataset for the results, so Google Dataset Search can list them. */
+export function datasetJsonLd(site: URL) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Dataset',
+    name: 'Magento and Mage-OS compatibility test results',
+    description:
+      'Install and browser test results for every Magento Open Source and Mage-OS release against PHP, MySQL, MariaDB, Percona, Elasticsearch, OpenSearch, Redis, Valkey, RabbitMQ, ActiveMQ Artemis, Apache, Nginx and Varnish versions. Each result is one real install in Docker, with its run log.',
+    url: site.href,
+    sameAs: 'https://github.com/SamJUK/magento-compatability',
+    creator: { '@type': 'Person', name: 'Sam James', url: 'https://www.samdjames.uk/' },
+    license: 'https://opensource.org/license/osl-3-0',
+    isAccessibleForFree: true,
+    keywords: ['Magento', 'Magento Open Source', 'Mage-OS', 'compatibility', 'system requirements', 'PHP', 'MySQL', 'MariaDB', 'OpenSearch', 'Elasticsearch'],
+    measurementTechnique: 'setup:install, setup:di:compile and Playwright storefront, checkout and admin tests, one Docker stack per run',
+    dateModified: getGlobalStats().lastRun,
+    distribution: [{ '@type': 'DataDownload', encodingFormat: 'application/json', contentUrl: new URL('/api/v1/results.json', site).href }],
+  };
+}

@@ -2,7 +2,7 @@
 import Base from '../layouts/Base.astro';
 import LogDialog from '../components/LogDialog.astro';
 import StatusCell from '../components/StatusCell.astro';
-import { getGlobalStats } from '@lib/results.js';
+import { datasetJsonLd, getGlobalStats } from '@lib/results.js';
 import { getProductNames } from '@lib/matrix.js';
 import { formatDate, getCells, getDimensions, getReleases, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
 import { neededWorkarounds } from '@lib/workarounds.js';
@@ -56,7 +56,10 @@ const how = [
   updated={stats.lastRun}
   title="Magento & Mage-OS compatibility matrix"
   description="Which Magento 2 and Mage-OS versions work with which PHP, MySQL, MariaDB, OpenSearch, Elasticsearch, Redis, Valkey and RabbitMQ versions. Tested by real installs, not read from the docs."
-  jsonLd={{ '@context': 'https://schema.org', '@type': 'WebSite', name: 'magento.works', url: Astro.site?.href, description: 'Magento and Mage-OS compatibility, tested by real installs in Docker.' }}
+  jsonLd={[
+    { '@context': 'https://schema.org', '@type': 'WebSite', name: 'magento.works', url: Astro.site?.href, description: 'Magento and Mage-OS compatibility, tested by real installs in Docker.' },
+    datasetJsonLd(Astro.site!),
+  ]}
 >
   <section class="flex flex-wrap items-end justify-between gap-4">
     <div class="flex flex-col gap-2">
