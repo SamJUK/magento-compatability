@@ -67,14 +67,14 @@ export interface Pair {
 }
 
 export function pairHref(product: string, line: string, option: ServiceOption): string {
-  return `/${product}/${line}/${option.type}-${option.version}/`;
+  return `/${product}/${line}/${option.slug}/`;
 }
 
 export function pairPaths() {
   return getProductNames().flatMap((product) =>
     getLines(product).flatMap(({ line }) =>
       getDimensions().flatMap((d) =>
-        d.options.map((o) => ({ params: { product, line, service: `${o.type}-${o.version}` }, props: { key: d.key } })),
+        d.options.map((o) => ({ params: { product, line, service: o.slug }, props: { key: d.key } })),
       ),
     ),
   );

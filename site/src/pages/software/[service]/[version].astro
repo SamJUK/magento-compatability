@@ -8,7 +8,7 @@ import { pairHref } from '@lib/pair.js';
 
 export function getStaticPaths() {
   return getDimensions().flatMap((d) =>
-    d.options.map((o) => ({ params: { service: d.key, version: `${o.type}-${o.version}` } })),
+    d.options.map((o) => ({ params: { service: d.key, version: o.slug } })),
   );
 }
 
