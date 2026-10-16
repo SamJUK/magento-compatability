@@ -32,7 +32,7 @@ const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1)
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'Services', item: new URL('/software/', Astro.site).href },
-      { '@type': 'ListItem', position: 2, name: dim.label, item: new URL(dim.options[0].href, Astro.site).href },
+      { '@type': 'ListItem', position: 2, name: dim.label, item: new URL(`/software/${dim.key}/`, Astro.site).href },
       { '@type': 'ListItem', position: 3, name: option.label, item: new URL(option.href, Astro.site).href },
     ],
   }}
@@ -40,7 +40,7 @@ const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1)
   <nav class="flex flex-wrap gap-1 text-sm font-semibold" aria-label="Kind of service">
     {getDimensions().map((d) => (
       <a
-        href={d.options[0].href}
+        href={`/software/${d.key}/`}
         aria-current={d.key === dim.key ? 'true' : undefined}
         class:list={['px-3 py-2 rounded-lg no-underline', d.key === dim.key ? 'bg-ink text-ground' : 'text-muted hover:text-ink']}
       >{d.label}</a>
