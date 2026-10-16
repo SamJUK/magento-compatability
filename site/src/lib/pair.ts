@@ -8,6 +8,7 @@ import {
   getCells,
   getDimensions,
   getLines,
+  onOption,
   PRODUCT_LABELS,
   STEP_LABELS,
   type Cell,
@@ -138,7 +139,7 @@ export function getPair(product: string, line: string, option: ServiceOption): P
 }
 
 export function pairQuestion(p: Pair): string {
-  return `Does ${p.label} ${p.line} run on ${p.option.label}?`;
+  return `Does ${p.label} ${p.line} run ${onOption(p.option)}?`;
 }
 
 const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -148,24 +149,25 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function pairAnswer(p: Pair): string {
   const source = p.product === 'magento' ? 'Adobe' : 'Mage-OS';
   const subject = `${p.label} ${p.line}`;
+  const on = onOption(p.option);
   const reason = p.failures[0] ? ` ${p.failures[0].summary}` : '';
   const listed = p.recommended ? ` ${source} lists ${p.recommended.label} for ${p.newest}.` : '';
-  const elsewhere = p.elsewhere ? ` The newest ${p.label} release that installs on ${p.option.label} is ${p.elsewhere}.` : '';
+  const elsewhere = p.elsewhere ? ` The newest ${p.label} release that installs ${on} is ${p.elsewhere}.` : '';
 
   switch (p.verdict) {
     case 'untested':
-      return `Not tested yet. We have no run of ${subject} on ${p.option.label}.${listed}`;
+      return `Not tested yet. We have no run of ${subject} ${on}.${listed}`;
     case 'yes': {
       const fixes = p.fixes.length ? ` Some runs needed an extra step: ${list(p.fixes)}.` : '';
       const every = p.tested === 1 ? `The ${subject} release we tested installs` : `All ${p.tested} ${subject} releases we tested install`;
-      return `Yes. ${every} on ${p.option.label} and pass the storefront, checkout and admin tests.${fixes}${listed}`;
+      return `Yes. ${every} ${on} and pass the storefront, checkout and admin tests.${fixes}${listed}`;
     }
     case 'no':
-      return `No. None of the ${plural(p.tested, `${subject} release`)} we tested install on ${p.option.label}.${reason}${elsewhere}${listed}`;
+      return `No. None of the ${plural(p.tested, `${subject} release`)} we tested install ${on}.${reason}${elsewhere}${listed}`;
     case 'partly': {
       const passed = p.releases.filter((r) => r.cell.status === 'pass').map((r) => r.version);
       const failed = p.releases.filter((r) => r.cell.status === 'fail').map((r) => r.version);
-      return `Partly. ${p.passing} of ${p.tested} ${subject} releases install on ${p.option.label}: ${list(passed)}. ${list(failed)} fail${failed.length === 1 ? 's' : ''}.${reason}${listed}`;
+      return `Partly. ${p.passing} of ${p.tested} ${subject} releases install ${on}: ${list(passed)}. ${list(failed)} fail${failed.length === 1 ? 's' : ''}.${reason}${listed}`;
     }
   }
 }

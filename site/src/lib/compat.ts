@@ -121,6 +121,11 @@ export function option(key: DimKey, type: string, version: string): ServiceOptio
 
 const minorOf = (version: string) => version.split('.').slice(0, 2).join('.');
 
+/** "on PHP 8.4", or "without Varnish", to drop into a sentence. */
+export function onOption(o: ServiceOption): string {
+  return o.key === 'varnish' && o.version === 'none' ? 'without Varnish' : `on ${o.label}`;
+}
+
 function valueOf(key: DimKey, type: string, version: string): string {
   if (key === 'php' || key === 'varnish') return version;
   if (key === 'webserver') return type;

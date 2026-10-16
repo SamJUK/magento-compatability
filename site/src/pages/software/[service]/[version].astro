@@ -2,7 +2,7 @@
 import Base from '../../../layouts/Base.astro';
 import StatusCell from '../../../components/StatusCell.astro';
 import { getProductNames } from '@lib/matrix.js';
-import { getDimensions, getOption, patchLabel, PRODUCT_LABELS } from '@lib/compat.js';
+import { getDimensions, getOption, onOption, patchLabel, PRODUCT_LABELS } from '@lib/compat.js';
 import { answerFor, stripsFor } from '@lib/service.js';
 import { pairHref } from '@lib/pair.js';
 
@@ -25,8 +25,8 @@ const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1)
 ---
 
 <Base
-  title={`Which Magento & Mage-OS versions support ${option.label}?`}
-  description={`The newest Magento and Mage-OS releases that install on ${option.label}, every release we tested on it, and what the next release needs instead.`}
+  title={option.version === 'none' ? `Which Magento & Mage-OS versions run ${onOption(option)}?` : `Which Magento & Mage-OS versions support ${option.label}?`}
+  description={`The newest Magento and Mage-OS releases that install ${onOption(option)}, every release we tested on it, and what the next release needs instead.`}
   jsonLd={{
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
