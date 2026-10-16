@@ -56,7 +56,7 @@ export interface Pair {
   tested: number;
   verdict: Verdict;
   lastRun: string | null;
-  /** What the vendor's system requirements list for the newest release of the line. */
+  /** Our baseline for the newest release of the line: one of the versions the vendor lists, not the only one. */
   recommended?: ServiceOption;
   failures: PairFailure[];
   /** Titles of the fixes the passing runs needed, when the release as shipped is not enough. */
@@ -151,7 +151,7 @@ export function pairAnswer(p: Pair): string {
   const subject = `${p.label} ${p.line}`;
   const on = onOption(p.option);
   const reason = p.failures[0] ? ` ${p.failures[0].summary}` : '';
-  const listed = p.recommended ? ` ${source} lists ${p.recommended.label} for ${p.newest}.` : '';
+  const listed = p.recommended ? ` Our ${p.newest} baseline uses ${p.recommended.label}, one of the versions ${source} lists.` : '';
   const elsewhere = p.elsewhere ? ` The newest ${p.label} release that installs ${on} is ${p.elsewhere}.` : '';
 
   switch (p.verdict) {
