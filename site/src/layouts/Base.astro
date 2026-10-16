@@ -108,8 +108,17 @@ const nav = [
 
     <footer class="border-t border-line">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-3 justify-between text-sm text-muted">
-        <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
+        <div class="flex flex-col gap-1">
+          <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
+          <span>
+            Release dates: <a href="https://magento.watch/" class="text-muted">magento.watch</a> by
+            <a href="https://github.com/lbajsarowicz" class="text-muted">Lukasz Bajsarowicz</a>, and
+            <a href="https://github.com/mage-os/mageos-magento2/releases" class="text-muted">Mage-OS on GitHub</a>.
+            Support dates: <a href="https://experienceleague.adobe.com/en/docs/commerce-operations/release/planning/lifecycle-policy" class="text-muted">Adobe</a>.
+          </span>
+        </div>
         <span class="flex flex-wrap gap-x-5 gap-y-2">
+          <a href="/magento/supported-versions/" class="text-muted hover:text-ink">Magento support dates</a>
           <a href="/api/" class="text-muted hover:text-ink">API</a>
           <a href="/api/v1/results.json" class="text-muted hover:text-ink">results.json</a>
           <a href={GITHUB_URL} class="text-muted hover:text-ink">GitHub</a>
