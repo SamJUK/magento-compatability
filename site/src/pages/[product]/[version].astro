@@ -71,6 +71,7 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
 ---
 
 <Base
+  updated={summary.lastTested}
   title={`${label} ${version} system requirements & compatibility`}
   description={`${label} ${version}: ${summary.passCount} of ${tested} tested PHP, database, search, cache and queue setups install and pass, and why the rest fail.`}
   jsonLd={{

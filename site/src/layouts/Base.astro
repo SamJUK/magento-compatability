@@ -2,6 +2,9 @@
 import { Font } from 'astro:assets';
 import Logo from '../components/Logo.astro';
 import GridFocus from '../components/GridFocus.astro';
+import { formatDate } from '@lib/compat.js';
+import { getProducts } from '@lib/matrix.js';
+import { getGlobalStats } from '@lib/results.js';
 import '../styles/global.css';
 
 interface Props {
@@ -9,18 +12,23 @@ interface Props {
   description?: string;
   /** schema.org objects for a JSON-LD script in the head. */
   jsonLd?: object | object[];
+  /** The page's newest test run; the sitemap's lastmod reads it back. */
+  updated?: string | null;
 }
 
 const {
   title,
   description = 'Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.',
   jsonLd,
+  updated,
 } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const path = Astro.url.pathname;
 // Lookout RUM page group: the route pattern, so "/[product]/[version]" -> "product-version".
 const pageGroup = Astro.routePattern === '/' ? 'home' : Astro.routePattern.replace(/[[\]]/g, '').slice(1).replaceAll('/', '-');
 const GITHUB_URL = 'https://github.com/samjuk/magento-compatability';
+const stats = getGlobalStats();
+const releaseCount = getProducts().reduce((n, p) => n + p.versions.length, 0);
 
 const nav = [
   { href: '/check/', label: 'Will it run?' },
@@ -44,7 +52,12 @@ const nav = [
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonicalURL} />
-    <meta name="twitter:card" content="summary" />
+    {updated && <meta property="og:updated_time" content={updated} />}
+    <meta property="og:image" content={new URL('/og.png', Astro.site)} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="magento.works: will your Magento release run on your stack? A grid of passing and failing test runs." />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd).replaceAll('<', '\\u003c')} />}
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -55,8 +68,9 @@ const nav = [
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <Font cssVariable="--font-bricolage" preload />
-    <Font cssVariable="--font-plex-sans" preload />
+    {/* Only the faces the first paint needs: headings and body text. */}
+    <Font cssVariable="--font-bricolage" preload={[{ weight: 700 }, { weight: 800 }]} />
+    <Font cssVariable="--font-plex-sans" preload={[{ weight: 400 }]} />
     <Font cssVariable="--font-plex-mono" />
   </head>
   <body class="min-h-screen flex flex-col bg-ground text-ink font-sans antialiased">
@@ -92,7 +106,6 @@ const nav = [
               <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" />
             </svg>
           </button>
-          <span class="ml-2 px-2.5 py-1 rounded-full bg-sunken text-muted text-xs font-semibold">Alpha</span>
           {import.meta.env.DEV && (
             <button id="dev-refresh-btn" type="button" title="Re-read matrix.yml and results (dev only)" class="ml-2 px-2.5 py-1 rounded-md text-xs font-semibold border border-line text-muted hover:text-ink cursor-pointer">
               Refresh data
@@ -108,7 +121,7 @@ const nav = [
 
     <footer class="border-t border-line">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-3 justify-between text-sm text-muted">
-        <span>Not affiliated with Adobe or the Mage-OS Association. Alpha: data may be incomplete.</span>
+        <span>{`Not affiliated with Adobe or the Mage-OS Association. ${stats.total.toLocaleString('en-GB')} installs of ${releaseCount} releases, last run ${formatDate(stats.lastRun)}. Untested means we have not run it, not that it fails.`}</span>
         <span class="flex flex-wrap gap-x-5 gap-y-2">
           <a href="/api/" class="text-muted hover:text-ink">API</a>
           <a href="/api/v1/results.json" class="text-muted hover:text-ink">results.json</a>

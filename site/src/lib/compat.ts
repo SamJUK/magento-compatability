@@ -17,6 +17,8 @@ export interface ServiceOption {
   version: string;
   label: string;
   short: string;
+  /** `mysql-8.0`: major.minor, so a patch bump in matrix.yml keeps the page's URL. */
+  slug: string;
   href: string;
 }
 
@@ -102,8 +104,9 @@ export function option(key: DimKey, type: string, version: string): ServiceOptio
     short = typeLabel;
   } else {
     label = `${typeLabel} ${version}`;
-    short = `${SHORT_TYPE_LABELS[type] ?? typeLabel} ${version.split('.').slice(0, 2).join('.')}`;
+    short = `${SHORT_TYPE_LABELS[type] ?? typeLabel} ${minorOf(version)}`;
   }
+  const slug = `${type}-${minorOf(version)}`;
   return {
     id: `${key}:${valueOf(key, type, version)}`,
     key,
@@ -111,8 +114,16 @@ export function option(key: DimKey, type: string, version: string): ServiceOptio
     version,
     label,
     short,
-    href: `/software/${key}/${type}-${version}/`,
+    slug,
+    href: `/software/${key}/${slug}/`,
   };
+}
+
+const minorOf = (version: string) => version.split('.').slice(0, 2).join('.');
+
+/** "on PHP 8.4", or "without Varnish", to drop into a sentence. */
+export function onOption(o: ServiceOption): string {
+  return o.key === 'varnish' && o.version === 'none' ? 'without Varnish' : `on ${o.label}`;
 }
 
 function valueOf(key: DimKey, type: string, version: string): string {
@@ -152,13 +163,20 @@ export function getDimensions(): Dimension[] {
     label: DIM_LABELS[d.key as DimKey],
     options: [...d.options].sort((a, b) => compareOptions(a, b)),
   }));
+  for (const d of _dimensions) {
+    const seen = new Set<string>();
+    for (const o of d.options) {
+      if (seen.has(o.slug)) throw new Error(`Two ${d.key} versions in matrix.yml share the URL slug ${o.slug}`);
+      seen.add(o.slug);
+    }
+  }
   return _dimensions;
 }
 
 export function getOption(key: string, slug: string): ServiceOption | undefined {
   return getDimensions()
     .find((d) => d.key === key)
-    ?.options.find((o) => `${o.type}-${o.version}` === slug);
+    ?.options.find((o) => o.slug === slug);
 }
 
 function compareOptions(a: ServiceOption, b: ServiceOption): number {

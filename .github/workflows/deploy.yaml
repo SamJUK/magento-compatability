@@ -17,6 +17,8 @@ on:
         required: true
       SWARM_MANAGER_HOST:
         required: true
+      CLOUDFLARE_API_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -52,6 +54,20 @@ jobs:
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 0.0.13, got: $VERSION"; exit 1; }
           ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes "deploy@$HOST" "bin/deploy.sh magentoworks $VERSION" < deploy/stack.yml
+
+      # Cloudflare keeps pages until this runs (site/nginx.conf), so a deploy without it serves the old site. Invalidate,
+      # as infra-swarm-platform's deploy does: stale copies are revalidated on the next request, and can still be served
+      # if the origin is down, where purged ones cannot. No stale-while-revalidate, so nobody gets the old page after.
+      - name: Invalidate Cloudflare's cache
+        env:
+          ZONE: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          [ -n "$ZONE" ] && [ -n "$TOKEN" ] || { echo "::error::set the CLOUDFLARE_ZONE_ID variable and CLOUDFLARE_API_TOKEN secret (Cache Purge on magento.works, which covers invalidation)"; exit 1; }
+          curl -fsS --retry 3 --retry-all-errors -X POST \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            --data '{"purge_everything":true}' \
+            "https://api.cloudflare.com/client/v4/zones/$ZONE/invalidate_cache"
 
       - name: Show the stack on failure
         if: failure()
