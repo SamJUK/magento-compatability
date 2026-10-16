@@ -59,6 +59,8 @@ export const PRODUCT_LABELS: Record<string, string> = {
 };
 
 const TYPE_LABELS: Record<string, string> = {
+  php: 'PHP',
+  varnish: 'Varnish',
   mariadb: 'MariaDB',
   mysql: 'MySQL',
   percona: 'Percona',
@@ -120,6 +122,12 @@ export function option(key: DimKey, type: string, version: string): ServiceOptio
 }
 
 const minorOf = (version: string) => version.split('.').slice(0, 2).join('.');
+
+/** "Elasticsearch and OpenSearch": the kinds of service a dimension covers, for titles. */
+export function dimTypeNames(dim: Dimension): string {
+  const names = [...new Set(dim.options.filter((o) => o.version !== 'none').map((o) => TYPE_LABELS[o.type] ?? o.type))];
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
 
 /** "on PHP 8.4", or "without Varnish", to drop into a sentence. */
 export function onOption(o: ServiceOption): string {

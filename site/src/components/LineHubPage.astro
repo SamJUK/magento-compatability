@@ -1,0 +1,110 @@
+---
+import Base from '../layouts/Base.astro';
+import StatusCell from './StatusCell.astro';
+import { formatDate, getDimensions, getLines, patchLabel, type DimKey } from '@lib/compat.js';
+import { getLineHub, HUB_DIMS, hubAnswer, hubQuestion, lineHubHref } from '@lib/hub.js';
+
+interface Props {
+  product: string;
+  line: string;
+  dimKey: DimKey;
+}
+
+const { product, line, dimKey } = Astro.props;
+const hub = getLineHub(product, line, dimKey);
+const question = hubQuestion(hub);
+const answer = hubAnswer(hub);
+const source = product === 'magento' ? 'Adobe' : 'Mage-OS';
+const releases = hub.pairs[0].releases.map((r) => r.version);
+const count = (p: { passing: number; tested: number }) =>
+  p.tested === 0 ? 'Not tested' : p.passing === p.tested ? `All ${p.passing} install` : p.passing === 0 ? 'None install' : `${p.passing} of ${p.tested} install`;
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [{ '@type': 'Question', name: question, acceptedAnswer: { '@type': 'Answer', text: answer } }],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: hub.label, item: new URL(`/${product}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 2, name: `${hub.label} ${line}`, item: new URL(`/${product}/${hub.newest}/`, Astro.site).href },
+      { '@type': 'ListItem', position: 3, name: hub.dim.label, item: new URL(hub.href, Astro.site).href },
+    ],
+  },
+];
+---
+
+<Base title={question} description={answer} jsonLd={jsonLd} updated={hub.lastRun}>
+  <nav class="text-sm text-muted" aria-label="Breadcrumb">
+    <a href={`/${product}/`} class="text-muted">{hub.label}</a>
+    <span> / </span>
+    <a href={`/${product}/${hub.newest}/`} class="text-muted">{line} line</a>
+    <span> / </span>
+    <a href={hub.href} class="text-muted">{hub.dim.label}</a>
+  </nav>
+
+  <h1 class="mt-2 font-display font-extrabold text-4xl sm:text-5xl tracking-tight">{question}</h1>
+
+  <p class="mt-6 rounded-2xl p-6 sm:p-8 text-lg leading-relaxed max-w-4xl bg-sunken text-ink border border-line">{answer}</p>
+
+  <p class="mt-4 text-sm text-muted">
+    {hub.lastRun ? `Last run ${formatDate(hub.lastRun)}. ` : ''}
+    Each run is our baseline stack for the release, picked from {source}'s system requirements, with only the {hub.dim.label.toLowerCase()} swapped, installed in Docker, compiled and put through storefront, checkout and admin browser tests.
+  </p>
+
+  <section class="mt-10" aria-labelledby="versions">
+    <h2 id="versions" class="font-display font-extrabold text-2xl tracking-tight">Every {hub.dim.label.toLowerCase()} version on every {hub.label} {line} release</h2>
+    <div class="mt-3">
+      {hub.pairs.map((p) => (
+        <div class="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)_130px] items-center py-3 border-t border-line">
+          <a href={p.href} class="font-mono font-medium text-ink no-underline hover:text-brand" title={`Does ${hub.label} ${line} run on ${p.option.label}?`}>
+            {p.option.label}
+            {p.option.id === p.recommended?.id && <span class="ml-1 font-sans text-[10px] font-bold uppercase tracking-wider text-muted">baseline</span>}
+          </a>
+          <div class="flex flex-wrap gap-1.5">
+            {p.releases.map(({ version, cell }) => (
+              <StatusCell
+                status={cell.status}
+                recommended={cell.recommended}
+                href={`/${product}/${version}/`}
+                text={patchLabel(product, version)}
+                title={`${hub.label} ${version} on ${p.option.label}: ${cell.status === 'pass' ? 'works' : cell.status === 'fail' ? 'fails' : 'not tested'}`}
+                class="min-w-11 h-9"
+              />
+            ))}
+          </div>
+          <span class="text-sm text-muted sm:text-right">{count(p)}</span>
+        </div>
+      ))}
+    </div>
+    <p class="mt-3 text-sm text-muted">
+      {releases.length} {hub.label} {line} release{releases.length === 1 ? '' : 's'}, oldest first. Each version links to its full answer, each cell to the release page with every run log.
+    </p>
+  </section>
+
+  <div class="mt-12 grid gap-10 lg:grid-cols-2">
+    <section aria-labelledby="services">
+      <h2 id="services" class="font-display font-extrabold text-2xl tracking-tight">Other services for {hub.label} {line}</h2>
+      <ul class="mt-4 flex flex-wrap gap-2">
+        {getDimensions()
+          .filter((d) => HUB_DIMS.includes(d.key) && d.key !== dimKey)
+          .map((d) => (
+            <li><a href={lineHubHref(product, line, d.key)} class="inline-flex items-center min-h-11 px-3 rounded-lg border border-line bg-surface text-ink no-underline hover:border-brand">{d.label}</a></li>
+          ))}
+      </ul>
+    </section>
+    <section aria-labelledby="lines">
+      <h2 id="lines" class="font-display font-extrabold text-2xl tracking-tight">{hub.dim.label} on other {hub.label} lines</h2>
+      <ul class="mt-4 flex flex-wrap gap-2">
+        {getLines(product)
+          .filter((l) => l.line !== line)
+          .map((l) => (
+            <li><a href={lineHubHref(product, l.line, dimKey)} class="inline-flex items-center min-h-11 px-3 rounded-lg border border-line bg-surface font-mono text-sm text-ink no-underline hover:border-brand">{hub.label} {l.line}</a></li>
+          ))}
+      </ul>
+    </section>
+  </div>
+</Base>
