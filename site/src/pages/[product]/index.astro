@@ -2,7 +2,8 @@
 import Base from '../../layouts/Base.astro';
 import StatusCell from '../../components/StatusCell.astro';
 import { getProductNames } from '@lib/matrix.js';
-import { getCells, getDimensions, getLines, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { formatDate, getCells, getDimensions, getLines, PRODUCT_LABELS, STEP_LABELS } from '@lib/compat.js';
+import { getVersionSummary } from '@lib/results.js';
 import { neededWorkarounds } from '@lib/workarounds.js';
 
 export function getStaticPaths() {
@@ -14,6 +15,10 @@ const label = PRODUCT_LABELS[product] ?? product;
 const dims = getDimensions().filter((d) => ['php', 'db', 'search'].includes(d.key));
 const columns = dims.flatMap((d) => d.options.map((o) => ({ ...o, dimLabel: d.label })));
 const lines = getLines(product);
+const latest = lines.map(({ line, releases }) => {
+  const version = releases.at(-1)!.version;
+  return { line, version, tested: getVersionSummary(product, version).lastTested };
+});
 
 const rows = lines.flatMap(({ line, releases }) =>
   releases
@@ -43,7 +48,7 @@ const recPassing = rows.filter((r) => r.cells.some((c) => c.recommended && c.sta
 const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.status !== 'untested'));
 ---
 
-<Base title={`${label} version compatibility matrix`} description={`Every ${label} version against every PHP, MySQL, MariaDB, OpenSearch and Elasticsearch version we test, with an upgrade planner that keeps your services running at each step.`}>
+<Base title={`${label} versions and compatibility matrix`} description={`The latest ${label} release of every line, and every version against every PHP, MySQL, MariaDB, OpenSearch and Elasticsearch version we test, with an upgrade planner that keeps your services running at each step.`}>
   <div class="flex flex-wrap items-end justify-between gap-6">
     <div class="flex flex-col gap-3 max-w-3xl">
       <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Plan a {label} upgrade</h1>
@@ -62,6 +67,22 @@ const recTested = rows.filter((r) => r.cells.some((c) => c.recommended && c.stat
       ))}
     </nav>
   </div>
+
+  <section class="mt-8" aria-labelledby="latest">
+    <h2 id="latest" class="font-display font-bold text-xl">Latest {label} releases</h2>
+    <p class="mt-1 text-muted">The newest {label} release we test is <a href={`/${product}/${latest[0].version}/`} class="font-mono">{latest[0].version}</a>. The latest release of each line:</p>
+    <ul class="mt-3 grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+      {latest.map((l) => (
+        <li>
+          <a href={`/${product}/${l.version}/`} class="flex flex-col rounded-xl border border-line bg-surface px-4 py-3 no-underline text-ink hover:border-brand">
+            <span class="text-xs font-semibold text-muted">{label} {l.line}</span>
+            <span class="font-mono font-semibold">{l.version}</span>
+            {l.tested && <span class="text-xs text-muted">tested {formatDate(l.tested)}</span>}
+          </a>
+        </li>
+      ))}
+    </ul>
+  </section>
 
   <section id="planner" class="mt-8 rounded-2xl bg-panel text-panel-ink p-5 sm:p-7 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]" aria-label="Upgrade planner">
     <div class="flex flex-col gap-3">
