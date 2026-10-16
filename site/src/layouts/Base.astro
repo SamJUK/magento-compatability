@@ -12,12 +12,15 @@ interface Props {
   description?: string;
   /** schema.org objects for a JSON-LD script in the head. */
   jsonLd?: object | object[];
+  /** The page's newest test run; the sitemap's lastmod reads it back. */
+  updated?: string | null;
 }
 
 const {
   title,
   description = 'Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.',
   jsonLd,
+  updated,
 } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const path = Astro.url.pathname;
@@ -49,6 +52,7 @@ const nav = [
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonicalURL} />
+    {updated && <meta property="og:updated_time" content={updated} />}
     <meta name="twitter:card" content="summary" />
     <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd).replaceAll('<', '\\u003c')} />}

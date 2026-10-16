@@ -45,7 +45,7 @@ const jsonLd = [
 ];
 ---
 
-<Base title={question} description={answer} jsonLd={jsonLd}>
+<Base title={question} description={answer} jsonLd={jsonLd} updated={pair.lastRun}>
   <nav class="text-sm text-muted" aria-label="Breadcrumb">
     <a href={`/${product}/`} class="text-muted">{pair.label}</a>
     <span> / </span>

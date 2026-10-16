@@ -9,7 +9,7 @@ const dims = getDimensions();
 const optionCount = dims.reduce((n, d) => n + d.options.length, 0);
 ---
 
-<Base title="Will it run?" description="Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.">
+<Base updated={stats.lastRun} title="Will it run?" description="Pick a Magento or Mage-OS release and a service version. We tell you if it installs, from real Docker runs.">
   <section class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
     <div class="flex flex-col gap-7 min-w-0">
       <p class="text-xs sm:text-sm font-semibold uppercase tracking-widest text-muted">

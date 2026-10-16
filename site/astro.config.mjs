@@ -8,6 +8,7 @@ import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,7 +47,17 @@ export default defineConfig({
   site: 'https://magento.works',
   // Links are emitted with a trailing slash so nginx serves them without a 301 hop.
   trailingSlash: 'always',
-  integrations: [sitemap({ filter: (page) => !page.endsWith('/404/') })],
+  integrations: [
+    sitemap({
+      filter: (page) => !page.endsWith('/404/'),
+      // lastmod is the page's own newest test run (og:updated_time), so it only moves when that page's results do.
+      serialize(item) {
+        const html = fs.readFileSync(path.join(__dirname, 'dist', new URL(item.url).pathname, 'index.html'), 'utf8');
+        const updated = html.match(/<meta property="og:updated_time" content="([^"]+)"/)?.[1];
+        return updated ? { ...item, lastmod: updated } : item;
+      },
+    }),
+  ],
   fonts: [
     {
       provider: fontProviders.fontsource(),
