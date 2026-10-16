@@ -1,0 +1,29 @@
+---
+import Base from '../../layouts/Base.astro';
+import { errorHref, getErrorReport, KNOWN_ERRORS } from '@lib/errors.js';
+
+const errors = KNOWN_ERRORS.map((e) => ({ ...e, report: getErrorReport(e) })).sort((a, b) => b.report.runs - a.report.runs);
+---
+
+<Base
+  title="Magento install errors and what causes them"
+  description="The Magento and Composer errors our test installs hit most, what each one means, and which release and service versions cause it."
+  updated={errors.map((e) => e.report.lastRun).filter(Boolean).sort().at(-1) ?? null}
+>
+  <h1 class="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">Errors we hit</h1>
+  <p class="mt-3 text-lg text-muted max-w-3xl">
+    Every failed install stops on something. These are the messages behind most of ours, what they mean, and the
+    versions that cause them.
+  </p>
+
+  <ul class="mt-8 grid gap-3 max-w-4xl">
+    {errors.map((e) => (
+      <li>
+        <a href={errorHref(e)} class="block rounded-xl border border-line bg-surface p-5 no-underline text-ink hover:border-brand">
+          <span class="font-mono font-semibold break-words">"{e.message}"</span>
+          <span class="mt-1 block text-sm text-muted">{e.report.runs} runs</span>
+        </a>
+      </li>
+    ))}
+  </ul>
+</Base>

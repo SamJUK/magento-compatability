@@ -1,0 +1,82 @@
+---
+import Base from '../../layouts/Base.astro';
+import { formatDate } from '@lib/compat.js';
+import { errorHref, getErrorReport, KNOWN_ERRORS, type KnownError } from '@lib/errors.js';
+
+export function getStaticPaths() {
+  return KNOWN_ERRORS.map((e) => ({ params: { slug: e.slug }, props: { error: e } }));
+}
+
+const { error } = Astro.props as { error: KnownError };
+const report = getErrorReport(error);
+const question = `What does "${error.message}" mean in Magento?`;
+const meaningText = error.meaning.replace(/<[^>]+>/g, '');
+const lines = [...new Set(report.hits.map((h) => h.label))];
+---
+
+<Base
+  title={`"${error.message}" in Magento: what it means and which versions hit it`}
+  description={`${meaningText} We hit it on ${report.runs} runs across ${lines.length} release lines.`}
+  updated={report.lastRun}
+  jsonLd={[
+    {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: [{ '@type': 'Question', name: question, acceptedAnswer: { '@type': 'Answer', text: meaningText } }],
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Errors', item: new URL('/errors/', Astro.site).href },
+        { '@type': 'ListItem', position: 2, name: error.message, item: new URL(errorHref(error), Astro.site).href },
+      ],
+    },
+  ]}
+>
+  <nav class="text-sm text-muted" aria-label="Breadcrumb">
+    <a href="/errors/" class="text-muted">Errors</a>
+  </nav>
+
+  <h1 class="mt-2 font-display font-extrabold text-3xl sm:text-4xl tracking-tight break-words">"{error.message}"</h1>
+
+  <p class="mt-6 text-lg leading-relaxed max-w-3xl break-words" set:html={error.meaning} />
+
+  {report.sample && (
+    <section class="mt-8 max-w-4xl" aria-labelledby="log">
+      <h2 id="log" class="text-xs font-bold uppercase tracking-wider text-muted">From one of our run logs</h2>
+      <pre class="mt-2 rounded-xl bg-panel text-panel-ink p-4 font-mono text-sm whitespace-pre-wrap break-words"><code>{report.sample}</code></pre>
+    </section>
+  )}
+
+  <section class="mt-10" aria-labelledby="hits">
+    <h2 id="hits" class="font-display font-extrabold text-2xl tracking-tight">Where we hit it</h2>
+    <p class="mt-2 text-muted">
+      {report.runs} run{report.runs === 1 ? '' : 's'}{report.lastRun ? `, last on ${formatDate(report.lastRun)}` : ''}. Each row links to the full answer and the setups that work instead.
+    </p>
+    <div class="mt-4 overflow-x-auto rounded-2xl border border-line bg-surface">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-line text-left text-muted">
+            <th scope="col" class="p-3 font-semibold">Release line</th>
+            <th scope="col" class="p-3 font-semibold">On</th>
+            <th scope="col" class="p-3 font-semibold">Releases that hit it</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.hits.map((h) => (
+            <tr class="border-b border-line last:border-b-0">
+              <th scope="row" class="p-3 text-left font-mono font-medium whitespace-nowrap">{h.label}</th>
+              <td class="p-3 whitespace-nowrap"><a href={h.href}>{h.option.label}</a></td>
+              <td class="p-3 text-muted">{h.versions.length === h.tested ? `All ${h.tested}` : `${h.versions.length} of ${h.tested}: ${h.versions.join(', ')}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="mt-10 text-muted">
+    <a href="/errors/">Other errors we hit</a>, or <a href="/check/">check a release and service version</a>.
+  </p>
+</Base>

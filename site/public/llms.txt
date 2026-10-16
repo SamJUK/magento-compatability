@@ -13,6 +13,7 @@ Not affiliated with Adobe or the Mage-OS Association.
 - [Magento PHP version compatibility](https://magento.works/software/php/): every release line against every version of one service. Pattern: `/software/{php|db|search|cache|queue|webserver|varnish}/`
 - [Does Magento 2.4.8 run on PHP 8.4?](https://magento.works/magento/2.4.8/php-8.4/): one release line against one service version, with a yes or no up front. Pattern: `/{magento|mageos}/{line}/{type}-{version}/`
 - [Which PHP versions does Magento 2.4.8 support?](https://magento.works/magento/2.4.8/php/): every version of one service on one release line. Pattern: `/{magento|mageos}/{line}/{php|db|search|cache|queue}/`
+- [Errors we hit](https://magento.works/errors/): the Magento and Composer errors behind most failed installs, what each means and which versions cause it
 
 ## API
 

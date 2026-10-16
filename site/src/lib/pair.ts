@@ -21,6 +21,7 @@ import { neededWorkarounds } from './workarounds.js';
 export type Verdict = 'yes' | 'partly' | 'no' | 'untested';
 
 export interface PairFailure {
+  code: string;
   summary: string;
   step: string;
   versions: string[];
@@ -102,7 +103,7 @@ export function getPair(product: string, line: string, option: ServiceOption): P
   for (const r of failing) {
     const f = r.cell.failure;
     if (!f) continue;
-    const g = failures.get(f.code) ?? { summary: f.summary, step: STEP_LABELS[f.step], versions: [] };
+    const g = failures.get(f.code) ?? { code: f.code, summary: f.summary, step: STEP_LABELS[f.step], versions: [] };
     g.versions.push(r.version);
     failures.set(f.code, g);
   }
