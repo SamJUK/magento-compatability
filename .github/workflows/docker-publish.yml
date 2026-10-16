@@ -12,6 +12,7 @@ env:
 jobs:
   build-binaries:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
 
@@ -69,6 +70,7 @@ jobs:
 
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write

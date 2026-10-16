@@ -24,6 +24,7 @@ jobs:
   go-checks:
     name: Go Unit Tests And Builds
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     defaults:
       run:
@@ -51,6 +52,7 @@ jobs:
   site-checks:
     name: Site Build And Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     defaults:
       run:
