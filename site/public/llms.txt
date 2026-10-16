@@ -10,6 +10,7 @@ Not affiliated with Adobe or the Mage-OS Association.
 - [Magento releases](https://magento.works/magento/): every tested Magento release and upgrade route
 - [Mage-OS releases](https://magento.works/mageos/): every tested Mage-OS release and upgrade route
 - [Services](https://magento.works/software/): how each PHP, database, search, cache and queue version fares across releases
+- [Magento PHP version compatibility](https://magento.works/software/php/): every release line against every version of one service. Pattern: `/software/{php|db|search|cache|queue|webserver|varnish}/`
 - [Does Magento 2.4.8 run on PHP 8.4?](https://magento.works/magento/2.4.8/php-8.4/): one release line against one service version, with a yes or no up front. Pattern: `/{magento|mageos}/{line}/{type}-{version}/`
 - [Which PHP versions does Magento 2.4.8 support?](https://magento.works/magento/2.4.8/php/): every version of one service on one release line. Pattern: `/{magento|mageos}/{line}/{php|db|search|cache|queue}/`
 
