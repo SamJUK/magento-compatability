@@ -52,10 +52,18 @@ func run(matrixPath, out string) error {
 		return fmt.Errorf("mage-os GitHub: %w", err)
 	}
 
+	// A source that drops a version keeps its last known date, so a bad fetch cannot wipe the file.
+	previous := map[string]map[string]string{}
+	if old, err := os.ReadFile(out); err == nil {
+		if err := json.Unmarshal(old, &previous); err != nil {
+			return fmt.Errorf("%s: %w", out, err)
+		}
+	}
+
 	dates := map[string]map[string]string{}
 	sources := map[string]map[string]string{"magento": magento, "mageos": mageos}
 	for _, p := range m.Products {
-		picked, missing := pick(p.Versions, sources[p.Name])
+		picked, missing := pick(p.Versions, sources[p.Name], previous[p.Name])
 		for _, v := range missing {
 			fmt.Fprintf(os.Stderr, "warning: no release date for %s %s\n", p.Name, v)
 		}
@@ -70,11 +78,13 @@ func run(matrixPath, out string) error {
 }
 
 // pick keeps the dates for the versions under test, so the file only changes when one of them does.
-func pick(versions []matrix.ProductVersion, known map[string]string) (map[string]string, []string) {
+func pick(versions []matrix.ProductVersion, known, previous map[string]string) (map[string]string, []string) {
 	picked := map[string]string{}
 	var missing []string
 	for _, v := range versions {
 		if d, ok := known[v.Version]; ok {
+			picked[v.Version] = d
+		} else if d, ok := previous[v.Version]; ok {
 			picked[v.Version] = d
 		} else {
 			missing = append(missing, v.Version)

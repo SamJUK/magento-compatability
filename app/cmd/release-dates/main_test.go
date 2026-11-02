@@ -11,7 +11,7 @@ func TestPickKeepsOnlyTestedVersions(t *testing.T) {
 	versions := []matrix.ProductVersion{{Version: "2.4.8-p5"}, {Version: "2.4.9"}, {Version: "2.4.10"}}
 	known := map[string]string{"2.4.8-p5": "2026-05-12", "2.4.9": "2026-05-12", "2.4.7": "2024-04-09"}
 
-	picked, missing := pick(versions, known)
+	picked, missing := pick(versions, known, nil)
 
 	want := map[string]string{"2.4.8-p5": "2026-05-12", "2.4.9": "2026-05-12"}
 	if !reflect.DeepEqual(picked, want) {
@@ -19,6 +19,22 @@ func TestPickKeepsOnlyTestedVersions(t *testing.T) {
 	}
 	if !reflect.DeepEqual(missing, []string{"2.4.10"}) {
 		t.Errorf("missing = %v, want [2.4.10]", missing)
+	}
+}
+
+func TestPickFallsBackToPreviousDates(t *testing.T) {
+	versions := []matrix.ProductVersion{{Version: "2.4.8"}, {Version: "2.4.9"}}
+	known := map[string]string{"2.4.9": "2026-05-12"}
+	previous := map[string]string{"2.4.8": "2025-04-08", "2.4.9": "2026-01-01"}
+
+	picked, missing := pick(versions, known, previous)
+
+	want := map[string]string{"2.4.8": "2025-04-08", "2.4.9": "2026-05-12"}
+	if !reflect.DeepEqual(picked, want) {
+		t.Errorf("picked = %v, want %v", picked, want)
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
 	}
 }
 
