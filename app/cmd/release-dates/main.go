@@ -149,7 +149,9 @@ func mageOSDates() (map[string]string, error) {
 			} `json:"commit"`
 		}
 		if err := getJSON(mageOSRepo+"/commits/"+t.Name, &commit); err != nil {
-			return nil, err
+			// The previous date for this tag, if any, stands in for it.
+			fmt.Fprintf(os.Stderr, "warning: skipping Mage-OS tag %s: %v\n", t.Name, err)
+			continue
 		}
 		if d, ok := day(commit.Commit.Committer.Date); ok {
 			dates[t.Name] = d
