@@ -71,9 +71,10 @@ const tone = {
   untested: 'border border-dotted border-line text-muted',
 };
 const glyph = { pass: '✓', fail: '✕', untested: '·' };
+// Amber stays light in both themes, so its text is dark in both.
 const phaseBadge: Record<Phase, { label: string; title: string; tone: string }> = {
   standard: { label: 'Supported', title: 'Adobe standard support until', tone: 'bg-pass text-pass-ink' },
-  extended: { label: 'Extended support', title: 'Adobe extended support, for Adobe Commerce customers, until', tone: 'bg-rec text-ink' },
+  extended: { label: 'Extended support', title: 'Adobe extended support, for Adobe Commerce customers, until', tone: 'bg-rec text-[#1b1a17]' },
   security: { label: 'Security fixes only', title: 'Adobe security fixes only, until', tone: 'border border-dashed border-fail-line text-fail-ink' },
   ended: { label: 'End of life', title: 'Adobe support ended', tone: 'bg-fail text-fail-ink' },
 };
