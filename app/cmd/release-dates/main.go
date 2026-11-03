@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
 // release-dates writes the date each Magento and Mage-OS release in matrix.yml came out.
 //
 //	go run ./cmd/release-dates                # from app/, writes ../site/src/data/release-dates.json
