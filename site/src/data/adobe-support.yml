@@ -1,0 +1,22 @@
+# Adobe's support dates for each Magento release line, copied by hand from the Adobe Commerce
+# lifecycle policy. Check it when Adobe ships a new line or the page's "Last update" changes:
+# https://experienceleague.adobe.com/en/docs/commerce-operations/release/planning/lifecycle-policy
+#
+#   standard       end of standard support: quality and security patches
+#   extended       end of extended support, free to Adobe Commerce customers
+#   security_only  end of the one-off security-only period
+#
+# Release dates are not kept here: they come from release-dates.json (go run ./cmd/release-dates).
+# 2.4.2 and 2.4.3 have dropped off Adobe's page. Their 28th November 2022 end date is the one
+# magento.watch (https://magento.watch) by Lukasz Bajsarowicz records.
+policy_url: https://experienceleague.adobe.com/en/docs/commerce-operations/release/planning/lifecycle-policy
+policy_updated: "2026-09-18"
+lines:
+  "2.4.9": { standard: "2029-05-31" }
+  "2.4.8": { standard: "2028-05-31" }
+  "2.4.7": { standard: "2027-05-31", extended: "2028-05-31" }
+  "2.4.6": { standard: "2026-08-11", extended: "2027-08-31", security_only: "2028-05-31" }
+  "2.4.5": { standard: "2025-08-12", extended: "2026-08-11", security_only: "2027-05-31" }
+  "2.4.4": { standard: "2025-04-12", extended: "2026-04-14", security_only: "2027-05-31" }
+  "2.4.3": { standard: "2022-11-28" }
+  "2.4.2": { standard: "2022-11-28" }

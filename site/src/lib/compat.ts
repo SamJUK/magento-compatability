@@ -315,7 +315,7 @@ export function getBaselineResult(product: string, version: string): TestResult 
 
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return 'not yet';
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function formatDuration(seconds: number): string {

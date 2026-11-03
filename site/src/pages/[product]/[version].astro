@@ -6,6 +6,7 @@ import { getProducts, getVersionsForProduct } from '@lib/matrix.js';
 import { getResultsForVersion, getVersionSummary } from '@lib/results.js';
 import { neededWorkarounds, workaroundUsage } from '@lib/workarounds.js';
 import { pairHref } from '@lib/pair.js';
+import { ADOBE_POLICY_URL, releasedOn, supportFor, type Phase } from '@lib/lifecycle.js';
 import {
   formatDate,
   formatDuration,
@@ -56,6 +57,8 @@ for (const c of cells.values()) {
 const failures = [...groups.values()].sort((a, b) => b.cells.length - a.cells.length);
 const failCount = failures.reduce((n, g) => n + g.cells.length, 0);
 const tested = summary.passCount + summary.failCount;
+const released = releasedOn(product, version);
+const support = release ? supportFor(product, release.line) : undefined;
 const source = product === 'magento' ? 'Adobe' : 'Mage-OS';
 const workarounds = workaroundUsage(results);
 const KIND_LABELS: Record<string, string> = { patch: 'Core patch', module: 'Extra module', composer: 'Composer fix' };
@@ -68,6 +71,14 @@ const tone = {
   untested: 'border border-dotted border-line text-muted',
 };
 const glyph = { pass: '✓', fail: '✕', untested: '·' };
+// Amber stays light in both themes, so its text is dark in both.
+const phaseBadge: Record<Phase, { label: string; title: string; tone: string }> = {
+  standard: { label: 'Supported', title: 'Adobe standard support until', tone: 'bg-pass text-pass-ink' },
+  extended: { label: 'Extended support', title: 'Adobe extended support, for Adobe Commerce customers, until', tone: 'bg-rec text-[#1b1a17]' },
+  security: { label: 'Security fixes only', title: 'Adobe security fixes only, until', tone: 'border border-dashed border-fail-line text-fail-ink' },
+  ended: { label: 'End of life', title: 'Adobe support ended', tone: 'bg-fail text-fail-ink' },
+};
+const monthYear = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' });
 ---
 
 <Base
@@ -95,19 +106,32 @@ const glyph = { pass: '✓', fail: '✕', untested: '·' };
         <strong class="text-ink">{summary.passCount} of {tested} tested setups work.</strong>
         {summary.unknownCount > 0 && ` ${summary.unknownCount} not tested yet.`}
         {' '}Last run {formatDate(summary.lastTested)}.
+        {released && ` Released ${formatDate(released)}.`}
       </p>
     </div>
-    {siblings.length > 1 && (
-      <nav class="flex flex-wrap gap-1.5" aria-label={`Other ${release!.line} releases`}>
-        {siblings.map((s) => (
-          <a
-            href={`/${product}/${s.version}/`}
-            aria-current={s.version === version ? 'page' : undefined}
-            class:list={['px-3 py-2 rounded-lg font-mono text-sm no-underline', s.version === version ? 'bg-ink text-ground' : 'border border-line text-ink hover:border-brand']}
-          >{patchLabel(product, s.version)}</a>
-        ))}
-      </nav>
-    )}
+    <div class="flex flex-col items-start sm:items-end gap-2">
+      {support && (
+        <a
+          href={ADOBE_POLICY_URL}
+          rel="noopener"
+          title={`${phaseBadge[support.phase].title} ${formatDate(support.until)}, by Adobe's dates for the ${support.line} line.`}
+          class:list={['inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold no-underline', phaseBadge[support.phase].tone]}
+        >
+          {phaseBadge[support.phase].label}{support.phase !== 'ended' && ` to ${monthYear(support.until)}`}
+        </a>
+      )}
+      {siblings.length > 1 && (
+        <nav class="flex flex-wrap sm:justify-end gap-1.5" aria-label={`Other ${release!.line} releases`}>
+          {siblings.map((s) => (
+            <a
+              href={`/${product}/${s.version}/`}
+              aria-current={s.version === version ? 'page' : undefined}
+              class:list={['px-3 py-2 rounded-lg font-mono text-sm no-underline', s.version === version ? 'bg-ink text-ground' : 'border border-line text-ink hover:border-brand']}
+            >{patchLabel(product, s.version)}</a>
+          ))}
+        </nav>
+      )}
+    </div>
   </div>
 
   {!release ? (
