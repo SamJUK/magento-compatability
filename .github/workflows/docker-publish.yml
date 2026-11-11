@@ -106,6 +106,8 @@ jobs:
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
+          # A cached nginx:alpine layer would otherwise outlive the base image's own security fixes.
+          pull: true
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -127,6 +129,16 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
+      # The image only holds the built site, so the npm packages it was built from need their own SBOM.
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./site
+          format: cyclonedx-json
+          output-file: source.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Record the deploy in Lookout
         env:
           LOOKOUT_DEPLOY_TOKEN: ${{ secrets.LOOKOUT_DEPLOY_TOKEN }}
@@ -137,7 +149,9 @@ jobs:
             -F label="$GITHUB_SHA" -F environment=production \
             -F 'artifacts[0][name]=site' -F 'artifacts[0][kind]=image' \
             -F "artifacts[0][ref]=$IMAGE_REF" -F "artifacts[0][digest]=$IMAGE_DIGEST" \
-            -F 'artifacts[0][sbom]=@site.cdx.json'
+            -F 'artifacts[0][sbom]=@site.cdx.json' \
+            -F 'artifacts[1][name]=source' -F 'artifacts[1][kind]=source' \
+            -F 'artifacts[1][sbom]=@source.cdx.json'
 
   deploy:
     needs: build-and-push

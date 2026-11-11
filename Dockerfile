@@ -25,6 +25,9 @@ RUN pnpm --dir /app/site/ run build -- --mode ${MODE}
 
 # Production Image
 FROM nginx:alpine
+# The base image lags Alpine's security fixes. The floors change the line, so a cached layer is rebuilt for them.
+RUN apk upgrade --no-cache && apk add --no-cache 'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0' 'brotli-libs>=1.2.1-r0' \
+    'libxslt>=1.1.43-r4' 'libexpat>=2.10.0-r0' 'zlib>=1.4-r0'
 COPY --from=build /app/site/dist /usr/share/nginx/html
 COPY site/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
