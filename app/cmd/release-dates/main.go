@@ -1,9 +1,13 @@
 // Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
 // SPDX-License-Identifier: OSL-3.0
 
-// release-dates writes the date each Magento and Mage-OS release in matrix.yml came out.
+// release-dates adds new upstream releases to matrix.yml and writes the date each release in it
+// came out.
 //
-//	go run ./cmd/release-dates                # from app/, writes ../site/src/data/release-dates.json
+//	go run ./cmd/release-dates                # from app/, writes ../matrix.yml and ../site/src/data/release-dates.json
+//
+// New releases come from each product's Composer repository in matrix.yml, the one the harness
+// installs from. A new release copies the baseline of the nearest version below it.
 //
 // Magento dates come from magento.watch by Lukasz Bajsarowicz (https://magento.watch/api).
 // Mage-OS dates come from the mage-os/mageos-magento2 GitHub releases, falling back to the
@@ -32,12 +36,70 @@ var client = &http.Client{Timeout: 30 * time.Second}
 func main() {
 	matrixPath := flag.String("matrix", "../matrix.yml", "path to matrix.yml")
 	out := flag.String("out", "../site/src/data/release-dates.json", "file to write")
+	summary := flag.String("summary", "", "file to write a Markdown list of added releases to")
 	flag.Parse()
 
+	if err := syncVersions(*matrixPath, *summary); err != nil {
+		fmt.Fprintln(os.Stderr, "release-dates:", err)
+		os.Exit(1)
+	}
 	if err := run(*matrixPath, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "release-dates:", err)
 		os.Exit(1)
 	}
+}
+
+func syncVersions(matrixPath, summaryPath string) error {
+	m, err := matrix.Load(matrixPath)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(matrixPath)
+	if err != nil {
+		return err
+	}
+	yml := string(raw)
+
+	var all []added
+	for _, p := range m.Products {
+		upstream, err := upstreamVersions(p)
+		if err != nil {
+			return fmt.Errorf("%s releases: %w", p.Name, err)
+		}
+		var have []string
+		for _, v := range p.Versions {
+			have = append(have, v.Version)
+		}
+		var log []added
+		if yml, log, err = addVersions(yml, p.Name, have, missingVersions(have, p.Skip, upstream)); err != nil {
+			return err
+		}
+		all = append(all, log...)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+
+	if err := os.WriteFile(matrixPath, []byte(yml), 0o644); err != nil {
+		return err
+	}
+	if _, err := matrix.Load(matrixPath); err != nil {
+		return fmt.Errorf("matrix.yml no longer loads after adding releases: %w", err)
+	}
+
+	var md strings.Builder
+	for _, a := range all {
+		fmt.Fprintf(&md, "- %s %s: baseline copied from %s", a.Product, a.Version, a.From)
+		if a.NewLine {
+			md.WriteString(". **New line: check the baseline against the system requirements.**")
+		}
+		md.WriteString("\n")
+	}
+	fmt.Print(md.String())
+	if summaryPath == "" {
+		return nil
+	}
+	return os.WriteFile(summaryPath, []byte(md.String()), 0o644)
 }
 
 func run(matrixPath, out string) error {

@@ -28,6 +28,8 @@ type Product struct {
 	Package  string           `yaml:"package"`
 	Mirror   string           `yaml:"mirror"`
 	Versions []ProductVersion `yaml:"versions"`
+	// Skip lists upstream releases the weekly sync must not add back.
+	Skip []string `yaml:"skip"`
 }
 
 // ProductVersion pairs a version string with its recommended-baseline service

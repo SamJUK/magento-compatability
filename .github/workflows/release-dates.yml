@@ -1,4 +1,4 @@
-name: Refresh Release Dates
+name: Sync Upstream Releases
 
 on:
   schedule:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   refresh:
-    name: Refresh release dates
+    name: Sync upstream releases
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -25,28 +25,59 @@ jobs:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
 
-      - name: Fetch release dates
+      - name: Add new releases and refresh release dates
         working-directory: app
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./cmd/release-dates
+        run: |
+          go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
+          go test ./...
 
-      - name: Open a pull request when dates changed
+      - name: Open a pull request when anything changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet -- site/src/data/release-dates.json; then
-            echo "No new release dates."
+          if git diff --quiet -- matrix.yml site/src/data/release-dates.json; then
+            echo "No new releases or dates."
             exit 0
           fi
-          branch=chore/release-dates
-          git config user.name 'github-actions[bot]'
+          {
+            if [ -s "$RUNNER_TEMP/added.md" ]; then
+              echo 'New upstream releases added to matrix.yml. Each copies the baseline of the version below it. Run a sweep for each before merging. To leave one out for good, add it to the skip list of its product in matrix.yml.'
+              echo
+              cat "$RUNNER_TEMP/added.md"
+              echo
+            fi
+            echo 'Release dates from magento.watch and the Mage-OS GitHub releases. If a new Magento line appears, add its support dates to site/src/data/adobe-support.yml.'
+          } > "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+
+          branch=chore/upstream-releases
+          title='chore: sync upstream releases'
+          bot='github-actions[bot]'
+          # By owner, so a fork's PR from a branch of the same name is never picked up.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$branch" -q '.[0].number')
+          # Never overwrite commits someone added to the open PR, such as a corrected baseline.
+          if [ -n "$pr" ]; then
+            git fetch -q --depth 1 origin "$branch"
+            if [ "$(git log -1 --format=%cn FETCH_HEAD)" != "$bot" ]; then
+              echo "::error::PR #$pr has commits that are not the bot's. Merge or close it so the sync can run."
+              exit 1
+            fi
+            remote=FETCH_HEAD
+          fi
+
+          git config user.name "$bot"
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
-          git commit -am 'chore(site): refresh release dates'
-          git push --force origin "$branch"
-          if [ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" != OPEN ]; then
-            gh pr create --base master --head "$branch" \
-              --title 'chore(site): refresh release dates' \
-              --body 'Weekly refresh from magento.watch and the Mage-OS GitHub releases. If a new Magento line appears, add its support dates to `site/src/data/adobe-support.yml`.'
+          git switch -q -c "$branch"
+          git commit -qam "$title"
+          if [ -n "$pr" ] && [ -n "${remote:-}" ] && git diff --quiet "$remote" HEAD; then
+            echo "PR #$pr already has these changes."
+            exit 0
+          fi
+          git push -q --force origin "$branch"
+          if [ -n "$pr" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" -f title="$title" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+          else
+            gh pr create --base master --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           fi
