@@ -16,7 +16,7 @@ import (
 // Stable releases only: 2.4.8, 2.4.8-p5, 4.0.0. Alphas, betas and RCs never match.
 var stableVersion = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-p([1-9]\d*))?$`)
 
-var preRelease = regexp.MustCompile(`(?i)alpha|beta|rc|dev`)
+var preRelease = regexp.MustCompile(`(?i)^dev-|-dev$|-(alpha|beta|rc)\d*$`)
 
 type added struct {
 	Product, Version, From string

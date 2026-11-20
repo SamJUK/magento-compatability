@@ -55,9 +55,11 @@ jobs:
           branch=chore/upstream-releases
           title='chore: sync upstream releases'
           bot='github-actions[bot]'
-          pr=$(gh pr list --head "$branch" --state open --json number -q '.[0].number')
+          # By owner, so a fork's PR from a branch of the same name is never picked up.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$branch" -q '.[0].number')
           # Never overwrite commits someone added to the open PR, such as a corrected baseline.
-          if [ -n "$pr" ] && git fetch -q --depth 1 origin "$branch"; then
+          if [ -n "$pr" ]; then
+            git fetch -q --depth 1 origin "$branch"
             if [ "$(git log -1 --format=%cn FETCH_HEAD)" != "$bot" ]; then
               echo "::error::PR #$pr has commits that are not the bot's. Merge or close it so the sync can run."
               exit 1

@@ -143,16 +143,17 @@ func TestUpstreamVersions(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"packages":{"vendor/project":[{"version":"2.4.9"},{"version":"2.4.10-alpha1"},{"version":"2.4.9-RC1"},{"version":"dev-2.4-develop"},{"version":"2.4.9.1"}]}}`))
+		w.Write([]byte(`{"packages":{"vendor/project":[{"version":"2.4.9"},{"version":"2.4.10-alpha1"},{"version":"2.4.9-RC1"},{"version":"dev-2.4-develop"},{"version":"2.4.9.1"},{"version":"2.4.9-patch-rc-fix"},{"version":"2.0.0-rc2"},{"version":"2.4-dev"}]}}`))
 	}))
 	defer srv.Close()
 	p := matrix.Product{Mirror: srv.URL + "/", Package: "vendor/project"}
 
-	if _, err := upstreamVersions(p); err == nil || !strings.Contains(err.Error(), "2.4.9.1") {
-		t.Errorf("unknown format: err = %v, want one naming 2.4.9.1", err)
+	_, err := upstreamVersions(p)
+	if err == nil || !strings.Contains(err.Error(), `"2.4.9.1" "2.4.9-patch-rc-fix"]`) {
+		t.Errorf("unknown format: err = %v, want one naming 2.4.9.1 and 2.4.9-patch-rc-fix only", err)
 	}
 
-	p.Skip = []string{"2.4.9.1"}
+	p.Skip = []string{"2.4.9.1", "2.4.9-patch-rc-fix"}
 	got, err := upstreamVersions(p)
 	if err != nil || !reflect.DeepEqual(got, []string{"2.4.9"}) {
 		t.Errorf("with skip: got %v, %v; want [2.4.9]", got, err)
