@@ -4,16 +4,20 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/samjuk/magento-compatability/internal/matrix"
 )
 
 func TestStableVersion(t *testing.T) {
 	for v, want := range map[string]bool{
 		"2.4.8": true, "2.4.8-p5": true, "2.4.10": true, "4.0.0": true,
 		"2.4.10-alpha1": false, "2.4.9-beta1": false, "2.0.0-rc2": false, "dev-main": false,
-		"2.4.8-p5\n": false, `2.4.8"`: false,
+		"2.4.8-p5\n": false, `2.4.8"`: false, "2.4.8-p08": false, "02.4.8": false, "2.4.8-p0": false,
 	} {
 		if got := stableVersion.MatchString(v); got != want {
 			t.Errorf("stableVersion(%q) = %v, want %v", v, got, want)
@@ -34,9 +38,9 @@ func TestMissingVersions(t *testing.T) {
 	have := []string{"2.4.2", "2.4.8-p5", "2.4.9"}
 	upstream := []string{"2.4.0", "2.4.1", "2.4.2", "2.4.10", "2.4.8-p6", "2.4.9", "2.4.4-p14"}
 
-	got := missingVersions(have, upstream)
+	got := missingVersions(have, []string{"2.4.8-p6"}, upstream)
 
-	want := []string{"2.4.4-p14", "2.4.8-p6", "2.4.10"}
+	want := []string{"2.4.4-p14", "2.4.10"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("missingVersions = %v, want %v", got, want)
 	}
@@ -130,5 +134,27 @@ func TestAddVersionsStaysInsideItsProduct(t *testing.T) {
 func TestAddVersionsFailsWithoutAnEntryToCopy(t *testing.T) {
 	if _, _, err := addVersions(testMatrix, "mageos", []string{"9.9.9"}, []string{"10.0.0"}); err == nil {
 		t.Error("expected an error")
+	}
+}
+
+func TestUpstreamVersions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/p2/vendor/project.json" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"packages":{"vendor/project":[{"version":"2.4.9"},{"version":"2.4.10-alpha1"},{"version":"2.4.9-RC1"},{"version":"dev-2.4-develop"},{"version":"2.4.9.1"}]}}`))
+	}))
+	defer srv.Close()
+	p := matrix.Product{Mirror: srv.URL + "/", Package: "vendor/project"}
+
+	if _, err := upstreamVersions(p); err == nil || !strings.Contains(err.Error(), "2.4.9.1") {
+		t.Errorf("unknown format: err = %v, want one naming 2.4.9.1", err)
+	}
+
+	p.Skip = []string{"2.4.9.1"}
+	got, err := upstreamVersions(p)
+	if err != nil || !reflect.DeepEqual(got, []string{"2.4.9"}) {
+		t.Errorf("with skip: got %v, %v; want [2.4.9]", got, err)
 	}
 }

@@ -228,6 +228,7 @@ Pages:
 The weekly `release-dates.yml` workflow also adds new upstream releases to `matrix.yml`.
 It reads each product's Composer repository, adds every stable release newer than the oldest one under test, and copies the baseline of the version below it.
 Its PR flags a new line (2.4.10, Mage-OS 4.1.0): check that baseline against the system requirements and run a sweep before merging.
+To keep a release out of the matrix for good, list it under `skip:` in its product. A version in a format the sync does not know fails the job until it learns the format or the version is skipped.
 
 `site/src/data/release-dates.json` is generated. Magento dates come from
 [magento.watch](https://magento.watch/) by [Lukasz Bajsarowicz](https://github.com/lbajsarowicz),

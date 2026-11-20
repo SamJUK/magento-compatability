@@ -71,7 +71,7 @@ func syncVersions(matrixPath, summaryPath string) error {
 			have = append(have, v.Version)
 		}
 		var log []added
-		if yml, log, err = addVersions(yml, p.Name, have, missingVersions(have, upstream)); err != nil {
+		if yml, log, err = addVersions(yml, p.Name, have, missingVersions(have, p.Skip, upstream)); err != nil {
 			return err
 		}
 		all = append(all, log...)

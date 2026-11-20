@@ -29,7 +29,9 @@ jobs:
         working-directory: app
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
+        run: |
+          go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
+          go test ./...
 
       - name: Open a pull request when anything changed
         env:
@@ -41,7 +43,7 @@ jobs:
           fi
           {
             if [ -s "$RUNNER_TEMP/added.md" ]; then
-              echo 'New upstream releases added to matrix.yml. Each copies the baseline of the version below it. Run a sweep for each before merging.'
+              echo 'New upstream releases added to matrix.yml. Each copies the baseline of the version below it. Run a sweep for each before merging. To leave one out for good, add it to the skip list of its product in matrix.yml.'
               echo
               cat "$RUNNER_TEMP/added.md"
               echo
@@ -53,20 +55,27 @@ jobs:
           branch=chore/upstream-releases
           title='chore: sync upstream releases'
           bot='github-actions[bot]'
-          open=$([ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" = OPEN ] && echo 1 || true)
-          # Never overwrite someone's fixes to the open PR, such as a corrected baseline.
-          if [ -n "$open" ] && git fetch -q --depth 1 origin "$branch" \
-            && [ "$(git log -1 --format=%an FETCH_HEAD)" != "$bot" ]; then
-            echo "::warning::$branch has commits that are not the bot's. Merge or close its PR so the sync can run."
-            exit 0
+          pr=$(gh pr list --head "$branch" --state open --json number -q '.[0].number')
+          # Never overwrite commits someone added to the open PR, such as a corrected baseline.
+          if [ -n "$pr" ] && git fetch -q --depth 1 origin "$branch"; then
+            if [ "$(git log -1 --format=%cn FETCH_HEAD)" != "$bot" ]; then
+              echo "::error::PR #$pr has commits that are not the bot's. Merge or close it so the sync can run."
+              exit 1
+            fi
+            remote=FETCH_HEAD
           fi
+
           git config user.name "$bot"
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
+          git switch -q -c "$branch"
           git commit -qam "$title"
-          git push --force origin "$branch"
-          if [ -n "$open" ]; then
-            gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          if [ -n "$pr" ] && [ -n "${remote:-}" ] && git diff --quiet "$remote" HEAD; then
+            echo "PR #$pr already has these changes."
+            exit 0
+          fi
+          git push -q --force origin "$branch"
+          if [ -n "$pr" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" -f title="$title" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
           else
             gh pr create --base master --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           fi

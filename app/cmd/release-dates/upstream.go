@@ -14,14 +14,17 @@ import (
 )
 
 // Stable releases only: 2.4.8, 2.4.8-p5, 4.0.0. Alphas, betas and RCs never match.
-var stableVersion = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-p(\d+))?$`)
+var stableVersion = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-p([1-9]\d*))?$`)
+
+var preRelease = regexp.MustCompile(`(?i)alpha|beta|rc|dev`)
 
 type added struct {
 	Product, Version, From string
 	NewLine                bool
 }
 
-// upstreamVersions lists the stable releases a product's Composer repository serves.
+// upstreamVersions lists the stable releases a product's Composer repository serves. A version in
+// a format it does not know fails the run, so a change of scheme upstream cannot go unnoticed.
 func upstreamVersions(p matrix.Product) ([]string, error) {
 	url := strings.TrimSuffix(p.Mirror, "/") + "/p2/" + p.Package + ".json"
 	var body struct {
@@ -32,11 +35,17 @@ func upstreamVersions(p matrix.Product) ([]string, error) {
 	if err := getJSON(url, &body); err != nil {
 		return nil, err
 	}
-	var versions []string
+	var versions, unknown []string
 	for _, v := range body.Packages[p.Package] {
-		if stableVersion.MatchString(v.Version) {
+		switch {
+		case stableVersion.MatchString(v.Version):
 			versions = append(versions, v.Version)
+		case !preRelease.MatchString(v.Version) && !slices.Contains(p.Skip, v.Version):
+			unknown = append(unknown, v.Version)
 		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("%s lists versions in an unknown format: %q. Teach stableVersion the format, or add them to skip in matrix.yml", url, unknown)
 	}
 	if len(versions) == 0 {
 		return nil, fmt.Errorf("%s lists no stable versions of %s", url, p.Package)
@@ -45,8 +54,8 @@ func upstreamVersions(p matrix.Product) ([]string, error) {
 }
 
 // missingVersions returns the upstream releases newer than the oldest version under test that
-// the matrix lacks, oldest first, so each new entry can copy the one added before it.
-func missingVersions(have, upstream []string) []string {
+// the matrix lacks and does not skip, oldest first, so each new entry can copy the one before it.
+func missingVersions(have, skip, upstream []string) []string {
 	oldest := ""
 	for _, v := range have {
 		if !stableVersion.MatchString(v) {
@@ -58,7 +67,7 @@ func missingVersions(have, upstream []string) []string {
 	}
 	var missing []string
 	for _, v := range upstream {
-		if !slices.Contains(have, v) && !slices.Contains(missing, v) && compareVersions(v, oldest) > 0 {
+		if !slices.Contains(have, v) && !slices.Contains(skip, v) && !slices.Contains(missing, v) && compareVersions(v, oldest) > 0 {
 			missing = append(missing, v)
 		}
 	}
