@@ -1,4 +1,4 @@
-name: Refresh Release Dates
+name: Sync Upstream Releases
 
 on:
   schedule:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   refresh:
-    name: Refresh release dates
+    name: Sync upstream releases
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -25,28 +25,40 @@ jobs:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
 
-      - name: Fetch release dates
+      - name: Add new releases and refresh release dates
         working-directory: app
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./cmd/release-dates
+        run: go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
 
-      - name: Open a pull request when dates changed
+      - name: Open a pull request when anything changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet -- site/src/data/release-dates.json; then
-            echo "No new release dates."
+          if git diff --quiet -- matrix.yml site/src/data/release-dates.json; then
+            echo "No new releases or dates."
             exit 0
           fi
-          branch=chore/release-dates
+          {
+            if [ -s "$RUNNER_TEMP/added.md" ]; then
+              echo 'New upstream releases added to matrix.yml. Each copies the baseline of the version below it. Run a sweep for each before merging.'
+              echo
+              cat "$RUNNER_TEMP/added.md"
+              echo
+            fi
+            echo 'Release dates from magento.watch and the Mage-OS GitHub releases. If a new Magento line appears, add its support dates to site/src/data/adobe-support.yml.'
+          } > "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+
+          branch=chore/upstream-releases
+          title='chore: sync upstream releases'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
-          git commit -am 'chore(site): refresh release dates'
+          git commit -qam "$title"
           git push --force origin "$branch"
-          if [ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" != OPEN ]; then
-            gh pr create --base master --head "$branch" \
-              --title 'chore(site): refresh release dates' \
-              --body 'Weekly refresh from magento.watch and the Mage-OS GitHub releases. If a new Magento line appears, add its support dates to `site/src/data/adobe-support.yml`.'
+          if [ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" = OPEN ]; then
+            gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base master --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           fi
