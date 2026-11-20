@@ -52,12 +52,20 @@ jobs:
 
           branch=chore/upstream-releases
           title='chore: sync upstream releases'
-          git config user.name 'github-actions[bot]'
+          bot='github-actions[bot]'
+          open=$([ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" = OPEN ] && echo 1 || true)
+          # Never overwrite someone's fixes to the open PR, such as a corrected baseline.
+          if [ -n "$open" ] && git fetch -q --depth 1 origin "$branch" \
+            && [ "$(git log -1 --format=%an FETCH_HEAD)" != "$bot" ]; then
+            echo "::warning::$branch has commits that are not the bot's. Merge or close its PR so the sync can run."
+            exit 0
+          fi
+          git config user.name "$bot"
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
           git commit -qam "$title"
           git push --force origin "$branch"
-          if [ "$(gh pr view "$branch" --json state -q .state 2>/dev/null)" = OPEN ]; then
+          if [ -n "$open" ]; then
             gh pr edit "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           else
             gh pr create --base master --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
