@@ -1028,7 +1028,7 @@ services:
     - type: elasticsearch
       version: "8.11.4"
     - type: elasticsearch
-      version: "7.16.3"
+      version: "7.17.28"
     - type: elasticsearch
       version: "7.10.1"
     - type: elasticsearch
@@ -1061,6 +1061,8 @@ services:
       version: "4.3"
     - type: rabbitmq
       version: "4.2"
+    - type: rabbitmq
+      version: "4.1"
     - type: rabbitmq
       version: "3.13"
     - type: rabbitmq
