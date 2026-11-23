@@ -231,7 +231,8 @@ if (is_file("$dir/installed.php")) {
 }
 
 foreach ($missing as $file) {
-    fwrite(STDERR, "[ERROR] Missing Composer autoload file: {$file}\n");
+    // STDERR is undefined when the PHP 8.1 and 8.2 images read a script from stdin.
+    file_put_contents('php://stderr', "[ERROR] Missing Composer autoload file: {$file}\n");
 }
 exit($missing ? 1 : 0);
 PHP
