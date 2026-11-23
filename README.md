@@ -226,8 +226,17 @@ Pages:
 ### New releases, release and support dates
 
 The weekly `release-dates.yml` workflow also adds new upstream releases to `matrix.yml`.
-It reads each product's Composer repository, adds every stable release newer than the oldest one under test, and copies the baseline of the version below it.
-Its PR flags a new line (2.4.10, Mage-OS 4.1.0): check that baseline against the system requirements and run a sweep before merging.
+It reads each product's Composer repository and adds every stable release newer than the oldest one under test.
+A new Mage-OS release copies the baseline of the version below it, so its PR flags a new line (Mage-OS 4.1.0): check that baseline against the system requirements.
+
+Magento baselines follow Adobe's [system-requirements.yml](https://github.com/AdobeDocs/commerce-operations.en/blob/main/_jekyll/_data/system-requirements.yml).
+Each week the sync sets php, db, search, cache, queue and varnish for every Magento version Adobe lists.
+It takes Adobe's first value the `services` list can run, and keeps the current db, search or cache type if Adobe lists it.
+If Adobe lists no version the `services` list can run, a later minor of the same major stands in (Varnish 7.7 for 7.5). If there is none, the value stays as it was and the job fails until the version is added to `services`.
+A new release copies the version below it until Adobe lists it.
+Webserver and Mage-OS are left alone.
+To stop the sync touching a baseline, list the version under `keep_baseline:` in its product.
+Run a sweep for every version in the PR before merging, since a changed baseline changes what is tested.
 To keep a release out of the matrix for good, list it under `skip:` in its product. A version in a format the sync does not know fails the job until it learns the format or the version is skipped.
 
 `site/src/data/release-dates.json` is generated. Magento dates come from

@@ -7,7 +7,11 @@
 //	go run ./cmd/release-dates                # from app/, writes ../matrix.yml and ../site/src/data/release-dates.json
 //
 // New releases come from each product's Composer repository in matrix.yml, the one the harness
-// installs from. A new release copies the baseline of the nearest version below it.
+// installs from. A new Mage-OS release copies the baseline of the nearest version below it.
+//
+// Magento baselines follow Adobe's system requirements (adobe.go): a new release takes Adobe's
+// values, or copies the version below it until Adobe publishes them, and existing baselines are
+// realigned each run unless listed under keep_baseline.
 //
 // Magento dates come from magento.watch by Lukasz Bajsarowicz (https://magento.watch/api).
 // Mage-OS dates come from the mage-os/mageos-magento2 GitHub releases, falling back to the
@@ -20,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,32 +44,67 @@ func main() {
 	summary := flag.String("summary", "", "file to write a Markdown list of added releases to")
 	flag.Parse()
 
-	if err := syncVersions(*matrixPath, *summary); err != nil {
-		fmt.Fprintln(os.Stderr, "release-dates:", err)
-		os.Exit(1)
-	}
-	if err := run(*matrixPath, *out); err != nil {
+	if err := sync(*matrixPath, *out, *summary); err != nil {
 		fmt.Fprintln(os.Stderr, "release-dates:", err)
 		os.Exit(1)
 	}
 }
 
-func syncVersions(matrixPath, summaryPath string) error {
-	m, err := matrix.Load(matrixPath)
+// sync fetches and computes everything before writing any file, so a failed source leaves them all
+// as they were. Adobe values the services list can't run stay as they were and fail the run once
+// everything else is written.
+func sync(matrixPath, out, summaryPath string) error {
+	r, err := syncVersions(matrixPath)
 	if err != nil {
 		return err
+	}
+	m, err := matrix.Parse([]byte(r.yml))
+	if err != nil {
+		return fmt.Errorf("matrix.yml no longer parses after editing: %w", err)
+	}
+	dates, err := releaseDates(m, out)
+	if err != nil {
+		return err
+	}
+	fmt.Print(r.summary)
+	files := map[string]string{matrixPath: r.yml, out: dates}
+	if summaryPath != "" {
+		files[summaryPath] = r.summary
+	}
+	if err := writeAll(files); err != nil {
+		return err
+	}
+	if len(r.gaps) > 0 {
+		return fmt.Errorf("Adobe recommends versions the services list can't run, add them to services in matrix.yml:\n%s", strings.Join(r.gaps, "\n"))
+	}
+	return nil
+}
+
+type synced struct {
+	yml, summary string
+	gaps         []string
+}
+
+func syncVersions(matrixPath string) (synced, error) {
+	m, err := matrix.Load(matrixPath)
+	if err != nil {
+		return synced{}, err
 	}
 	raw, err := os.ReadFile(matrixPath)
 	if err != nil {
-		return err
+		return synced{}, err
 	}
 	yml := string(raw)
+	reqs, err := fetchRequirements()
+	if err != nil {
+		return synced{}, fmt.Errorf("fetching Adobe system requirements: %w", err)
+	}
 
 	var all []added
 	for _, p := range m.Products {
 		upstream, err := upstreamVersions(p)
 		if err != nil {
-			return fmt.Errorf("%s releases: %w", p.Name, err)
+			return synced{}, fmt.Errorf("%s releases: %w", p.Name, err)
 		}
 		var have []string
 		for _, v := range p.Versions {
@@ -72,56 +112,115 @@ func syncVersions(matrixPath, summaryPath string) error {
 		}
 		var log []added
 		if yml, log, err = addVersions(yml, p.Name, have, missingVersions(have, p.Skip, upstream)); err != nil {
-			return err
+			return synced{}, err
 		}
 		all = append(all, log...)
 	}
-	if len(all) == 0 {
-		return nil
+	if m, err = matrix.Parse([]byte(yml)); err != nil {
+		return synced{}, fmt.Errorf("matrix.yml no longer parses after adding releases: %w", err)
 	}
-
-	if err := os.WriteFile(matrixPath, []byte(yml), 0o644); err != nil {
-		return err
+	var newVersions []string
+	for _, a := range all {
+		if a.Product == "magento" {
+			newVersions = append(newVersions, a.Version)
+		}
 	}
-	if _, err := matrix.Load(matrixPath); err != nil {
-		return fmt.Errorf("matrix.yml no longer loads after adding releases: %w", err)
+	var changes []baselineChange
+	var warnings []baselineWarning
+	var keep []string
+	for _, p := range m.Products {
+		if p.Name != "magento" {
+			continue
+		}
+		keep = p.KeepBaseline
+		if yml, changes, warnings, err = applyAdobe(yml, p.Versions, p.KeepBaseline, m.Services, reqs, newVersions); err != nil {
+			return synced{}, err
+		}
+	}
+	var gaps []string
+	for _, w := range warnings {
+		gaps = append(gaps, fmt.Sprintf("- magento %s %s", w.Version, w.Text))
 	}
 
 	var md strings.Builder
 	for _, a := range all {
-		fmt.Fprintf(&md, "- %s %s: baseline copied from %s", a.Product, a.Version, a.From)
-		if a.NewLine {
-			md.WriteString(". **New line: check the baseline against the system requirements.**")
+		fmt.Fprintf(&md, "- %s %s: ", a.Product, a.Version)
+		if _, ok := reqs[a.Version]; ok && a.Product == "magento" && !slices.Contains(keep, a.Version) {
+			md.WriteString("baseline from Adobe's system requirements")
+			if hasWarning(warnings, a.Version) {
+				fmt.Fprintf(&md, ", with some values copied from %s (below)", a.From)
+			}
+		} else {
+			fmt.Fprintf(&md, "baseline copied from %s", a.From)
+			if a.NewLine {
+				md.WriteString(". **New line: check the baseline against the system requirements.**")
+			}
 		}
 		md.WriteString("\n")
 	}
-	fmt.Print(md.String())
-	if summaryPath == "" {
-		return nil
+	if len(changes) > 0 {
+		if md.Len() > 0 {
+			md.WriteString("\n")
+		}
+		md.WriteString("Baselines changed to match Adobe's system requirements:\n\n")
+		for _, c := range changes {
+			fmt.Fprintf(&md, "- magento %s %s: %s to %s\n", c.Version, c.Field, c.From, c.To)
+		}
 	}
-	return os.WriteFile(summaryPath, []byte(md.String()), 0o644)
+	if len(gaps) > 0 {
+		if md.Len() > 0 {
+			md.WriteString("\n")
+		}
+		md.WriteString("**Adobe recommends versions the services list can't run.** Add them to services in matrix.yml on this PR:\n\n")
+		md.WriteString(strings.Join(gaps, "\n") + "\n")
+	}
+	return synced{yml, md.String(), gaps}, nil
 }
 
-func run(matrixPath, out string) error {
-	m, err := matrix.Load(matrixPath)
-	if err != nil {
-		return err
+// writeAll stages every changed file next to its target before renaming any, so a file that
+// can't be written leaves the others as they were.
+func writeAll(files map[string]string) error {
+	staged := map[string]string{}
+	defer func() {
+		for _, tmp := range staged {
+			os.Remove(tmp)
+		}
+	}()
+	for path, content := range files {
+		if old, err := os.ReadFile(path); err == nil && string(old) == content {
+			continue
+		}
+		tmp := path + ".tmp"
+		staged[path] = tmp
+		if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+			return err
+		}
 	}
+	for path, tmp := range staged {
+		if err := os.Rename(tmp, path); err != nil {
+			return err
+		}
+		delete(staged, path)
+	}
+	return nil
+}
 
+// releaseDates returns the new release-dates.json for the versions in m.
+func releaseDates(m *matrix.Matrix, out string) (string, error) {
 	magento, err := magentoDates()
 	if err != nil {
-		return fmt.Errorf("magento.watch: %w", err)
+		return "", fmt.Errorf("magento.watch: %w", err)
 	}
 	mageos, err := mageOSDates()
 	if err != nil {
-		return fmt.Errorf("mage-os GitHub: %w", err)
+		return "", fmt.Errorf("mage-os GitHub: %w", err)
 	}
 
 	// A source that drops a version keeps its last known date, so a bad fetch cannot wipe the file.
 	previous := map[string]map[string]string{}
 	if old, err := os.ReadFile(out); err == nil {
 		if err := json.Unmarshal(old, &previous); err != nil {
-			return fmt.Errorf("%s: %w", out, err)
+			return "", fmt.Errorf("%s: %w", out, err)
 		}
 	}
 
@@ -137,9 +236,9 @@ func run(matrixPath, out string) error {
 
 	body, err := json.MarshalIndent(dates, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.WriteFile(out, append(body, '\n'), 0o644)
+	return string(body) + "\n", nil
 }
 
 // pick keeps the dates for the versions under test, so the file only changes when one of them does.

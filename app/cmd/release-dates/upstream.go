@@ -119,7 +119,7 @@ func insertEntry(yml, product, from, to string) (string, error) {
 			inProduct = strings.TrimSpace(strings.TrimPrefix(line, "  - name:")) == product
 			continue
 		}
-		if !inProduct || (trimmed != `- version: "`+from+`"` && trimmed != "- version: "+from) {
+		if !inProduct || !isVersionLine(trimmed, from) {
 			continue
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " "))
