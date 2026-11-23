@@ -428,6 +428,7 @@ disable_optional_admin_modules() {
     Magento_AdminAnalytics \
     Magento_PageBuilderAdminAnalytics \
     Magento_TwoFactorAuth \
+    MageOS_PasskeyAuth \
     MSP_TwoFactorAuth
   do
     local status_output
@@ -446,30 +447,7 @@ disable_optional_admin_modules() {
   # trees, so clear them up front before disabling the known admin-only modules
   # that interfere with deterministic local E2E flows.
   rm -rf generated/code/* generated/metadata/* 2>/dev/null || true
-
-  # Newer releases add modules that depend on these (Mage-OS 4.0's MageOS_PasskeyAuth needs
-  # Magento_TwoFactorAuth). Magento names them as "Dependent: Dependent->...", so disable those too.
-  local output dependent added
-  for _ in 1 2 3 4 5; do
-    if output="$(bin/magento module:disable "${modules[@]}" --no-interaction 2>&1)"; then
-      echo "${output}"
-      return 0
-    fi
-    added=0
-    while read -r dependent; do
-      if [[ " ${modules[*]} " != *" ${dependent} "* ]]; then
-        echo "Also disabling ${dependent}, which depends on a module above"
-        modules+=("${dependent}")
-        added=1
-      fi
-    done < <(sed -nE 's/^([A-Za-z0-9]+_[A-Za-z0-9]+): [A-Za-z0-9_]+->.*/\1/p' <<<"${output}")
-    if [[ "${added}" -eq 0 ]]; then
-      echo "${output}" >&2
-      return 1
-    fi
-  done
-  echo "${output}" >&2
-  return 1
+  bin/magento module:disable "${modules[@]}" --no-interaction
 }
 
 disable_optional_admin_modules
