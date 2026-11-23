@@ -282,7 +282,7 @@ cd "${MAGENTO_DIR}"
 
 apply_version_fixes
 
-if [[ -d "${VENDOR_CACHE_PATH}/vendor" ]]; then
+if vendor_cache_exists "${VENDOR_CACHE_PATH}"; then
   echo ""
   echo "=== Vendor cache hit — ${VENDOR_CACHE_KEY} ==="
 
@@ -295,15 +295,17 @@ if [[ -d "${VENDOR_CACHE_PATH}/vendor" ]]; then
     fi
   fi
 
-  if [[ -d "${MAGENTO_DIR}/vendor" ]]; then
-    rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
-           "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
-  fi
-
   if ! validate_composer_autoload_files; then
     echo "[WARN] Vendor cache ${VENDOR_CACHE_KEY} is incomplete — invalidating and reinstalling from scratch" >&2
     rm -rf "${MAGENTO_DIR}/vendor"
     vendor_cache_invalidate "${VENDOR_CACHE_PATH}" || true
+  fi
+
+  # Validated first: magento2-base is in installed.php, so removing it beforehand
+  # failed the check and threw the entry away on every hit.
+  if [[ -d "${MAGENTO_DIR}/vendor" ]]; then
+    rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
+           "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
   fi
 else
   echo ""
@@ -454,7 +456,7 @@ disable_optional_admin_modules() {
 disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
-if [[ "${CACHE_SAVE:-1}" == "1" ]] && [[ ! -d "${VENDOR_CACHE_PATH}/vendor" ]] && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
+if [[ "${CACHE_SAVE:-1}" == "1" ]] && ! vendor_cache_exists "${VENDOR_CACHE_PATH}" && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
   if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then

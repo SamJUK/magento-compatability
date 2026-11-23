@@ -133,8 +133,52 @@ test_stale_lock_is_removed() {
   fi
 }
 
+test_save_then_restore_round_trips_through_the_archive() {
+  local cache_path="${TMP_ROOT}/round-trip-cache"
+  local source_dir="${TMP_ROOT}/round-trip-source"
+  local target_dir="${TMP_ROOT}/round-trip-target"
+  mkdir -p "${source_dir}/vendor/acme/pkg" "${source_dir}/app/etc"
+  printf 'vendored\n' > "${source_dir}/vendor/acme/pkg/file.txt"
+  printf 'registration\n' > "${source_dir}/app/etc/NonComposerComponentRegistration.php"
+
+  vendor_cache_save "${cache_path}" "${source_dir}"
+
+  assert_eq "$(ls "${cache_path}")" "${VENDOR_CACHE_ARCHIVE}" "save should leave only the archive"
+  vendor_cache_restore "${cache_path}" "${target_dir}"
+  assert_eq "$(cat "${target_dir}/vendor/acme/pkg/file.txt")" "vendored" "vendor should be restored"
+  assert_eq "$(cat "${target_dir}/app/etc/NonComposerComponentRegistration.php")" "registration" "registration file should be restored"
+}
+
+test_restore_converts_a_directory_entry() {
+  local cache_path="${TMP_ROOT}/legacy-cache"
+  local target_dir="${TMP_ROOT}/legacy-target"
+  mkdir -p "${cache_path}/vendor/acme/pkg" "${cache_path}/app/etc"
+  printf 'legacy\n' > "${cache_path}/vendor/acme/pkg/file.txt"
+  printf 'registration\n' > "${cache_path}/app/etc/NonComposerComponentRegistration.php"
+
+  vendor_cache_restore "${cache_path}" "${target_dir}"
+
+  assert_eq "$(ls "${cache_path}")" "${VENDOR_CACHE_ARCHIVE}" "the directory entry should be replaced by an archive"
+  assert_eq "$(cat "${target_dir}/vendor/acme/pkg/file.txt")" "legacy" "vendor should be restored"
+  assert_eq "$(cat "${target_dir}/app/etc/NonComposerComponentRegistration.php")" "registration" "registration file should be restored"
+}
+
+test_corrupt_archive_restores_as_a_miss() {
+  local cache_path="${TMP_ROOT}/corrupt-cache"
+  local status=0
+  mkdir -p "${cache_path}"
+  printf 'not zstd' > "${cache_path}/${VENDOR_CACHE_ARCHIVE}"
+
+  vendor_cache_restore "${cache_path}" "${TMP_ROOT}/corrupt-target" 2>/dev/null || status=$?
+
+  assert_eq "${status}" "1" "a corrupt archive should restore as a miss"
+}
+
 test_save_waits_and_skips_when_cache_is_populated
 test_restore_waits_until_cache_is_ready
+test_save_then_restore_round_trips_through_the_archive
+test_restore_converts_a_directory_entry
+test_corrupt_archive_restores_as_a_miss
 test_stale_lock_is_removed
 
 echo "vendor cache lock tests passed"
