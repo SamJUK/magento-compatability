@@ -294,15 +294,17 @@ if [[ -d "${VENDOR_CACHE_PATH}/vendor" ]]; then
     fi
   fi
 
-  if [[ -d "${MAGENTO_DIR}/vendor" ]]; then
-    rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
-           "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
-  fi
-
   if ! validate_composer_autoload_files; then
     echo "[WARN] Vendor cache ${VENDOR_CACHE_KEY} is incomplete — invalidating and reinstalling from scratch" >&2
     rm -rf "${MAGENTO_DIR}/vendor"
     vendor_cache_invalidate "${VENDOR_CACHE_PATH}" || true
+  fi
+
+  # Validated first: magento2-base is in installed.php, so removing it beforehand
+  # failed the check and threw the entry away on every hit.
+  if [[ -d "${MAGENTO_DIR}/vendor" ]]; then
+    rm -rf "${MAGENTO_DIR}/vendor/magento/magento2-base" \
+           "${MAGENTO_DIR}/vendor/mage-os/magento2-base"
   fi
 else
   echo ""
