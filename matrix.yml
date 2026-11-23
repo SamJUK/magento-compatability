@@ -8,6 +8,7 @@
 #
 # Baselines sourced from:
 #   Magento — https://experienceleague.adobe.com/en/docs/commerce-operations/installation-guide/system-requirements
+#             (kept in line weekly by app/cmd/release-dates, except webserver)
 #   MageOS  — https://mage-os.org/get-started/system-requirements
 
 products:

@@ -159,3 +159,11 @@ func TestUpstreamVersions(t *testing.T) {
 		t.Errorf("with skip: got %v, %v; want [2.4.9]", got, err)
 	}
 }
+
+func TestInsertEntryMatchesAVersionLineWithAComment(t *testing.T) {
+	yml := "products:\n  - name: magento\n    versions:\n      - version: \"2.4.8\" # note\n        baseline:\n          php: \"8.4\"\n"
+	got, err := insertEntry(yml, "magento", "2.4.8", "2.4.8-p1")
+	if err != nil || !strings.Contains(got, `- version: "2.4.8-p1"`) {
+		t.Errorf("err = %v, got:\n%s", err, got)
+	}
+}

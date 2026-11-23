@@ -4,6 +4,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 	"testing"
 
@@ -53,5 +54,27 @@ func TestDay(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("day(%q) = %q, %v; want %q", in, got, ok, want)
 		}
+	}
+}
+
+func TestWriteAllLeavesEverythingAloneWhenOneFileFails(t *testing.T) {
+	dir := t.TempDir()
+	ok := dir + "/matrix.yml"
+	if err := os.WriteFile(ok, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := writeAll(map[string]string{ok: "new", dir + "/missing/kept.txt": "x"})
+	got, _ := os.ReadFile(ok)
+	if err == nil || string(got) != "old" {
+		t.Errorf("err = %v, matrix.yml = %q", err, got)
+	}
+	if _, err := os.Stat(ok + ".tmp"); !os.IsNotExist(err) {
+		t.Error("left a .tmp file behind")
+	}
+	if err := writeAll(map[string]string{ok: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(ok); string(got) != "new" {
+		t.Errorf("matrix.yml = %q", got)
 	}
 }

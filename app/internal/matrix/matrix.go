@@ -30,6 +30,8 @@ type Product struct {
 	Versions []ProductVersion `yaml:"versions"`
 	// Skip lists upstream releases the weekly sync must not add back.
 	Skip []string `yaml:"skip"`
+	// KeepBaseline lists versions whose baseline the weekly sync must not align with Adobe's.
+	KeepBaseline []string `yaml:"keep_baseline"`
 }
 
 // ProductVersion pairs a version string with its recommended-baseline service
@@ -78,9 +80,18 @@ func Load(path string) (*Matrix, error) {
 	if err != nil {
 		return nil, fmt.Errorf("matrix: reading %s: %w", path, err)
 	}
+	m, err := Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("matrix: parsing %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// Parse parses matrix YAML.
+func Parse(data []byte) (*Matrix, error) {
 	var m Matrix
 	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("matrix: parsing %s: %w", path, err)
+		return nil, err
 	}
 	return &m, nil
 }

@@ -17,21 +17,27 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
 
-      - name: Add new releases and refresh release dates
+      # Fails when Adobe recommends a version the services list can't run, after writing everything
+      # else, so other changes still get their PR and the last step fails the run.
+      - name: Add new releases, align baselines and refresh release dates
+        id: sync
+        continue-on-error: true
         working-directory: app
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
-          go test ./...
+        run: go run ./cmd/release-dates -summary "$RUNNER_TEMP/added.md"
+
+      - name: Test
+        working-directory: app
+        run: go test ./...
 
       - name: Open a pull request when anything changed
         env:
@@ -43,7 +49,7 @@ jobs:
           fi
           {
             if [ -s "$RUNNER_TEMP/added.md" ]; then
-              echo 'New upstream releases added to matrix.yml. Each copies the baseline of the version below it. Run a sweep for each before merging. To leave one out for good, add it to the skip list of its product in matrix.yml.'
+              echo "Changes to matrix.yml. Sweep every changed version before merging. To leave a release out for good, add it to its product's skip list; to stop a baseline being realigned, add it to keep_baseline."
               echo
               cat "$RUNNER_TEMP/added.md"
               echo
@@ -81,3 +87,9 @@ jobs:
           else
             gh pr create --base master --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           fi
+
+      - name: Fail if the sync failed
+        if: steps.sync.outcome == 'failure'
+        run: |
+          echo "::error::The sync failed, see its step. If Adobe recommends a version the services list can't run, add it to services in matrix.yml."
+          exit 1
