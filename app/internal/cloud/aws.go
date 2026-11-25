@@ -39,6 +39,7 @@ type EC2 interface {
 	CreateSecurityGroup(context.Context, *ec2.CreateSecurityGroupInput, ...func(*ec2.Options)) (*ec2.CreateSecurityGroupOutput, error)
 	AuthorizeSecurityGroupIngress(context.Context, *ec2.AuthorizeSecurityGroupIngressInput, ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupIngressOutput, error)
 	RevokeSecurityGroupIngress(context.Context, *ec2.RevokeSecurityGroupIngressInput, ...func(*ec2.Options)) (*ec2.RevokeSecurityGroupIngressOutput, error)
+	DeleteSecurityGroup(context.Context, *ec2.DeleteSecurityGroupInput, ...func(*ec2.Options)) (*ec2.DeleteSecurityGroupOutput, error)
 }
 
 // AWS runs bursts on EC2 in one region, in its default VPC.
@@ -261,6 +262,23 @@ func (a *AWS) Firewall(ctx context.Context, name string, sources []string) (stri
 		}
 	}
 	return id, nil
+}
+
+// DeletePool removes the pool's security group if tagged as ours; one still on an instance, even a recently terminated one, can't go yet.
+func (a *AWS) DeletePool(ctx context.Context, firewall, _ string) error {
+	groups, err := a.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{Filters: []types.Filter{
+		{Name: aws.String("group-name"), Values: []string{firewall}},
+		{Name: aws.String("tag:" + Label), Values: []string{"firewall"}},
+	}})
+	if err != nil {
+		return awsErr(err)
+	}
+	for _, g := range groups.SecurityGroups {
+		if _, err := a.EC2.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: g.GroupId}); err != nil {
+			return fmt.Errorf("aws: security group %s: %w", aws.ToString(g.GroupId), awsErr(err))
+		}
+	}
+	return nil
 }
 
 func tags(labels map[string]string, name string) []types.Tag {

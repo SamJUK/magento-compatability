@@ -60,13 +60,34 @@ func TestConnectAllEndsTheSweepWhenNoWorkerIsLeft(t *testing.T) {
 				<-ctx.Done()
 			}
 		}
-		tunnels := connectAll(ctx, remote, connect, cancel, tc.others)
+		tunnels := connectAll(ctx, remote, connect, cancel, &capacity{local: tc.others})
 		time.Sleep(20 * time.Millisecond)
 		if ended := ctx.Err() != nil; ended != tc.ends {
 			t.Errorf("%+v: ended %v (%v)", tc, ended, context.Cause(ctx))
 		}
 		cancel(nil)
 		tunnels.Wait()
+	}
+}
+
+// A burst's servers can finish what the named workers can't, and the
+// named workers what a burst can't; once both are gone, the sweep ends.
+func TestConnectAllCountsABurstUntilItIsGone(t *testing.T) {
+	b, _, _ := readyBurst(t, 1)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	c := &capacity{burst: b}
+	b.capacity, b.fail = c, cancel
+	connectAll(ctx, map[string]*pool.Worker{"a": {}}, func(context.Context, string, *pool.Worker) {}, cancel, c).Wait()
+	if ctx.Err() != nil {
+		t.Fatalf("ended with a cloud worker left: %v", context.Cause(ctx))
+	}
+	for _, bw := range b.workers {
+		bw.w.Cloud.Created = time.Now().Add(-2 * time.Hour)
+	}
+	b.trim(context.Background(), 1, notDone)
+	if ctx.Err() == nil {
+		t.Fatal("named worker and burst both gone, yet the sweep waits")
 	}
 }
 

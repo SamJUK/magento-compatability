@@ -170,9 +170,8 @@ fi
 `, d, hash, login)
 }
 
-// Stop disables a worker's unit, leaving its files.
-// It waits out a deploy, which a killed coordinator can leave running, so
-// that can't start the unit again.
+// Stop waits out a deploy, which a killed coordinator can leave running
+// and which would start the unit again, then disables the unit.
 func (p *Pool) Stop(ctx context.Context, name string, w *Worker) error {
 	_, err := p.Script(ctx, name, fmt.Sprintf("set -e\nexec 9>'%s/deploy.lock'\n# Longer than a deploy holds it.\ntimeout 3000 flock 9\nsystemctl --user disable --now m2test-worker\n", w.Dir))
 	return err
@@ -225,12 +224,12 @@ func (p *Pool) Tunnel(ctx context.Context, name string, w *Worker, local string,
 			refusal, refused = kind, at
 		}
 		if kind != "" && clock().Sub(refused) >= RefusedFor {
-			return fmt.Errorf("%s refused for %s: %s", kind, RefusedFor, lastLines(out.Bytes(), 2))
+			return fmt.Errorf("%s refused for %s: %s", kind, RefusedFor, LastLines(out.Bytes(), 2))
 		}
 		if time.Since(started) > time.Minute {
 			wait = Backoff[0]
 		}
-		lg.Printf("tunnel to %s down (%v: %s); reconnecting in %s", name, err, lastLines(out.Bytes(), 2), wait)
+		lg.Printf("tunnel to %s down (%v: %s); reconnecting in %s", name, err, LastLines(out.Bytes(), 2), wait)
 		select {
 		case <-ctx.Done():
 			return nil

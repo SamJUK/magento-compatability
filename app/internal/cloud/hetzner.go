@@ -36,17 +36,19 @@ type Server struct {
 	IP     string
 	Status string
 	Labels map[string]string
+	Where  string // Hetzner: its location
 }
 
 type Spec struct {
-	Name     string
-	Type     string
-	Location string
-	Image    string
-	UserData string
-	Labels   map[string]string
-	SSHKey   string
-	Firewall string
+	Name string
+	Type string
+	// Hetzner only: tried in turn while one has no room.
+	Locations []string
+	Image     string
+	UserData  string
+	Labels    map[string]string
+	SSHKey    string
+	Firewall  string
 	// AWS only: the image's root device and its size, and the subnets
 	// tried in turn while a zone has no capacity.
 	RootDevice string
@@ -66,6 +68,9 @@ func (e *APIError) Error() string {
 	p := e.Provider
 	if p == "" {
 		p = "hetzner"
+	}
+	if e.Status == 0 {
+		return fmt.Sprintf("%s: %s: %s", p, e.Code, e.Message)
 	}
 	return fmt.Sprintf("%s: %s (%d): %s", p, e.Code, cmp.Or(e.Sent, e.Status), e.Message)
 }
@@ -92,6 +97,19 @@ func Refused(err error) bool {
 func Locked(err error) bool {
 	var api *APIError
 	return errors.As(err, &api) && (api.Status == 423 || api.Status == 429)
+}
+
+// NoRoom says the location had no room for the server: refused outright,
+// or (Status 0) found only by the create action once it was made.
+func NoRoom(err error) bool {
+	var api *APIError
+	return errors.As(err, &api) && (Refused(err) || api.Status == 0) && (api.Code == "resource_unavailable" || api.Code == "placement_error")
+}
+
+// InUse says a delete was refused because the resource is still on a server just deleted.
+func InUse(err error) bool {
+	var api *APIError
+	return errors.As(err, &api) && (api.Code == "resource_in_use" || api.Code == "DependencyViolation")
 }
 
 type Hetzner struct {
@@ -156,17 +174,21 @@ type hzServer struct {
 			IP string `json:"ip"`
 		} `json:"ipv4"`
 	} `json:"public_net"`
+	Datacenter struct {
+		Location struct {
+			Name string `json:"name"`
+		} `json:"location"`
+	} `json:"datacenter"`
 }
 
 func (s hzServer) server() Server {
-	return Server{ID: strconv.FormatInt(s.ID, 10), Name: s.Name, IP: s.PublicNet.IPv4.IP, Status: s.Status, Labels: s.Labels}
+	return Server{ID: strconv.FormatInt(s.ID, 10), Name: s.Name, IP: s.PublicNet.IPv4.IP, Status: s.Status, Labels: s.Labels, Where: s.Datacenter.Location.Name}
 }
 
 func (h *Hetzner) Create(ctx context.Context, s Spec) (Server, error) {
 	body := map[string]any{
 		"name":        s.Name,
 		"server_type": s.Type,
-		"location":    s.Location,
 		"image":       s.Image,
 		"user_data":   s.UserData,
 		"labels":      s.Labels,
@@ -179,14 +201,37 @@ func (h *Hetzner) Create(ctx context.Context, s Spec) (Server, error) {
 		Action      action
 		NextActions []action `json:"next_actions"`
 	}
-	if err := h.do(ctx, "POST", "/servers", body, &out); err != nil {
+	locations := s.Locations
+	if len(locations) == 0 {
+		locations = []string{""} // Hetzner picks
+	}
+	var err error
+	for i, l := range locations {
+		if l != "" {
+			body["location"] = l
+		}
+		err = h.do(ctx, "POST", "/servers", body, &out)
+		// Only on a refusal: a 5xx may have made one, for findByNonce.
+		roomless := Refused(err) && NoRoom(err)
+		if !roomless {
+			break
+		}
+		if i == len(locations)-1 && i > 0 {
+			err = fmt.Errorf("no room in %s: %w", strings.Join(locations, ", "), err)
+		}
+	}
+	if err != nil {
 		return Server{}, err
 	}
 	// The firewall goes on in a next action: until it has, SSH is open.
-	if err := h.wait(ctx, append([]action{out.Action}, out.NextActions...)); err != nil {
-		return out.Server.server(), fmt.Errorf("server %d made, but %w", out.Server.ID, err)
+	srv := out.Server.server()
+	if l, ok := body["location"].(string); ok && srv.Where == "" {
+		srv.Where = l
 	}
-	return out.Server.server(), nil
+	if err := h.wait(ctx, append([]action{out.Action}, out.NextActions...)); err != nil {
+		return srv, fmt.Errorf("server %d made, but %w", out.Server.ID, err)
+	}
+	return srv, nil
 }
 
 func (h *Hetzner) Get(ctx context.Context, id string) (Server, error) {
@@ -273,6 +318,22 @@ func (h *Hetzner) ServerType(ctx context.Context, serverType, location string) (
 		}
 	}
 	return 0, "", fmt.Errorf("hetzner: %s is not sold in %s", serverType, location)
+}
+
+// ServerTypeIn is ServerType at the dearest of the locations, as a create
+// may land in any of them.
+func (h *Hetzner) ServerTypeIn(ctx context.Context, serverType string, locations []string) (price float64, goarch string, err error) {
+	if len(locations) == 0 {
+		return 0, "", errors.New("hetzner: no location")
+	}
+	for _, l := range locations {
+		p, arch, err := h.ServerType(ctx, serverType, l)
+		if err != nil {
+			return 0, "", err
+		}
+		price, goarch = max(price, p), arch
+	}
+	return price, goarch, nil
 }
 
 func (h *Hetzner) ipv4Price(ctx context.Context, location string) (float64, error) {
@@ -407,10 +468,38 @@ func (h *Hetzner) firewall(ctx context.Context, name string, sources []string) (
 	return made.Firewall.ID, h.wait(ctx, made.Actions)
 }
 
+// DeletePool removes the pool's firewall and SSH key, each only if
+// labelled as ours. The firewall can't go while a server still has it.
+func (h *Hetzner) DeletePool(ctx context.Context, firewall, key string) error {
+	for _, r := range []struct{ kind, name, label string }{{"firewalls", firewall, "firewall"}, {"ssh_keys", key, "pool"}} {
+		var out map[string]json.RawMessage
+		var found []struct {
+			ID     int64             `json:"id"`
+			Labels map[string]string `json:"labels"`
+		}
+		if err := h.do(ctx, "GET", "/"+r.kind+"?"+url.Values{"name": {r.name}}.Encode(), nil, &out); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(out[r.kind], &found); err != nil {
+			return fmt.Errorf("hetzner: listing %s: %w", r.kind, err)
+		}
+		for _, x := range found {
+			if x.Labels[Label] != r.label {
+				return fmt.Errorf("hetzner: %s isn't labelled %s=%s, so it isn't ours to remove", r.name, Label, r.label)
+			}
+			if err := h.do(ctx, "DELETE", "/"+r.kind+"/"+strconv.FormatInt(x.ID, 10), nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("hetzner: %s: %w", r.name, err)
+			}
+		}
+	}
+	return nil
+}
+
 type action struct {
 	ID     int64  `json:"id"`
 	Status string `json:"status"`
 	Error  *struct {
+		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
 }
@@ -438,11 +527,11 @@ func (h *Hetzner) wait(ctx context.Context, actions []action) error {
 			a = out.Action
 		}
 		if a.Status != "success" {
-			msg := a.Status
+			e := &APIError{Code: a.Status, Message: "no reason given"}
 			if a.Error != nil {
-				msg = a.Error.Message
+				e.Code, e.Message = a.Error.Code, a.Error.Message
 			}
-			return fmt.Errorf("hetzner: action %d: %s", a.ID, msg)
+			return fmt.Errorf("action %d: %w", a.ID, e)
 		}
 	}
 	return nil

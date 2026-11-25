@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +64,7 @@ func write(code int, body string) func(http.ResponseWriter, call) {
 	}
 }
 
-const serverJSON = `{"id": 42, "name": "hz-1", "status": "initializing", "labels": {"m2test": "worker"},
+const serverJSON = `{"id": 42, "name": "hz-1", "status": "initializing", "labels": {"m2test": "worker"}, "datacenter": {"location": {"name": "nbg1"}},
 	"public_net": {"ipv4": {"id": 1, "ip": "203.0.113.7", "blocked": false}, "ipv6": null}}`
 
 func init() { ActionPoll = time.Millisecond }
@@ -73,7 +75,7 @@ func TestCreateSendsTheSpec(t *testing.T) {
 		"GET /v1/actions/1": write(200, `{"action": {"id": 1, "status": "success"}}`),
 		"GET /v1/actions/2": write(200, `{"action": {"id": 2, "status": "success"}}`),
 	})
-	s, err := h.Create(context.Background(), Spec{Name: "hz-1", Type: "ccx33", Location: "hel1", Image: "debian-13",
+	s, err := h.Create(context.Background(), Spec{Name: "hz-1", Type: "ccx33", Locations: []string{"hel1"}, Image: "debian-13",
 		UserData: "#cloud-config\n", Labels: map[string]string{"m2test": "worker"}, SSHKey: "7", Firewall: "9"})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +106,7 @@ func TestCreateReportsAServerWhoseFirewallFailed(t *testing.T) {
 		"POST /v1/servers":  write(201, `{"server": `+serverJSON+`, "action": {"id": 1, "status": "success"}, "next_actions": [{"id": 2, "status": "running"}]}`),
 		"GET /v1/actions/2": write(200, `{"action": {"id": 2, "status": "error", "error": {"code": "x", "message": "firewall not applied"}}}`),
 	})
-	s, err := h.Create(context.Background(), Spec{})
+	s, err := h.Create(context.Background(), Spec{Locations: []string{"hel1"}})
 	if err == nil || s.ID != "42" || Refused(err) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
@@ -120,9 +122,26 @@ func TestCreateGivesUpOnAnActionThatNeverEnds(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := h.Create(ctx, Spec{})
+	s, err := h.Create(ctx, Spec{Locations: []string{"hel1"}})
 	if err == nil || s.ID != "42" || ctx.Err() != nil {
 		t.Fatalf("got %+v, %v (outer ctx %v)", s, err, ctx.Err())
+	}
+}
+
+func TestCreateSaysWhenItsActionFoundNoRoom(t *testing.T) {
+	h, _ := fake(t, map[string]func(http.ResponseWriter, call){
+		"POST /v1/servers":  write(201, `{"server": `+strings.Replace(serverJSON, `"datacenter": {"location": {"name": "nbg1"}},`, "", 1)+`, "action": {"id": 1, "status": "running"}}`),
+		"GET /v1/actions/1": write(200, `{"action": {"id": 1, "status": "error", "error": {"code": "resource_unavailable", "message": "resource is currently unavailable"}}}`),
+	})
+	s, err := h.Create(context.Background(), Spec{Locations: []string{"fsn1", "nbg1"}})
+	if !NoRoom(err) || Refused(err) || s.ID != "42" || s.Where != "fsn1" {
+		t.Fatalf("got %+v, %v", s, err)
+	}
+	if !strings.Contains(err.Error(), "action 1: hetzner: resource_unavailable: resource is currently unavailable") {
+		t.Fatalf("message %q", err)
+	}
+	if NoRoom(&APIError{Status: 500, Code: "resource_unavailable"}) || NoRoom(&APIError{Code: "x"}) {
+		t.Fatal("no room without a refusal or the code")
 	}
 }
 
@@ -323,9 +342,11 @@ func TestUserDataIsValidCloudConfig(t *testing.T) {
 	var doc struct {
 		SSHKeys map[string]string `yaml:"ssh_keys"`
 		GenKeys []string          `yaml:"ssh_genkeytypes"`
+		Groups  []string
 		Users   []struct {
-			Name string
-			Keys []string `yaml:"ssh_authorized_keys"`
+			Name   string
+			Groups []string
+			Keys   []string `yaml:"ssh_authorized_keys"`
 		}
 		RunCmd [][]string `yaml:"runcmd"`
 		Files  []struct {
@@ -347,7 +368,14 @@ func TestUserDataIsValidCloudConfig(t *testing.T) {
 		doc.Users[0].Keys[0] != "restrict,port-forwarding "+hostKeys(t).PoolKey {
 		t.Fatalf("users %+v", doc.Users)
 	}
+	// Added later, the group would miss a user manager already running.
+	if !slices.Equal(doc.Groups, []string{"docker"}) || !slices.Equal(doc.Users[0].Groups, []string{"docker"}) {
+		t.Fatalf("m2test must be in docker from its creation: groups %v, user's %v", doc.Groups, doc.Users[0].Groups)
+	}
 	script := doc.RunCmd[0][2]
+	if strings.Contains(script, "usermod") {
+		t.Fatalf("groups changed after creation:\n%s", script)
+	}
 	if !strings.HasSuffix(strings.TrimSpace(script), "touch /var/lib/m2test/"+Provisioned) || doc.RunCmd[0][1] != "-ec" {
 		t.Fatalf("the marker must be the last step of a set -e script:\n%s", script)
 	}
@@ -416,5 +444,149 @@ func TestSSHKeyLeavesAnUnlabelledKey(t *testing.T) {
 	})
 	if _, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 NEW"); err == nil || len(*calls) != 1 {
 		t.Fatalf("%v after %d calls", err, len(*calls))
+	}
+}
+
+func TestDeletePoolRemovesOnlyOurFirewallAndKey(t *testing.T) {
+	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+		"GET /v1/firewalls":      write(200, `{"firewalls": [{"id": 5, "name": "m2test-p", "labels": {"m2test": "firewall"}}], "meta": {"pagination": {"page": 1}}}`),
+		"DELETE /v1/firewalls/5": write(204, ""),
+		"GET /v1/ssh_keys":       write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool-p", "labels": {"m2test": "pool"}}], "meta": {"pagination": {"page": 1}}}`),
+		"DELETE /v1/ssh_keys/3":  write(204, ""),
+	})
+	if err := h.DeletePool(context.Background(), "m2test-p", "m2test-pool-p"); err != nil {
+		t.Fatal(err)
+	}
+	var deleted []string
+	for _, c := range *calls {
+		if c.method == "DELETE" {
+			deleted = append(deleted, c.path)
+		}
+		if c.method == "GET" && !strings.Contains(c.query, "name=m2test-") {
+			t.Errorf("%s asked without a name: %s", c.path, c.query)
+		}
+	}
+	if !slices.Equal(deleted, []string{"/v1/firewalls/5", "/v1/ssh_keys/3"}) {
+		t.Fatalf("deleted %v", deleted)
+	}
+
+	h, calls = fake(t, map[string]func(http.ResponseWriter, call){
+		"GET /v1/firewalls": write(200, `{"firewalls": [{"id": 5, "name": "m2test-p", "labels": {}}]}`),
+	})
+	if err := h.DeletePool(context.Background(), "m2test-p", "m2test-pool-p"); err == nil || len(*calls) != 1 {
+		t.Fatalf("an unlabelled firewall: %v after %d calls", err, len(*calls))
+	}
+}
+
+func TestCreateTriesTheNextLocationOnlyWhileOneHasNoRoom(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		refusal string
+		tries   int
+	}{
+		{412, `{"error": {"code": "resource_unavailable", "message": "error during placement"}}`, 3},
+		{412, `{"error": {"code": "placement_error", "message": "x"}}`, 3},
+		{422, `{"error": {"code": "invalid_input", "message": "x"}}`, 1},
+		{429, `{"error": {"code": "rate_limit_exceeded", "message": "x"}}`, 1},
+	} {
+		posts := 0
+		h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+			"POST /v1/servers": func(w http.ResponseWriter, c call) {
+				posts++
+				if posts < 3 {
+					write(tc.status, tc.refusal)(w, c)
+					return
+				}
+				write(201, `{"server": `+serverJSON+`, "action": {"id": 1, "status": "success"}}`)(w, c)
+			},
+		})
+		s, err := h.Create(context.Background(), Spec{Name: "hz-1", Type: "cx33", Image: "debian-13", UserData: "#cloud-config\n",
+			Labels: map[string]string{"m2test": "worker"}, SSHKey: "7", Firewall: "9", Locations: []string{"hel1", "fsn1", "nbg1"}})
+		var tried []any
+		for _, c := range *calls {
+			tried = append(tried, c.body["location"])
+		}
+		if posts != tc.tries {
+			t.Errorf("%s: tried %v", tc.refusal, tried)
+		}
+		for _, c := range *calls {
+			fw, _ := json.Marshal(c.body["firewalls"])
+			keys, _ := json.Marshal(c.body["ssh_keys"])
+			labels, _ := json.Marshal(c.body["labels"])
+			if c.body["name"] != "hz-1" || c.body["server_type"] != "cx33" || c.body["image"] != "debian-13" || c.body["user_data"] != "#cloud-config\n" ||
+				string(fw) != `[{"firewall":9}]` || string(keys) != `[7]` || string(labels) != `{"m2test":"worker"}` {
+				t.Errorf("a try lost part of the spec: %v", c.body)
+			}
+		}
+		if tc.tries == 3 && (err != nil || s.ID != "42" || s.Where != "nbg1" || !slices.Equal(tried, []any{"hel1", "fsn1", "nbg1"})) {
+			t.Errorf("%s: got %+v %v after %v", tc.refusal, s, err, tried)
+		}
+		if tc.tries == 1 && !Refused(err) {
+			t.Errorf("%s: %v", tc.refusal, err)
+		}
+	}
+	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+		"POST /v1/servers": write(412, `{"error": {"code": "resource_unavailable", "message": "x"}}`),
+	})
+	if _, err := h.Create(context.Background(), Spec{Locations: []string{"hel1", "fsn1"}}); !Refused(err) || len(*calls) != 2 || !strings.Contains(err.Error(), "hel1, fsn1") {
+		t.Fatalf("all full: %v after %d calls", err, len(*calls))
+	}
+	h, calls = fake(t, map[string]func(http.ResponseWriter, call){
+		"POST /v1/servers": write(500, `{"error": {"code": "resource_unavailable", "message": "x"}}`),
+	})
+	if s, err := h.Create(context.Background(), Spec{Locations: []string{"hel1", "fsn1"}}); err == nil || Refused(err) || s.ID != "" || len(*calls) != 1 {
+		t.Fatalf("a server error, which may have made one: %v after %d calls", err, len(*calls))
+	}
+	h, calls = fake(t, map[string]func(http.ResponseWriter, call){
+		"POST /v1/servers": write(201, `{"server": `+serverJSON+`, "action": {"id": 1, "status": "success"}}`),
+	})
+	if _, err := h.Create(context.Background(), Spec{}); err != nil || (*calls)[0].body["location"] != nil {
+		t.Fatalf("no location: %v, sent %v", err, (*calls)[0].body["location"])
+	}
+}
+
+func TestServerTypeInPricesTheDearestLocation(t *testing.T) {
+	types := strings.Replace(serverTypes, `"gross": "0.0952"}`, `"gross": "0.2000"}`, 1)
+	both := strings.Replace(pricing, `[{"location": "hel1", "price_hourly": {"net": "0.0008", "gross": "0.0010"}}]`,
+		`[{"location": "hel1", "price_hourly": {"net": "0.0008", "gross": "0.0010"}}, {"location": "fsn1", "price_hourly": {"net": "0.0008", "gross": "0.0010"}}]`, 1)
+	h, _ := fake(t, map[string]func(http.ResponseWriter, call){"GET /v1/server_types": write(200, types), "GET /v1/pricing": write(200, both)})
+	for _, locs := range [][]string{{"hel1", "fsn1"}, {"fsn1", "hel1"}} {
+		if price, _, err := h.ServerTypeIn(context.Background(), "ccx33", locs); err != nil || math.Abs(price-0.201) > 1e-9 {
+			t.Errorf("%v: got %v %v", locs, price, err)
+		}
+	}
+	if _, _, err := h.ServerTypeIn(context.Background(), "ccx33", []string{"hel1", "ash"}); err == nil {
+		t.Error("a location without the type was accepted")
+	}
+	if _, _, err := h.ServerTypeIn(context.Background(), "ccx33", nil); err == nil {
+		t.Error("no location priced at nothing")
+	}
+}
+
+func TestInUse(t *testing.T) {
+	for _, code := range []string{"resource_in_use", "DependencyViolation"} {
+		if !InUse(fmt.Errorf("x: %w", &APIError{Status: 400, Code: code})) {
+			t.Errorf("%s not in use", code)
+		}
+	}
+	if InUse(&APIError{Status: 409, Code: "conflict"}) || InUse(errors.New("resource_in_use")) {
+		t.Error("in use without the code")
+	}
+}
+
+func TestCreateSaysWhereARefusedThenFullServerWas(t *testing.T) {
+	posts := 0
+	h, _ := fake(t, map[string]func(http.ResponseWriter, call){
+		"POST /v1/servers": func(w http.ResponseWriter, c call) {
+			if posts++; posts == 1 {
+				write(412, `{"error": {"code": "resource_unavailable", "message": "x"}}`)(w, c)
+				return
+			}
+			write(201, `{"server": `+strings.Replace(serverJSON, `"datacenter": {"location": {"name": "nbg1"}},`, "", 1)+`, "action": {"id": 1, "status": "error"}}`)(w, c)
+		},
+	})
+	s, err := h.Create(context.Background(), Spec{Locations: []string{"fsn1", "nbg1", "hel1"}})
+	if s.Where != "nbg1" || !strings.HasSuffix(err.Error(), "hetzner: error: no reason given") || NoRoom(err) {
+		t.Fatalf("got %+v, %v", s, err)
 	}
 }

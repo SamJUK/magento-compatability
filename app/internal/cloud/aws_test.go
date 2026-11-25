@@ -39,6 +39,7 @@ type fakeEC2 struct {
 	EC2       // anything not faked panics
 	run       *ec2.RunInstancesInput
 	runErr    error
+	sgErr     error
 	runErrs   []error // each run in turn, before runErr
 	runs      []*ec2.RunInstancesInput
 	zones     []string          // offering the type
@@ -60,6 +61,8 @@ type fakeEC2 struct {
 	added     []types.IpPermission
 	revokes   int
 	adds      int
+	groupsIn  *ec2.DescribeSecurityGroupsInput
+	deleted   []string
 }
 
 func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
@@ -181,7 +184,8 @@ func (f *fakeEC2) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(
 	return out, nil
 }
 
-func (f *fakeEC2) DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+func (f *fakeEC2) DescribeSecurityGroups(_ context.Context, in *ec2.DescribeSecurityGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+	f.groupsIn = in
 	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: f.groups}, nil
 }
 
@@ -506,6 +510,33 @@ func TestAWSCreateMovesOnFromAZoneWithoutCapacity(t *testing.T) {
 	f = &fakeEC2{runErrs: []error{sdkErr(400, "VcpuLimitExceeded")}}
 	if _, err := (&AWS{EC2: f, RunningWait: time.Second}).Create(context.Background(), s); err == nil || len(f.runs) != 1 {
 		t.Fatalf("vcpu limit: %v after %d runs", err, len(f.runs))
+	}
+}
+
+func (f *fakeEC2) DeleteSecurityGroup(_ context.Context, in *ec2.DeleteSecurityGroupInput, _ ...func(*ec2.Options)) (*ec2.DeleteSecurityGroupOutput, error) {
+	f.deleted = append(f.deleted, aws.ToString(in.GroupId))
+	return &ec2.DeleteSecurityGroupOutput{}, f.sgErr
+}
+
+func TestAWSDeletePoolSaysInUseWhileAnInstanceHoldsTheGroup(t *testing.T) {
+	f := &fakeEC2{groups: []types.SecurityGroup{{GroupId: aws.String("sg-1")}}, sgErr: sdkErr(400, "DependencyViolation")}
+	if err := (&AWS{EC2: f}).DeletePool(context.Background(), "m2test-p", ""); !InUse(err) {
+		t.Fatalf("not in use: %v", err)
+	}
+}
+
+func TestAWSDeletePoolAsksForOurTaggedGroupOnly(t *testing.T) {
+	f := &fakeEC2{groups: []types.SecurityGroup{{GroupId: aws.String("sg-1")}}}
+	if err := (&AWS{EC2: f}).DeletePool(context.Background(), "m2test-p", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"group-name": "m2test-p", "tag:" + Label: "firewall"}
+	got := map[string]string{}
+	for _, fl := range f.groupsIn.Filters {
+		got[aws.ToString(fl.Name)] = strings.Join(fl.Values, ",")
+	}
+	if !maps.Equal(got, want) || !slices.Equal(f.deleted, []string{"sg-1"}) {
+		t.Fatalf("filters %v, deleted %v", got, f.deleted)
 	}
 }
 

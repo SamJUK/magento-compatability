@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -254,12 +253,21 @@ Flags:`)
 
 	var stopWorkers func()
 	if ws != nil {
-		// Local slots or a burst can still finish a sweep the named
-		// workers can't.
-		f := serveWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, maxSlots > 0 || *cloudFlag != "")
+		c := &capacity{local: maxSlots > 0 || len(ws.tokens) > len(ws.remote)}
+		var b *burst
+		if burstN > 0 {
+			// Before any worker starts, so a refusal has nothing to tear down.
+			if b, err = prepareBurst(ctx, logger, src, burstProvider, burstN, *yes); err != nil {
+				fatalf("%v", err)
+			}
+			if b != nil {
+				c.burst, b.capacity = b, c
+			}
+		}
+		f := serveWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, c)
 		stopWorkers = f.wait
-		if *cloudFlag != "" {
-			endBurst := startBurst(ctx, logger, f, src, burstProvider, burstN, *yes)
+		if b != nil {
+			endBurst := b.run(ctx, f, src, cancel)
 			stopWorkers = func() { endBurst(); f.wait() }
 		}
 	}
@@ -426,7 +434,7 @@ type fleet struct {
 	wait    func()
 }
 
-func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string, others bool) *fleet {
+func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string, c *capacity) *fleet {
 	p, tokens, remote := ws.pool, ws.tokens, ws.remote
 	releaseDir := filepath.Join(releases, contract.Release)
 	workarounds, err := coord.LoadWorkarounds(filepath.Join(releaseDir, "docker", "scripts", "workarounds.json"))
@@ -463,6 +471,7 @@ func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log
 		started := time.Now()
 		switch err := p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger); {
 		case err == nil:
+			srv.Deployed(name)
 			logger.Printf("%s: release %.12s ready after %s", name, contract.Release, time.Since(started).Round(time.Second))
 		case errors.Is(err, pool.ErrUnfit):
 			logger.Printf("%s: giving up on it, it gets no work this sweep: %v", name, err)
@@ -473,19 +482,18 @@ func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log
 		}
 		tunnel.Wait()
 	}
-	tunnels := connectAll(ctx, remote, connect, fail, others || len(tokens) > len(remote))
+	tunnels := connectAll(ctx, remote, connect, fail, c)
 	return &fleet{srv: srv, connect: connect, wait: func() { <-served; srv.Wait(); tunnels.Wait() }}
 }
 
 // connectAll connects each named worker; the last to give up ends the sweep when nothing else can run it.
-func connectAll(ctx context.Context, remote map[string]*pool.Worker, connect func(context.Context, string, *pool.Worker), fail context.CancelCauseFunc, others bool) *sync.WaitGroup {
+func connectAll(ctx context.Context, remote map[string]*pool.Worker, connect func(context.Context, string, *pool.Worker), fail context.CancelCauseFunc, c *capacity) *sync.WaitGroup {
 	var tunnels sync.WaitGroup
-	var left atomic.Int32
-	left.Store(int32(len(remote)))
+	c.named.Store(int32(len(remote)))
 	for name, w := range remote {
 		tunnels.Go(func() {
 			connect(ctx, name, w)
-			if left.Add(-1) == 0 && !others {
+			if c.named.Add(-1) == 0 && !c.left() {
 				fail(errors.New("no worker left that can reach this coordinator"))
 			}
 		})

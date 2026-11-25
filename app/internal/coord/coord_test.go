@@ -819,6 +819,24 @@ func TestWorker_PlaywrightSweepNeedsTheImage(t *testing.T) {
 	}
 }
 
+func TestUpload_APlaywrightSweepNeedsPlaywrightRun(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, nil)
+	r.down()
+	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
+	r.start()
+	job := r.claim("tok-a", "req1")
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "rejected" {
+		t.Errorf("Playwright skipped: %s, want rejected", rep.Status)
+	}
+	job = r.claim("tok-a", "req2")
+	ran := goodResult(c, result.StatusPass)
+	ran.Steps["playwright"] = result.Step{Status: result.StatusPass}
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, ran)); rep.Status != "installed" {
+		t.Errorf("control: Playwright run %s", rep.Status)
+	}
+}
+
 func TestUpload_AnInstallCutOffBeforeAnotherSweepIsStale(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through 0500")
@@ -869,24 +887,6 @@ func TestUpload_ARetryWhileTheFirstIsSettlingWaits(t *testing.T) {
 	f.Close()
 	if st := <-first; st != "rejected" {
 		t.Errorf("control: first upload %s", st)
-	}
-}
-
-func TestUpload_APlaywrightSweepNeedsPlaywrightRun(t *testing.T) {
-	c := combo("8.3")
-	r := newRig(t, nil)
-	r.down()
-	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
-	r.start()
-	job := r.claim("tok-a", "req1")
-	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "rejected" {
-		t.Errorf("Playwright skipped: %s, want rejected", rep.Status)
-	}
-	job = r.claim("tok-a", "req2")
-	ran := goodResult(c, result.StatusPass)
-	ran.Steps["playwright"] = result.Step{Status: result.StatusPass}
-	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, ran)); rep.Status != "installed" {
-		t.Errorf("control: Playwright run %s", rep.Status)
 	}
 }
 
@@ -1190,6 +1190,68 @@ func TestClaim_ExpiriesDontBenchAWorker(t *testing.T) {
 	waitFor(t, func() bool { return r.srv.Live() == 0 })
 	if rep := r.claim("tok-a", "after"); rep.State != ClaimJob {
 		t.Errorf("after %d expiries the worker got %s", FailingAfter, rep.State)
+	}
+}
+
+func TestSick_CountsFromTheDeployOrWhileUnhealthy(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	beat := func(why string) {
+		t.Helper()
+		var rep HeartbeatReply
+		if err := NewClient(r.sock, "tok-a").call(context.Background(), "POST", "/heartbeat", time.Second, HeartbeatRequest{Schema: Schema, Unhealthy: why}, &rep); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beat("")
+	time.Sleep(50 * time.Millisecond)
+	if r.srv.Sick("a") != 0 {
+		t.Fatal("sick before its deploy")
+	}
+	r.srv.Deployed("a")
+	time.Sleep(50 * time.Millisecond)
+	if r.srv.Sick("a") < 50*time.Millisecond {
+		t.Fatal("never healthy since its deploy, yet not sick")
+	}
+	beat("")
+	time.Sleep(50 * time.Millisecond)
+	if r.srv.Sick("a") != 0 {
+		t.Fatal("silent after a healthy heartbeat counted as sick")
+	}
+	beat("images: denied")
+	time.Sleep(50 * time.Millisecond)
+	beat("images: still denied")
+	if r.srv.Sick("a") < 50*time.Millisecond {
+		t.Fatal("unhealthy, yet not sick; a changed reason must not restart the count")
+	}
+	r.srv.Deployed("a")
+	if r.srv.Sick("a") < 50*time.Millisecond {
+		t.Fatal("a redeploy restarted an unhealthy run's count")
+	}
+	if r.srv.Sick("b") != 0 {
+		t.Fatal("another worker counted as sick")
+	}
+	var rep HeartbeatReply
+	if err := NewClient(r.sock, "tok-a").call(context.Background(), "POST", "/heartbeat", time.Second, HeartbeatRequest{Schema: Schema, Unhealthy: "under 15GB free on /", Running: []string{"x"}}, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if d := r.srv.Sick("a"); d >= 50*time.Millisecond {
+		t.Errorf("sick for %s while running; want the count to start once idle", d)
+	}
+}
+
+func TestUndeployedCountsFromAddUntilDeployed(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	if r.srv.Undeployed("c") != 0 {
+		t.Fatal("a worker never added counted as undeployed")
+	}
+	r.srv.AddWorker("tok-c", "c")
+	time.Sleep(20 * time.Millisecond)
+	if r.srv.Undeployed("c") < 20*time.Millisecond {
+		t.Fatal("added and not deployed, yet not counted")
+	}
+	r.srv.Deployed("c")
+	if r.srv.Undeployed("c") != 0 {
+		t.Error("still counted once deployed")
 	}
 }
 

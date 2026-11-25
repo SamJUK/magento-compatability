@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/samjuk/magento-compatability/internal/atomicfile"
 )
 
 const DefaultDir = "/var/lib/m2test"
@@ -45,12 +47,12 @@ type Worker struct {
 	Cloud   *Cloud `json:"cloud,omitempty"`
 }
 
-// Cloud marks a worker a burst made, to be destroyed with it. ID is 0 until
+// Cloud marks a worker a burst made, to be destroyed with it. ID is empty until
 // the provider has answered; the nonce finds the server if it never does.
 type Cloud struct {
 	Provider string    `json:"provider"`
 	Region   string    `json:"region,omitempty"`  // AWS only
-	Account  string    `json:"account,omitempty"` // AWS account; Hetzner pool key ID
+	Owner    string    `json:"account,omitempty"` // AWS account, or Hetzner pool key ID (unique across projects)
 	ID       ServerID  `json:"id,omitempty"`
 	Nonce    string    `json:"nonce"`
 	Created  time.Time `json:"created"`
@@ -117,13 +119,23 @@ func (p *Pool) Lock(name string) (*os.File, error) {
 	if !validName.MatchString(name) {
 		return nil, fmt.Errorf("no worker %q: names are lower-case letters, digits and dashes", name)
 	}
-	f, err := os.OpenFile(p.path("worker-"+name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	return p.lock("worker-"+name+".lock", fmt.Sprintf("worker %s is in use by another sweep", name))
+}
+
+// BurstLock is held while a burst runs. It lives with the inventory, as
+// bursts and worker gc can have different state dirs but not two pools.
+func (p *Pool) BurstLock() (*os.File, error) {
+	return p.lock("burst.lock", "a burst is running")
+}
+
+func (p *Pool) lock(file, held string) (*os.File, error) {
+	f, err := os.OpenFile(p.path(file), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("worker %s is in use by another sweep", name)
+		return nil, errors.New(held)
 	}
 	return f, nil
 }
@@ -149,6 +161,17 @@ var (
 	validKeyID    = regexp.MustCompile(`^[0-9]{0,19}$`)
 )
 
+func (c *Cloud) valid() bool {
+	var owner bool
+	switch c.Provider {
+	case "hetzner":
+		owner = c.Region == "" && validKeyID.MatchString(c.Owner)
+	case "aws":
+		owner = ValidRegion(c.Region) && (c.Owner == "" || validAccount.MatchString(c.Owner))
+	}
+	return owner && validNonce.MatchString(c.Nonce) && validServerID.MatchString(string(c.ID))
+}
+
 func (w *Worker) validate(name string) error {
 	switch {
 	case !validName.MatchString(name):
@@ -157,8 +180,7 @@ func (w *Worker) validate(name string) error {
 		return fmt.Errorf("worker %s has no token", name)
 	case !w.Remote():
 		return nil
-	case w.Cloud != nil && (!(w.Cloud.Provider == "hetzner" && w.Cloud.Region == "" && validKeyID.MatchString(w.Cloud.Account) ||
-		w.Cloud.Provider == "aws" && ValidRegion(w.Cloud.Region) && (w.Cloud.Account == "" || validAccount.MatchString(w.Cloud.Account))) || !validNonce.MatchString(w.Cloud.Nonce) || !validServerID.MatchString(string(w.Cloud.ID))):
+	case w.Cloud != nil && !w.Cloud.valid():
 		return fmt.Errorf("worker %s: bad cloud entry", name)
 	case w.Host == "" && w.Cloud.ID != "":
 		return fmt.Errorf("worker %s: cloud server %s has no address", name, w.Cloud.ID)
@@ -271,7 +293,7 @@ func (p *Pool) ID() (string, error) {
 		return "", err
 	}
 	id := hex.EncodeToString(b)
-	return id, writeAtomic(p.path("pool-id"), []byte(id+"\n"))
+	return id, atomicfile.Write(p.path("pool-id"), []byte(id+"\n"), 0o600)
 }
 
 // HostKeyPair makes an ed25519 host key for a server not yet created, so
@@ -338,43 +360,14 @@ func (p *Pool) Save(inv *Inventory) error {
   ControlPath none
   LogLevel ERROR
 `, p.sshPath("id_ed25519"), p.sshPath("known_hosts"))
-	if err := writeAtomic(p.sshPath("known_hosts"), known.Bytes()); err != nil {
+	if err := atomicfile.Write(p.sshPath("known_hosts"), known.Bytes(), 0o600); err != nil {
 		return err
 	}
-	if err := writeAtomic(p.sshPath("config"), cfg.Bytes()); err != nil {
+	if err := atomicfile.Write(p.sshPath("config"), cfg.Bytes(), 0o600); err != nil {
 		return err
 	}
 	// Last, so a failed write above leaves the inventory as it was.
-	return writeAtomic(p.path("workers.json"), data)
-}
-
-func writeAtomic(name string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(name), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	// Synced: a pool ID lost to a power cut would hide its servers from gc.
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), name); err != nil {
-		return err
-	}
-	d, err := os.Open(filepath.Dir(name))
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return atomicfile.Write(p.path("workers.json"), data, 0o600)
 }
 
 func NewToken() (string, error) {
@@ -466,7 +459,7 @@ func (p *Pool) script(ctx context.Context, name, script, wrapper string) ([]byte
 	stdout, stderr := &tail{max: 1 << 16}, &tail{max: 1 << 16}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", name, err, lastLines(stderr.Bytes(), 5))
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", name, err, LastLines(stderr.Bytes(), 5))
 	}
 	return stdout.Bytes(), nil
 }
@@ -511,7 +504,7 @@ func (p *Pool) Upload(ctx context.Context, name, local, path string) error {
 	cmd.Stderr = stderr
 	cmd.Stdout = io.Discard
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("uploading to %s:%s: %w: %s", name, path, err, lastLines(stderr.Bytes(), 5))
+		return fmt.Errorf("uploading to %s:%s: %w: %s", name, path, err, LastLines(stderr.Bytes(), 5))
 	}
 	return nil
 }
@@ -529,9 +522,9 @@ func fileSHA256(name string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// lastLines quotes remote output for a log line, dropping control
+// LastLines quotes remote output for a log line, dropping control
 // characters so a host can't write terminal escapes into it.
-func lastLines(b []byte, n int) string {
+func LastLines(b []byte, n int) string {
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	for i, l := range lines {
 		if len(l) > 500 {

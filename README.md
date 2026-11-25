@@ -110,7 +110,8 @@ The queue checks every uploaded result against the combination it handed out and
 
 ### Cloud bursts
 
-`queue -cloud hetzner:N` rents up to N Hetzner servers for the sweep, sets each up as a worker as it comes up, and destroys them once they are no longer needed: an idle one as soon as nothing is waiting (keeping one until the sweep ends, for late retries), any past `max_age` once its runs finish, and all of them when the sweep stops, Ctrl+C included.
+`queue -cloud hetzner:N` rents up to N Hetzner servers for the sweep, sets each up as a worker as it comes up, and destroys them once they are no longer needed: an idle one as soon as nothing is waiting (keeping one until the sweep ends, for late retries), any past `max_age` once its runs finish, an idle one unhealthy for 10 minutes, or not yet heard from as healthy 10 minutes after its deploy, one whose deploy hasn't succeeded in 90 minutes, every one once `max_burst_cost` is spent (below), and all of them when the sweep stops, Ctrl+C included.
+With no cloud worker left or coming, and no local slots or named workers, the sweep stops; running it again resumes it with a new burst.
 It needs `HCLOUD_TOKEN` and `pool.yml` beside the inventory:
 
 ```yaml
@@ -124,6 +125,14 @@ setup_minutes: 10
 ```
 
 Everything but `ssh_from` has the default shown.
+`location` can be a list, such as `[hel1, fsn1, nbg1]`: each create tries them in turn while Hetzner has no room (`resource_unavailable` or `placement_error`), and the estimate uses the dearest.
+Hetzner sometimes accepts a create and only then finds no room; that server is destroyed before the next location is tried.
+`type` can be a list too, such as `[cx33, cpx32]`: when a type has no room in any location, the next type is tried in every location, and the estimate uses the dearest type and location.
+Types must be x86, as some stacks pin `linux/amd64` images.
+Every create the burst asks for counts as billed by the started hour, until its server's delete is confirmed or the provider refused it, including a server destroyed for having no room and one whose create went unanswered.
+A worker only tries again while another hour keeps that under `max_burst_cost`. Workers failing at once can still pass it, by two server-hours each at most: their first server, which nothing checks, and one more try.
+A worker that gets no room anywhere is not replaced: the burst carries on with the rest.
+Once the hours billed so far, plus the next hour of any server within 5 minutes of it, would pass `max_burst_cost`, every worker gets no more work and is destroyed once its runs finish, and one still setting up is destroyed instead of joining; with `-yes` over the estimate, only `max_age` limits it.
 Before creating anything the queue prints the estimate: each worker billed in whole hours, at Hetzner's gross price for the server and its IPv4 address, as if every one ran to the end.
 Each server gets a host key made on this machine and pinned before it exists, and cloud-init installs Docker, the `m2test` user with only the pool key, and the sshd settings above, and drops bridged container traffic to the metadata service (a host-network container still reaches it).
 Each pool gets a random ID (in `pool-id` beside `pool.yml`), so two machines sharing a project never touch each other's servers.
@@ -138,6 +147,7 @@ aws: {region: eu-west-1, hourly: 0.42, type: m7a.2xlarge, image: debian-13, slot
 
 `region` and `hourly` are required.
 `hourly` is the instance's on-demand price plus its public IPv4 address and root disk, in euros like `max_burst_cost`; the queue can't look it up, so check it against the region's price list.
+The type must be x86, as some stacks pin `linux/amd64` images.
 `image` is `debian-13` (the newest official Debian 13 AMI for the type's architecture) or an AMI ID, which must still be Debian's own.
 Instances go in the region's default VPC (a default subnet in a zone offering the type, moving to the next zone when one has no capacity) with a public address, a gp3 encrypted root disk deleted with them, no key pair, no instance profile, and a metadata service that only answers IMDSv2 tokens one hop away, which bridged containers are past (a host-network container still reaches it).
 A security group named `m2test-<id>` allows SSH from `ssh_from` only, which must be IPv4 here.
@@ -145,10 +155,12 @@ Each one powers itself off an hour past `max_age`, which terminates it, so an in
 The time comes from this machine's clock, so keep it right.
 Each cloud worker records the account it was made in (on Hetzner, the ID of the project's `m2test-pool-<pool>` SSH key, as Hetzner IDs are unique across projects), and `worker gc` leaves alone an entry from another account, or with none recorded, unless its instance is listed by label in this one. Run it with the same credentials or `HCLOUD_TOKEN` as the burst; otherwise set the entry's `cloud.account` in `workers.json`, or remove the entry, as its log line says.
 An existing group or (on Hetzner) firewall by that name is only changed if it carries the `m2test=firewall` tag or label.
-The credentials need `ec2:RunInstances`, `TerminateInstances`, `CreateTags`, the `Describe*` calls for instances, images, instance types and their offerings, VPCs, subnets and security groups, and `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress` and `RevokeSecurityGroupIngress`.
+The credentials need `ec2:RunInstances`, `TerminateInstances`, `CreateTags`, the `Describe*` calls for instances, images, instance types and their offerings, VPCs, subnets and security groups, and `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress` and `RevokeSecurityGroupIngress`, plus `DeleteSecurityGroup` for `worker gc -purge`.
 
 If the queue dies without destroying its servers (a second Ctrl+C, a crash), they stay in the inventory and the next burst refuses to start.
 `builder worker gc` lists them and every server labelled (tagged, on AWS) `m2test=worker,m2test-pool=<id>` that the inventory doesn't know; `-yes` destroys them.
+It refuses while a burst runs on this pool, as that burst destroys its own.
+Bursts reuse the pool's `m2test-<id>` firewall (security group, on AWS) and, on Hetzner, its `m2test-pool-<id>` SSH key; neither costs anything. `worker gc -yes -purge` removes them once no worker is left.
 It checks Hetzner when `HCLOUD_TOKEN` is set or the inventory has Hetzner workers, and AWS in `pool.yml`'s region and every region the inventory has instances in.
 `ssh_from` entries must be CIDRs with no host bits set (`198.51.100.4/32`, not `198.51.100.4/24`).
 

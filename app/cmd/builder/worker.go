@@ -24,15 +24,16 @@ const workerUsage = `Usage: magento-compatibility-builder worker <add|setup|remo
                                           restarts it, stopping any runs it has going
   remove NAME                             stop its unit (and its runs) and forget it
   list
-  gc [-yes]                               destroy cloud workers dead bursts left behind
+  gc [-yes [-purge]]                      destroy cloud workers dead bursts left behind
                                           (needs HCLOUD_TOKEN or aws.region in pool.yml;
-                                          lists them without -yes)
+                                          lists them without -yes); -purge also removes
+                                          the pool's firewall and SSH key
 
 The inventory and the pool's SSH key, config and known hosts live in
 $XDG_CONFIG_HOME/magento-compatibility. A worker host needs Docker, a user
 whose only authorised key is the pool key (printed by add), lingering,
 its dir owned by that user, and in sshd StreamLocalBindUnlink yes,
-AllowStreamLocalForwarding yes, AllowTcpForwarding remote, PermitListen none, ClientAliveInterval 15 and
+AllowStreamLocalForwarding yes or remote, AllowTcpForwarding remote, PermitListen none, ClientAliveInterval 15 and
 ClientAliveCountMax 3.
 `
 
@@ -63,7 +64,9 @@ func runWorker(args []string) {
 	defer cancel()
 	// Before the inventory is read: gc copes with one that won't load.
 	if args[0] == "gc" {
-		workerGC(ctx, p, args[1:])
+		if err := workerGC(ctx, p, args[1:]); err != nil {
+			fatalf("%v", err)
+		}
 		return
 	}
 	inv, err := p.Load()

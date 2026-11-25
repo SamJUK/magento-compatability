@@ -755,7 +755,7 @@ func TestValidateRefusesADirTooLongForTheSocket(t *testing.T) {
 }
 
 func TestLastLinesCapsEachLine(t *testing.T) {
-	got := lastLines([]byte("short\n"+strings.Repeat("x", 70000)), 5)
+	got := LastLines([]byte("short\n"+strings.Repeat("x", 70000)), 5)
 	if len(got) > 600 || !strings.HasPrefix(got, "short | xxx") {
 		t.Fatalf("got %d bytes: %.40q", len(got), got)
 	}
@@ -775,7 +775,7 @@ func TestValidateCloudEntries(t *testing.T) {
 	if err := made.validate("hz-1"); err != nil {
 		t.Fatalf("a made server: %v", err)
 	}
-	made.Cloud.Provider, made.Cloud.Region, made.Cloud.Account, made.Cloud.ID = "aws", "eu-west-1", "111111111111", "i-0123456789abcdef0"
+	made.Cloud.Provider, made.Cloud.Region, made.Cloud.Owner, made.Cloud.ID = "aws", "eu-west-1", "111111111111", "i-0123456789abcdef0"
 	if err := made.validate("aws-1"); err != nil {
 		t.Fatalf("a made instance: %v", err)
 	}
@@ -784,12 +784,12 @@ func TestValidateCloudEntries(t *testing.T) {
 		"provider":           func(w *Worker) { w.Cloud.Provider = "gcp" },
 		"aws without region": func(w *Worker) { w.Cloud.Provider = "aws" },
 		"aws bad region": func(w *Worker) {
-			w.Cloud.Provider, w.Cloud.Region, w.Cloud.Account = "aws", "eu-west-1; x", "111111111111"
+			w.Cloud.Provider, w.Cloud.Region, w.Cloud.Owner = "aws", "eu-west-1; x", "111111111111"
 		},
 		"hetzner region":     func(w *Worker) { w.Cloud.Region = "eu-west-1" },
 		"region in provider": func(w *Worker) { w.Cloud.Provider = "aws eu-west-1" },
-		"aws bad account":    func(w *Worker) { w.Cloud.Provider, w.Cloud.Region, w.Cloud.Account = "aws", "eu-west-1", "12345" },
-		"hetzner account":    func(w *Worker) { w.Cloud.Account = "key-7" },
+		"aws bad account":    func(w *Worker) { w.Cloud.Provider, w.Cloud.Region, w.Cloud.Owner = "aws", "eu-west-1", "12345" },
+		"hetzner account":    func(w *Worker) { w.Cloud.Owner = "key-7" },
 		"id":                 func(w *Worker) { w.Host, w.Cloud.ID = "203.0.113.7", "../42" },
 		"nonce":              func(w *Worker) { w.Cloud.Nonce = "x; reboot" },
 		"no host key":        func(w *Worker) { w.HostKey = "" },

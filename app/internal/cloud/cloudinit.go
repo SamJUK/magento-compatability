@@ -73,9 +73,14 @@ ssh_keys:
   ed25519_public: {{.HostPublic}}
 disable_root: true
 ssh_pwauth: false
+# In docker from the start: the user manager keeps the groups it started
+# with, and the wait for cloud-init logs in (starting it) long before
+# Docker is installed. Docker's package reuses an existing group.
+groups: [docker]
 users:
   - name: m2test
     shell: /bin/sh
+    groups: [docker]
     lock_passwd: true
     ssh_authorized_keys:
       - restrict,port-forwarding {{.PoolKey}}
@@ -125,7 +130,6 @@ runcmd:
       apt-get update
       DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       iptables -C DOCKER-USER -d 169.254.169.254 -j DROP
-      usermod -aG docker m2test
       loginctl enable-linger m2test
       install -d -o m2test -m 0700 {{.Dir}}
       touch {{.Dir}}/{{.Provisioned}}

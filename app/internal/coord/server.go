@@ -37,8 +37,10 @@ type Server struct {
 	stopping  context.Context
 	mu        sync.Mutex
 	live      map[string]*liveAttempt
-	ready     map[string]bool   // said hello with the sweep's release
-	unhealthy map[string]string // worker to reason
+	ready     map[string]bool
+	unhealthy map[string]string
+	sickSince map[string]time.Time // deployed and not yet healthy, or unhealthy
+	added     map[string]time.Time // added and not yet deployed
 	drained   map[string]bool
 	busy      map[string]int
 	settling  map[string]int // taken out of live by uploads still being answered
@@ -62,6 +64,8 @@ func (s *Server) Start(ctx context.Context) error {
 	s.live = map[string]*liveAttempt{}
 	s.ready = map[string]bool{}
 	s.unhealthy = map[string]string{}
+	s.sickSince = map[string]time.Time{}
+	s.added = map[string]time.Time{}
 	s.drained = map[string]bool{}
 	s.busy = map[string]int{}
 	s.settling = map[string]int{}
@@ -91,6 +95,38 @@ func (s *Server) AddWorker(token, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Tokens[token] = name
+	s.added[name] = time.Now()
+}
+
+func (s *Server) Deployed(worker string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.added, worker)
+	// An unhealthy run already under way keeps its start.
+	if s.sickSince[worker].IsZero() {
+		s.sickSince[worker] = time.Now()
+	}
+}
+
+// Sick is how long a worker has been unhealthy, or deployed and never yet healthy.
+// Silence after a healthy heartbeat doesn't count.
+func (s *Server) Sick(worker string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t := s.sickSince[worker]; !t.IsZero() {
+		return time.Since(t)
+	}
+	return 0
+}
+
+// Undeployed is how long since AddWorker a worker has gone without its release deployed.
+func (s *Server) Undeployed(worker string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.added[worker]; ok {
+		return time.Since(t)
+	}
+	return 0
 }
 
 // Drain stops an idle worker getting more work and says whether it did; a busy one is left alone unless always is set.
@@ -296,15 +332,12 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 	}
 	until := time.Now().Add(ClaimWait)
 	for {
+		// Busy from the health check until the job is live, so Drain can't
+		// pass a worker that is being handed one.
+		release := s.hold(worker)
 		s.mu.Lock()
 		ready, healthy := s.ready[worker], s.unhealthy[worker] == "" && !s.drained[worker] && time.Now().After(s.benched[worker])
-		s.busy[worker]++
 		s.mu.Unlock()
-		release := func() {
-			s.mu.Lock()
-			s.busy[worker]--
-			s.mu.Unlock()
-		}
 		if !ready || !healthy || s.stopping.Err() != nil {
 			release()
 			if !ready {
@@ -314,8 +347,6 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 			}
 			return
 		}
-		// Busy from the health check until the job is live, so Drain can't
-		// pass a worker that is being handed one.
 		j, st, err := s.Src.Claim(r.Context(), worker, req.Request)
 		afterClaim()
 		if st == queue.StateJob && err == nil {
@@ -372,6 +403,14 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, worker string
 		s.Log.Printf("%s: unhealthy %q", worker, req.Unhealthy)
 	}
 	s.unhealthy[worker] = req.Unhealthy
+	switch {
+	case req.Unhealthy == "":
+		delete(s.sickSince, worker)
+	case len(req.Running) > 0 || s.sickSince[worker].IsZero():
+		// Counted while idle only: a run can hold the disk down for longer
+		// than trim waits, and frees it when it ends.
+		s.sickSince[worker] = time.Now()
+	}
 	for _, id := range req.Running {
 		a := s.live[id]
 		if a == nil || a.job.Worker != worker {
