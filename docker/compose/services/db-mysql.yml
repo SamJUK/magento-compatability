@@ -1,7 +1,6 @@
 services:
   db:
     image: "mysql:${DB_VERSION:-8.0}"
-    platform: linux/amd64
     command:
       - --log-bin-trust-function-creators=1
       - --character-set-server=utf8mb4

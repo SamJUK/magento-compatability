@@ -82,36 +82,39 @@ func parseHostPort(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-// newCompose builds a Compose from a Combination, pre-resolving all compose
-// file paths.  composeDir is the absolute path to the compose/ directory.
-func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Compose, error) {
+func StackFiles(c matrix.Combination, composeDir string) ([]string, error) {
 	files := []string{filepath.Join(composeDir, "base.yml")}
-
-	addService := func(typ string) error {
+	for _, typ := range []string{c.DBType, c.SearchType, c.CacheType, c.QueueType} {
 		name, ok := composeFileMap[typ]
 		if !ok {
-			return fmt.Errorf("compose: unknown service type %q", typ)
+			return nil, fmt.Errorf("compose: unknown service type %q", typ)
 		}
 		files = append(files, filepath.Join(composeDir, "services", name))
-		return nil
-	}
-
-	if err := addService(c.DBType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.SearchType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.CacheType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.QueueType); err != nil {
-		return nil, err
 	}
 	if c.Varnish != "none" && c.Varnish != "" {
 		files = append(files, filepath.Join(composeDir, "services", "varnish.yml"))
 	}
+	return files, nil
+}
 
+func StackEnv(c matrix.Combination) []string {
+	return []string{
+		"PHP_VERSION=" + c.PHP,
+		"WEBSERVER_TYPE=" + c.WebserverType,
+		"WEBSERVER_VERSION=" + c.WebserverVersion,
+		"DB_VERSION=" + c.DBVersion,
+		"SEARCH_VERSION=" + c.SearchVersion,
+		"CACHE_VERSION=" + c.CacheVersion,
+		"QUEUE_VERSION=" + c.QueueVersion,
+		"VARNISH_VERSION=" + c.Varnish,
+	}
+}
+
+func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Compose, error) {
+	files, err := StackFiles(c, composeDir)
+	if err != nil {
+		return nil, err
+	}
 	projectName := uniqueProjectName(c.ID())
 
 	// Start from the current process environment so that PATH, HOME,
@@ -122,16 +125,9 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		// Docker/Compose endpoint races while still allowing multiple builder
 		// combinations to run concurrently.
 		"COMPOSE_PARALLEL_LIMIT=1",
-		"PHP_VERSION="+c.PHP,
-		"WEBSERVER_TYPE="+c.WebserverType,
-		"WEBSERVER_VERSION="+c.WebserverVersion,
-		"DB_VERSION="+c.DBVersion,
-		"SEARCH_VERSION="+c.SearchVersion,
-		"CACHE_VERSION="+c.CacheVersion,
-		"QUEUE_VERSION="+c.QueueVersion,
-		"VARNISH_VERSION="+c.Varnish,
 		"WEBSERVER_PORT=0",
 	)
+	env = append(env, StackEnv(c)...)
 	env = append(env, extraEnv...)
 
 	return &Compose{

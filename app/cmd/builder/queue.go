@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/samjuk/magento-compatability/internal/coord"
+	"github.com/samjuk/magento-compatability/internal/images"
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/runner"
@@ -97,7 +98,12 @@ Flags:`)
 		fatalf("%v", err)
 	}
 	defer lg.Close()
-	src, err := queue.NewLocal(lg, sel.resultsDir, combos, sel.contract(), *fresh && !*status)
+	contract := sel.contract()
+	releases := filepath.Join(stateDir, "releases")
+	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, *workersFile != "" && !*status, releases); err != nil && !*status {
+		fatalf("%v", err)
+	}
+	src, err := queue.NewLocal(lg, sel.resultsDir, combos, contract, *fresh && !*status)
 	if err != nil && !(*status && errors.Is(err, queue.ErrContractChanged)) {
 		fatalf("%v", err)
 	}
@@ -146,6 +152,29 @@ Flags:`)
 
 	base := sel.runConfig()
 	base.Force = true
+	if contract.Release != "" {
+		logger.Printf("running release %s", contract.Release)
+		dir := filepath.Join(releases, contract.Release)
+		base.ComposeDir = filepath.Join(dir, "docker", "compose")
+		if maxSlots > 0 {
+			// Local slots run what workers run: pinned images, and
+			// Playwright in the release's image.
+			m, err := images.Load(dir)
+			if err != nil {
+				fatalf("%v", err)
+			}
+			logger.Print("readying the release's images for local slots")
+			if err := images.Ready(ctx, dir, contract.Release, m); err != nil {
+				fatalf("%v", err)
+			}
+			// The image also sets the base URL, as on workers, even with
+			// Playwright off.
+			base.PlaywrightImage = m.Playwright
+			if base.PlaywrightDir != "" {
+				base.PlaywrightDir = filepath.Join(dir, images.PlaywrightTests)
+			}
+		}
+	}
 
 	counts := src.Counts()
 	logger.Printf("started: %d combinations, %d to run; attempts in %s; slots override in %s",
@@ -156,7 +185,7 @@ Flags:`)
 
 	var stopWorkers func()
 	if *workersFile != "" {
-		stopWorkers = serveWorkers(ctx, logger, src, sel, *workersFile, stateDir)
+		stopWorkers = serveWorkers(ctx, logger, src, contract, filepath.Join(releases, contract.Release), *workersFile, stateDir)
 	}
 
 	engine := &queue.Engine{
@@ -223,7 +252,7 @@ Flags:`)
 		counts[queue.StatusPass], counts[queue.StatusFail], counts[queue.StatusSetupFail], counts[queue.StatusTodo])
 }
 
-func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, sel *selection, path, stateDir string) (wait func()) {
+func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releaseDir, path, stateDir string) (wait func()) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fatalf("%v", err)
@@ -239,11 +268,11 @@ func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, sel
 		}
 		names[name] = true
 	}
-	workarounds, err := coord.LoadWorkarounds(filepath.Join(sel.composeDir, "..", "scripts", "workarounds.json"))
+	workarounds, err := coord.LoadWorkarounds(filepath.Join(releaseDir, "docker", "scripts", "workarounds.json"))
 	if err != nil {
 		fatalf("%v", err)
 	}
-	srv := &coord.Server{Src: src, Tokens: tokens, Contract: sel.contract(), Workarounds: workarounds,
+	srv := &coord.Server{Src: src, Tokens: tokens, Contract: contract, Release: contract.Release, Workarounds: workarounds,
 		RejectDir: filepath.Join(stateDir, "rejected"), Log: logger}
 	if err := srv.Start(ctx); err != nil {
 		fatalf("%v", err)

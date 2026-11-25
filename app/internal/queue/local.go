@@ -72,23 +72,10 @@ type cachedResult struct {
 // NewLocal finds this sweep (results directory and combination list) in the ledger.
 // A different contract returns ErrContractChanged with a read-only Local unless fresh. Nothing is written until Save.
 func NewLocal(lg *Ledger, resultsDir string, combos []matrix.Combination, contract Contract, fresh bool) (*Local, error) {
-	ids := make([]string, len(combos))
-	byID := map[string]matrix.Combination{}
-	for i, c := range combos {
-		ids[i] = c.ID()
-		if other, seen := byID[ids[i]]; seen && other != c {
-			// They'd share a result file and attempt count.
-			return nil, fmt.Errorf("queue: %+v and %+v share the ID %s", other, c, ids[i])
-		}
-		byID[ids[i]] = c
+	key, err := sweepKey(resultsDir, combos)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(ids)
-	h := sha256.New()
-	fmt.Fprintln(h, canonicalDir(resultsDir))
-	for _, id := range ids {
-		fmt.Fprintln(h, id)
-	}
-	key := fmt.Sprintf("%x", h.Sum(nil)[:8])
 
 	l := &Local{
 		Combos:     combos,
@@ -124,6 +111,42 @@ func NewLocal(lg *Ledger, resultsDir string, combos []matrix.Combination, contra
 		l.initial = imported
 	}
 	return l, nil
+}
+
+func sweepKey(resultsDir string, combos []matrix.Combination) (string, error) {
+	ids := make([]string, len(combos))
+	byID := map[string]matrix.Combination{}
+	for i, c := range combos {
+		ids[i] = c.ID()
+		if other, seen := byID[ids[i]]; seen && other != c {
+			// They'd share a result file and attempt count.
+			return "", fmt.Errorf("queue: %+v and %+v share the ID %s", other, c, ids[i])
+		}
+		byID[ids[i]] = c
+	}
+	sort.Strings(ids)
+	h := sha256.New()
+	fmt.Fprintln(h, canonicalDir(resultsDir))
+	for _, id := range ids {
+		fmt.Fprintln(h, id)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)[:8]), nil
+}
+
+func SweepContract(lg *Ledger, resultsDir string, combos []matrix.Combination) (Contract, bool, error) {
+	key, err := sweepKey(resultsDir, combos)
+	if err != nil {
+		return Contract{}, false, err
+	}
+	var c Contract
+	found := false
+	err = lg.view(func(d *ledgerData) error {
+		if sw := d.Sweeps[key]; sw != nil {
+			c, found = sw.Contract, true
+		}
+		return nil
+	})
+	return c, found, err
 }
 
 func readLegacy(path string) (*sweep, error) {

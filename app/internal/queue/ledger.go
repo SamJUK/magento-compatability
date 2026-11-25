@@ -41,6 +41,7 @@ type Contract struct {
 	SampleData  bool          `json:"sample_data"`
 	MaxLogBytes int64         `json:"max_log_bytes"`
 	Deadline    time.Duration `json:"deadline"`
+	Release     string        `json:"release,omitempty"` // snapshot hash; empty runs the checkout
 }
 
 type comboState struct {

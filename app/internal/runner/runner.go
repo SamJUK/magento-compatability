@@ -36,9 +36,9 @@ const (
 	diagnosticTimeout = 2 * time.Minute
 )
 
-// ErrCleanupTimeout means the stack could not be torn down in time and may
-// still be holding ports, memory or disk.
-var ErrCleanupTimeout = errors.New("stack teardown timed out")
+// ErrCleanup means the stack could not be torn down, in time or at all,
+// and may still be holding ports, memory or disk.
+var ErrCleanup = errors.New("stack teardown failed")
 
 var transientComposerCurlErrors = []string{
 	"curl error 6",
@@ -366,9 +366,13 @@ func isKnownElasticsearch8CompatibilityFailure(c matrix.Combination, log string)
 
 // RunConfig holds configuration for a single combination run.
 type RunConfig struct {
-	ResultsDir        string
-	ComposeDir        string
-	PlaywrightDir     string // path to tests/playwright; empty = skip playwright
+	ResultsDir    string
+	ComposeDir    string
+	PlaywrightDir string // path to tests/playwright; empty = skip playwright
+	// PlaywrightImage runs the tests in this image on the stack's network,
+	// with Magento installed under the service's own name. Empty runs npx on
+	// the host against a published port.
+	PlaywrightImage   string
 	SkipCacheSave     bool
 	InstallSampleData bool
 	Force             bool
@@ -526,15 +530,19 @@ func queuePort(c matrix.Combination) string {
 // to use for the Magento install and browser tests. Varnish fronts HTTP when
 // enabled, otherwise the webserver port is used. Falls back to port 80.
 func resolveBaseURL(ctx context.Context, c matrix.Combination, cp *Compose) string {
-	portSvc := "webserver"
-	if c.Varnish != "none" && c.Varnish != "" {
-		portSvc = "varnish"
-	}
-	port, err := cp.Port(ctx, portSvc, 80)
+	port, err := cp.Port(ctx, frontService(c), 80)
 	if err != nil || port == "" {
 		port = "80"
 	}
 	return "http://localhost:" + port
+}
+
+// frontService is the service that takes HTTP: Varnish when enabled.
+func frontService(c matrix.Combination) string {
+	if c.Varnish != "none" && c.Varnish != "" {
+		return "varnish"
+	}
+	return "webserver"
 }
 
 // buildInstallArgs constructs the exec argv for running install.sh inside the
@@ -650,7 +658,7 @@ func runInstallWithRetries(
 // JSON file. ran is true once the result is written. It is false, with no
 // error, when the result already exists and Force is off, or when ctx is
 // cancelled before the write, which leaves any earlier result untouched. A
-// teardown that times out returns ErrCleanupTimeout, with ran still true.
+// teardown that fails returns ErrCleanup, cancelled or not.
 func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, err error) {
 	maxLog := cfg.MaxLogBytes
 	if maxLog == 0 {
@@ -728,15 +736,23 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		// Fresh context: teardown must run after a cancel or a deadline too.
 		downCtx, cancel := context.WithTimeout(context.Background(), CleanupTimeout)
 		defer cancel()
-		_ = cp.Down(downCtx)
+		var rmErr error
+		if cfg.PlaywrightImage != "" {
+			// Killing docker run leaves its container up, holding the network.
+			// rm -f of a container that's gone succeeds.
+			rmErr = cp.command(downCtx, "docker", "rm", "--force", playwrightContainer(cp)).Run()
+		}
+		var cleanupErr error
+		if downErr := errors.Join(rmErr, cp.Down(downCtx)); downErr != nil {
+			cleanupErr = fmt.Errorf("runner: tearing down %s: %w: %w", cp.ProjectName(), ErrCleanup, downErr)
+		} else if downCtx.Err() != nil {
+			cleanupErr = fmt.Errorf("runner: tearing down %s: %w", cp.ProjectName(), ErrCleanup)
+		}
 		if ctx.Err() != nil && !wrote {
-			ran = false
-			err = nil
+			ran, err = false, cleanupErr
 			return
 		}
-		if downCtx.Err() != nil && err == nil {
-			err = fmt.Errorf("runner: tearing down %s: %w", cp.ProjectName(), ErrCleanupTimeout)
-		}
+		err = errors.Join(err, cleanupErr)
 	}()
 
 	t := time.Now()
@@ -755,6 +771,9 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	recordStep("stack_up", result.StatusPass, dur, upLog)
 
 	baseURL := resolveBaseURL(runCtx, c, cp)
+	if cfg.PlaywrightImage != "" {
+		baseURL = "http://" + frontService(c)
+	}
 	installArgs := buildInstallArgs(magentoEnv, baseURL)
 
 	t = time.Now()
@@ -785,7 +804,13 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		recordStep("playwright", result.StatusSkip, 0, "Playwright skipped — no playwright dir configured")
 	} else {
 		t = time.Now()
-		pwLog, pwErr := runPlaywright(runCtx, cfg.PlaywrightDir, baseURL, c.ID())
+		var pwLog string
+		var pwErr error
+		if cfg.PlaywrightImage != "" {
+			pwLog, pwErr = runPlaywrightContainer(runCtx, cp, cfg.PlaywrightImage, cfg.PlaywrightDir, baseURL)
+		} else {
+			pwLog, pwErr = runPlaywright(runCtx, cfg.PlaywrightDir, baseURL, c.ID())
+		}
 		dur = time.Since(t).Seconds()
 		if pwErr != nil {
 			recordStep("playwright", result.StatusFail, dur, pwLog)
@@ -908,6 +933,46 @@ func Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = WaitDelay
 	return cmd
+}
+
+const PlaywrightRole = "m2test.role=playwright"
+
+func playwrightContainer(cp *Compose) string { return cp.ProjectName() + "-pw" }
+
+// runPlaywrightContainer runs the suite in image, attached to the stack's
+// network. The suite is mounted read-only; only /out is writable.
+func runPlaywrightContainer(ctx context.Context, cp *Compose, image, playwrightDir, baseURL string) (string, error) {
+	out, err := os.MkdirTemp("", "m2test-pw-")
+	if err != nil {
+		return err.Error(), err
+	}
+	defer os.RemoveAll(out)
+	suite, err := filepath.Abs(playwrightDir)
+	if err != nil {
+		return err.Error(), err
+	}
+	// Chromium needs more than Docker's 64MB /dev/shm on heavy admin pages.
+	args := []string{"run", "--rm", "--init", "--shm-size", "1g",
+		"--name", playwrightContainer(cp),
+		"--label", "com.docker.compose.project=" + cp.ProjectName(),
+		"--label", PlaywrightRole,
+		"--network", cp.ProjectName() + "_magento",
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+		"-e", "HOME=/tmp",
+		"-e", "MAGENTO_BASE_URL=" + baseURL,
+		"-e", "PLAYWRIGHT_REPORT_FILE=/out/report.json",
+		"-v", suite + ":/pw/suite:ro",
+		"-v", out + ":/out",
+		"-w", "/pw/suite",
+		image,
+		"/pw/node_modules/.bin/playwright", "test", "--project", "chromium", "--output", "/out/test-results",
+	}
+	cmd := cp.command(ctx, "docker", args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err = cmd.Run()
+	return summarisePlaywrightRun(buf.String(), filepath.Join(out, "report.json"), baseURL), err
 }
 
 type playwrightReport struct {

@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,16 +98,20 @@ type Worker struct {
 	Slots   int
 	Base    runner.RunConfig // paths; results dir and options are per attempt
 	Runner  func(context.Context, matrix.Combination, runner.RunConfig) (bool, error)
-	Log     *log.Logger
+	// Preflight, if set, must pass before each run. A failure is the host's
+	// and stops claims until a later SetUnhealthy("preflight", "") clears it.
+	Preflight func(context.Context) error
+	Log       *log.Logger
 
 	mu        sync.Mutex
 	ready     bool
 	stale     string
-	unhealthy string
+	unhealthy map[string]string
 	running   map[string]*running
 	kick      chan struct{}
 	bg        sync.WaitGroup
 	upOnce    sync.Once
+	preflight sync.Mutex    // one check at a time, so one failure stops the rest
 	uploading chan struct{} // Flush and the upload loop take turns
 }
 
@@ -152,11 +158,28 @@ func (w *Worker) Start(ctx context.Context) error {
 
 func (w *Worker) Wait() { w.bg.Wait() }
 
-// SetUnhealthy stops claims while reason is set, and tells the coordinator.
-func (w *Worker) SetUnhealthy(reason string) {
+func (w *Worker) SetUnhealthy(cause, reason string) {
 	w.mu.Lock()
-	w.unhealthy = reason
-	w.mu.Unlock()
+	defer w.mu.Unlock()
+	if w.unhealthy == nil {
+		w.unhealthy = map[string]string{}
+	}
+	if reason == "" {
+		delete(w.unhealthy, cause)
+	} else {
+		w.unhealthy[cause] = reason
+	}
+}
+
+func (w *Worker) health() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	reasons := make([]string, 0, len(w.unhealthy))
+	for _, r := range w.unhealthy {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	return strings.Join(reasons, "; ")
 }
 
 func (w *Worker) hello(ctx context.Context) (bool, error) {
@@ -188,10 +211,7 @@ func (w *Worker) forget() {
 }
 
 func (w *Worker) Next(ctx context.Context) (queue.Job, queue.State, error) {
-	w.mu.Lock()
-	unhealthy := w.unhealthy
-	w.mu.Unlock()
-	if unhealthy != "" {
+	if w.health() != "" {
 		return queue.Job{}, queue.StateNone, nil
 	}
 	if ok, _ := w.hello(ctx); !ok {
@@ -247,6 +267,16 @@ func (w *Worker) Run(ctx context.Context, _ int, j queue.Job) queue.Outcome {
 	r.cancel = cancel
 	w.mu.Unlock()
 
+	// A claim already in flight when the worker turned unhealthy goes back
+	// unrun, spending no budget.
+	if reason := w.health(); reason != "" {
+		return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true, Reason: "unhealthy: " + reason}
+	}
+	if w.Preflight != nil {
+		if o, ok := w.runPreflight(ctx); !ok {
+			return o
+		}
+	}
 	cfg := w.Base
 	cfg.ResultsDir = filepath.Join(w.Spool, j.Attempt, "results")
 	cfg.Force = true
@@ -255,6 +285,9 @@ func (w *Worker) Run(ctx context.Context, _ int, j queue.Job) queue.Outcome {
 	cfg.Deadline = r.options.Deadline
 	if !r.options.Playwright {
 		cfg.PlaywrightDir = ""
+	} else if cfg.PlaywrightImage == "" {
+		// Host npx isn't set up on workers; a run without it isn't a result.
+		return queue.Outcome{Kind: queue.OutcomeHost, Reason: "release has no Playwright image"}
 	}
 	project := ""
 	cfg.OnProject = func(name string) {
@@ -265,12 +298,14 @@ func (w *Worker) Run(ctx context.Context, _ int, j queue.Job) queue.Outcome {
 	w.Log.Printf("%s: start %s", j.Attempt, j.Combination.ID())
 	_, err := w.Runner(ctx, j.Combination, cfg)
 
+	if errors.Is(err, runner.ErrCleanup) {
+		// Unhealthy before the next claim, not when the goroutine runs.
+		w.SetUnhealthy("stack "+project, "teardown failed for "+project)
+		go w.clearStack(project)
+	}
 	if ctx.Err() != nil {
 		// The coordinator or whoever stopped this worker asked for it.
 		return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true, Reason: "stopped"}
-	}
-	if errors.Is(err, runner.ErrCleanupTimeout) {
-		go w.clearStack(project)
 	}
 	path := filepath.Join(cfg.ResultsDir, j.Combination.Product, j.Combination.ID()+".json")
 	if _, statErr := os.Stat(path); statErr != nil {
@@ -303,11 +338,35 @@ func hostFailure(path string) string {
 	return ""
 }
 
+var preflightTimeout = 2 * time.Minute
+
+// runPreflight runs one check at a time and marks the worker unhealthy
+// before releasing the next, so one failure costs one host failure.
+func (w *Worker) runPreflight(ctx context.Context) (queue.Outcome, bool) {
+	w.preflight.Lock()
+	defer w.preflight.Unlock()
+	if reason := w.health(); reason != "" {
+		return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true, Reason: "unhealthy: " + reason}, false
+	}
+	// Before the run's deadline starts: a hung docker must not hold the lease for good.
+	pctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	err := w.Preflight(pctx)
+	switch {
+	case err == nil:
+		return queue.Outcome{}, true
+	case ctx.Err() != nil:
+		return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true, Reason: "stopped"}, false
+	}
+	// Otherwise every claim fails at once, spending the host budget of
+	// combinations healthy workers could run.
+	w.SetUnhealthy("preflight", err.Error())
+	return queue.Outcome{Kind: queue.OutcomeHost, Reason: err.Error()}, false
+}
+
 // clearStack keeps the worker off new work until a stack whose teardown
 // timed out is gone.
 func (w *Worker) clearStack(project string) {
-	reason := "teardown timed out for " + project
-	w.SetUnhealthy(reason)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		err := queue.RemoveStack(ctx, project)
@@ -318,11 +377,7 @@ func (w *Worker) clearStack(project string) {
 		w.Log.Printf("removing %s: %v", project, err)
 		time.Sleep(30 * time.Second)
 	}
-	w.mu.Lock()
-	if w.unhealthy == reason {
-		w.unhealthy = ""
-	}
-	w.mu.Unlock()
+	w.SetUnhealthy("stack "+project, "")
 }
 
 // Release spools the attempt's outcome and kicks the uploader. A spool that
@@ -356,7 +411,7 @@ func (w *Worker) Release(j queue.Job, o queue.Outcome) {
 	}
 	if err := w.spool(j.Attempt, up); err != nil {
 		w.Log.Printf("%s: spooling: %v", j.Attempt, err)
-		w.SetUnhealthy("spool write failed: " + err.Error())
+		w.SetUnhealthy("spool", "spool write failed: "+err.Error())
 		up = Upload{Schema: Schema, Attempt: j.Attempt, Outcome: OutcomeHost, Reason: "spool write failed"}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -426,9 +481,7 @@ func (w *Worker) held() []string {
 func (w *Worker) heartbeats(ctx context.Context) {
 	lastErr := ""
 	for {
-		w.mu.Lock()
-		unhealthy := w.unhealthy
-		w.mu.Unlock()
+		unhealthy := w.health()
 		var rep HeartbeatReply
 		err := w.Client.call(ctx, "POST", "/heartbeat", 15*time.Second, HeartbeatRequest{Schema: Schema, Running: w.held(), Unhealthy: unhealthy}, &rep)
 		if err != nil {

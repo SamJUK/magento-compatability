@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -58,15 +60,16 @@ func goodResult(c matrix.Combination, stackUp string) result.TestResult {
 }
 
 type rig struct {
-	t       *testing.T
-	results string
-	state   string
-	sock    string
-	combos  []matrix.Combination
-	src     *queue.Local
-	lg      *queue.Ledger
-	srv     *Server
-	stop    context.CancelFunc
+	t        *testing.T
+	results  string
+	state    string
+	sock     string
+	combos   []matrix.Combination
+	src      *queue.Local
+	lg       *queue.Ledger
+	srv      *Server
+	stop     context.CancelFunc
+	contract queue.Contract
 }
 
 func newRig(t *testing.T, combos []matrix.Combination) *rig {
@@ -89,11 +92,11 @@ func (r *rig) start() {
 	}
 	t.Cleanup(func() { lg.Close() })
 	r.lg = lg
-	r.src, err = queue.NewLocal(lg, r.results, r.combos, queue.Contract{}, false)
+	r.src, err = queue.NewLocal(lg, r.results, r.combos, r.contract, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.srv = &Server{Src: r.src, Tokens: map[string]string{"tok-a": "a", "tok-b": "b"}, Release: "rel1",
+	r.srv = &Server{Src: r.src, Tokens: map[string]string{"tok-a": "a", "tok-b": "b"}, Release: "rel1", Contract: r.contract,
 		RejectDir: filepath.Join(r.state, "rejected"), Log: quiet}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.stop = cancel
@@ -102,8 +105,8 @@ func (r *rig) start() {
 		t.Fatal(err)
 	}
 	served := make(chan struct{})
-	go func() { r.srv.Serve(ctx, r.sock); close(served) }()
-	srv := r.srv
+	srv, sock := r.srv, r.sock
+	go func() { srv.Serve(ctx, sock); close(served) }()
 	t.Cleanup(func() { cancel(); <-served; srv.Wait() })
 	// The socket file appears before it listens, and a restart finds the old one.
 	waitFor(t, func() bool {
@@ -633,6 +636,42 @@ func TestWorker_FlushGivesUpWhenUploadsAreBusy(t *testing.T) {
 	}
 }
 
+func TestWorker_PlaywrightSweepNeedsTheImage(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, nil)
+	r.down()
+	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
+	r.start()
+	var runs atomic.Int32
+	_, stop := r.worker("tok-a", func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		runs.Add(1)
+		return writes(func(matrix.Combination) string { return result.StatusPass })(nil, c, cfg)
+	})
+	defer stop()
+	waitFor(t, func() bool { return r.src.Done() && r.srv.Live() == 0 })
+	if runs.Load() != 0 || r.status(c) == queue.StatusPass {
+		t.Errorf("%d runs, status %s: ran Playwright with no image", runs.Load(), r.status(c))
+	}
+}
+
+func TestUpload_APlaywrightSweepNeedsPlaywrightRun(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, nil)
+	r.down()
+	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
+	r.start()
+	job := r.claim("tok-a", "req1")
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "rejected" {
+		t.Errorf("Playwright skipped: %s, want rejected", rep.Status)
+	}
+	job = r.claim("tok-a", "req2")
+	ran := goodResult(c, result.StatusPass)
+	ran.Steps["playwright"] = result.Step{Status: result.StatusPass}
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, ran)); rep.Status != "installed" {
+		t.Errorf("control: Playwright run %s", rep.Status)
+	}
+}
+
 func TestUpload_AnInstallCutOffBeforeAnotherSweepIsStale(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through 0500")
@@ -683,6 +722,113 @@ func TestUpload_ARetryWhileTheFirstIsSettlingWaits(t *testing.T) {
 	f.Close()
 	if st := <-first; st != "rejected" {
 		t.Errorf("control: first upload %s", st)
+	}
+}
+
+func TestServe_LongSocketPathSaysSo(t *testing.T) {
+	err := (&Server{}).Serve(context.Background(), "/"+strings.Repeat("d", 120)+"/worker.sock")
+	if err == nil || !strings.Contains(err.Error(), "XDG_STATE_HOME") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestWorker_HealthCausesClearIndependently(t *testing.T) {
+	w := &Worker{}
+	w.SetUnhealthy("images", "images missing")
+	w.SetUnhealthy("stack p", "teardown timed out")
+	w.SetUnhealthy("stack p", "")
+	if got := w.health(); got != "images missing" {
+		t.Errorf("health = %q", got)
+	}
+	w.SetUnhealthy("images", "")
+	if got := w.health(); got != "" {
+		t.Errorf("health = %q", got)
+	}
+}
+
+func TestWorker_HungPreflightIsTheHosts(t *testing.T) {
+	old := preflightTimeout
+	preflightTimeout = 50 * time.Millisecond
+	defer func() { preflightTimeout = old }()
+	w := &Worker{Spool: t.TempDir(), Log: quiet, running: map[string]*running{"a1": {}}}
+	w.Preflight = func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+	done := make(chan queue.Outcome)
+	go func() { done <- w.Run(context.Background(), 0, queue.Job{Attempt: "a1", Combination: combo("8.3")}) }()
+	select {
+	case o := <-done:
+		if o.Kind != queue.OutcomeHost || w.health() == "" {
+			t.Errorf("outcome %+v, health %q; want the host's failure", o, w.health())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hung preflight held the run")
+	}
+}
+
+func TestWorker_FailedPreflightIsTheHosts(t *testing.T) {
+	combos := []matrix.Combination{combo("8.1"), combo("8.2"), combo("8.3")}
+	r := newRig(t, combos)
+	var runs atomic.Int32
+	w, stop := r.worker("tok-a", func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		runs.Add(1)
+		return writes(func(matrix.Combination) string { return result.StatusPass })(nil, c, cfg)
+	})
+	defer stop()
+	var checks atomic.Int32
+	w.mu.Lock()
+	w.Preflight = func(context.Context) error { checks.Add(1); return errors.New("images missing") }
+	w.mu.Unlock()
+	waitFor(t, func() bool { return w.health() != "" && r.srv.Live() == 0 })
+	time.Sleep(100 * time.Millisecond)
+	if runs.Load() != 0 || checks.Load() > 2 {
+		t.Errorf("%d runs, %d preflights; want the worker to stop claiming after the first failures", runs.Load(), checks.Load())
+	}
+	w.SetUnhealthy("preflight", "")
+	w.mu.Lock()
+	w.Preflight = nil
+	w.mu.Unlock()
+	waitFor(t, func() bool { return r.src.Done() })
+	for _, c := range combos {
+		if r.status(c) != queue.StatusPass {
+			t.Errorf("%s: %s", c.ID(), r.status(c))
+		}
+	}
+}
+
+func TestWorker_ClaimArrivingWhileUnhealthyGoesBackUnrun(t *testing.T) {
+	ran := false
+	w := &Worker{Runner: func(context.Context, matrix.Combination, runner.RunConfig) (bool, error) {
+		ran = true
+		return true, nil
+	},
+		Spool: t.TempDir(), Log: quiet, running: map[string]*running{"a1": {}}}
+	w.SetUnhealthy("stack p", "teardown failed")
+	o := w.Run(context.Background(), 0, queue.Job{Attempt: "a1", Combination: combo("8.3")})
+	if ran || o.Kind != queue.OutcomeAborted || !o.Requested {
+		t.Errorf("ran %v, outcome %+v", ran, o)
+	}
+}
+
+func TestWorker_ConcurrentPreflightsChargeOneHostFailure(t *testing.T) {
+	w := &Worker{Spool: t.TempDir(), Log: quiet, running: map[string]*running{}}
+	w.Preflight = func(context.Context) error { time.Sleep(20 * time.Millisecond); return errors.New("images missing") }
+	var host atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 4 {
+		w.running[fmt.Sprintf("a%d", i)] = &running{}
+	}
+	for i := range 4 {
+		id := fmt.Sprintf("a%d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if o := w.Run(context.Background(), 0, queue.Job{Attempt: id, Combination: combo("8.3")}); o.Kind == queue.OutcomeHost {
+				host.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if host.Load() != 1 {
+		t.Errorf("%d host failures, want 1", host.Load())
 	}
 }
 

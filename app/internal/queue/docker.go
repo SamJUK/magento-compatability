@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,12 +23,23 @@ var projectName = regexp.MustCompile(`^m2test-[0-9a-f]{16}-[0-9a-f]{8}`)
 // slot for minutes rather than for good.
 const dockerTimeout = 2 * time.Minute
 
-// RemoveStack tears down a compose project by name, then any of its volumes
-// still left: older Compose versions leave them without the files.
+var command = runner.Command
+
+// RemoveStack tears down a compose project by name, then any volumes older Compose versions leave behind.
+// A Playwright container on the network goes first, or the network can't be removed.
 func RemoveStack(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, runner.CleanupTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "compose", "-p", name, "down", "--volumes", "--remove-orphans").CombinedOutput()
+	out, err := command(ctx, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+name, "--filter", "label="+runner.PlaywrightRole).Output()
+	if err != nil {
+		return fmt.Errorf("listing test containers of %s: %w", name, err)
+	}
+	if ids := strings.Fields(string(out)); len(ids) > 0 {
+		if out, err := command(ctx, "docker", append([]string{"rm", "--force"}, ids...)...).CombinedOutput(); err != nil {
+			return fmt.Errorf("removing test containers of %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+		}
+	}
+	out, err = command(ctx, "docker", "compose", "-p", name, "down", "--volumes", "--remove-orphans").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("removing %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
@@ -38,18 +48,23 @@ func RemoveStack(ctx context.Context, name string) error {
 		return err
 	}
 	if len(vols) > 0 {
-		out, err := exec.CommandContext(ctx, "docker", append([]string{"volume", "rm", "--force"}, vols...)...).CombinedOutput()
+		out, err := command(ctx, "docker", append([]string{"volume", "rm", "--force"}, vols...)...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("removing volumes of %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 		}
 	}
-	return nil
+	// Compose succeeds yet leaves a network another container holds.
+	up, err := StackExists(ctx, name)
+	if err == nil && up {
+		err = fmt.Errorf("%s still there after teardown", name)
+	}
+	return err
 }
 
 func StackExists(ctx context.Context, name string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+name).Output()
+	out, err := command(ctx, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+name).Output()
 	if err != nil {
 		return false, fmt.Errorf("docker ps: %w", err)
 	}
@@ -57,13 +72,18 @@ func StackExists(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(bytes.TrimSpace(out)) > 0 || len(vols) > 0, nil
+	// A network still in use by a stranger outlives its stack's teardown.
+	nets, err := command(ctx, "docker", "network", "ls", "-q", "--filter", "label=com.docker.compose.project="+name).Output()
+	if err != nil {
+		return false, fmt.Errorf("docker network ls: %w", err)
+	}
+	return len(bytes.TrimSpace(out)) > 0 || len(vols) > 0 || len(bytes.TrimSpace(nets)) > 0, nil
 }
 
 // stackVolumes lists a stack's volumes, which runner names <project>_<name>.
 // Docker's name filter matches substrings, hence the prefix check.
 func stackVolumes(ctx context.Context, name string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", "name="+name+"_").Output()
+	out, err := command(ctx, "docker", "volume", "ls", "-q", "--filter", "name="+name+"_").Output()
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes of %s: %w", name, err)
 	}
@@ -110,7 +130,7 @@ func (s *MemorySampler) Take(project string) uint64 {
 func (s *MemorySampler) sample(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.MemUsage}}").Output()
+	out, err := command(ctx, "docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.MemUsage}}").Output()
 	if err != nil {
 		return
 	}

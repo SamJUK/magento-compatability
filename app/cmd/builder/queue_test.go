@@ -4,7 +4,10 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,5 +48,24 @@ func TestKeepIDsRefusesAnIDTwoCombinationsShare(t *testing.T) {
 	}
 	if kept, err := keepIDs([]matrix.Combination{a, b}, path); err == nil {
 		t.Errorf("kept %v of two sharing an ID", kept)
+	}
+}
+
+func TestLeftoverStackRecordOutlivesANetworkStillInUse(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		bin := t.TempDir()
+		// Every docker call succeeds; the network is listed while held.
+		script := "#!/bin/sh\nexit 0\n"
+		if held {
+			script = "#!/bin/sh\n[ \"$1 $2\" = \"network ls\" ] && echo net1\nexit 0\n"
+		}
+		os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755)
+		t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+		stacks := t.TempDir()
+		os.WriteFile(filepath.Join(stacks, "m2test-x"), nil, 0o644)
+		removeLeftoverStacks(context.Background(), log.New(io.Discard, "", 0), stacks)
+		if _, err := os.Stat(filepath.Join(stacks, "m2test-x")); (err == nil) != held {
+			t.Errorf("network held %v: record kept %v", held, err == nil)
+		}
 	}
 }

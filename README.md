@@ -72,11 +72,27 @@ The file maps each worker's token to a name, `{"<token>": "homelab-1"}`; keep it
 ./bin/magento-compatibility-builder queue -ids-file sweep.txt -workers ~/.config/m2test/workers.json -slots 0
 ```
 
-Each worker runs `m2test-worker` against that socket, forwarded to it over SSH (`ssh -R /run/m2test/worker.sock:<state dir>/worker.sock`):
+A sweep with `-workers` runs a release: a snapshot of `matrix.yml` and `docker/` with every upstream image pinned to the digest its tag had at the start, in `releases/` in the state directory.
+Resuming the sweep runs the same release, even if the checkout or the upstream tags have moved since; `-fresh` takes a new one.
+Local slots run the release too, on its pinned images and with Playwright in its container, so `-compose-dir` can't be used with `-workers`.
+Readying those images retags this machine's upstream tags (`mariadb:11.4` and so on) to the pinned digests.
+
+The queue logs the release's hash at start. Each worker unpacks the release tarball, refusing it unless it holds that release, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
+
+```bash
+m2test-worker prepare -hash <hash> -tarball <hash>.tar.gz -releases ~/m2test/releases
+ln -sfn ~/m2test/releases/<hash> ~/m2test/current
+```
+
+Then it runs `m2test-worker` against the queue's socket, forwarded to it over SSH (`ssh -R /run/m2test/worker.sock:<state dir>/worker.sock`):
 
 ```bash
 m2test-worker -socket /run/m2test/worker.sock -token-file ~/.config/m2test/token -release ~/m2test/current
 ```
+
+The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run.
+Workers run Playwright in a container on the stack's own network, against `http://varnish` or `http://webserver`, so they need no Node.
+A sweep started without `-workers` runs the checkout, so it can't take workers later without `-fresh`.
 
 A worker keeps each finished run in its spool until the queue has answered for it, so results outlive a dropped tunnel or a restarted queue.
 A worker that goes quiet for two minutes loses its runs to the next claim; its late uploads are refused.

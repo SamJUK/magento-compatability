@@ -111,6 +111,9 @@ func (s *Server) expire(ctx context.Context) {
 }
 
 func (s *Server) Serve(ctx context.Context, path string) error {
+	if len(path) > 103 { // macOS's sun_path, less its NUL
+		return fmt.Errorf("%s is %d bytes, over the 103 a socket path may have; use a shorter XDG_STATE_HOME", path, len(path))
+	}
 	os.Remove(path) // the caller holds the queue lock, so any socket here is stale
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -369,6 +372,9 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, worker string) {
 		return
 	}
 	res, err := Validate(up.Result, j.Combination, s.Workarounds)
+	if err == nil && s.Contract.Playwright && res.Steps["smoke"].Status == result.StatusPass && res.Steps["playwright"].Status == result.StatusSkip {
+		err = errors.New("playwright skipped in a sweep that runs it")
+	}
 	if err != nil {
 		s.reject(w, j, up, err)
 		return

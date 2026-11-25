@@ -47,7 +47,7 @@ services:
         WEBSERVER_VERSION: "${WEBSERVER_VERSION:?WEBSERVER_VERSION is required}"
     image: "m2test/webserver-${WEBSERVER_TYPE:-nginx}:${WEBSERVER_VERSION:?WEBSERVER_VERSION is required}"
     ports:
-      - "${WEBSERVER_PORT:-0}:80"
+      - "127.0.0.1:${WEBSERVER_PORT:-0}:80"
     volumes:
       - magento:/var/www/html:ro
     networks:

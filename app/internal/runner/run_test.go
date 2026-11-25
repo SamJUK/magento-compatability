@@ -6,6 +6,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -27,7 +28,10 @@ type fakeDocker struct {
 	mu       sync.Mutex
 	calls    []string
 	slowDown bool
-	diskFull bool // up fails at once for want of disk, and ps -a is slow
+	quick    bool   // every step passes at once
+	failRm   bool   // docker rm of the Playwright container fails
+	cancel   func() // called as Playwright starts
+	diskFull bool   // up fails at once for want of disk, and ps -a is slow
 }
 
 func (f *fakeDocker) exec(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -35,8 +39,14 @@ func (f *fakeDocker) exec(ctx context.Context, name string, args ...string) *exe
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	f.mu.Unlock()
-	if strings.Contains(call, " exec -T php-fpm ") && !strings.Contains(call, "smoke.sh") {
+	if !f.quick && strings.Contains(call, " exec -T php-fpm ") && !strings.Contains(call, "smoke.sh") {
 		return exec.CommandContext(ctx, "sh", "-c", "exec sleep 30")
+	}
+	if f.cancel != nil && strings.HasPrefix(call, "docker run ") {
+		f.cancel()
+	}
+	if f.failRm && strings.HasPrefix(call, "docker rm ") {
+		return exec.CommandContext(ctx, "false")
 	}
 	if f.diskFull && strings.Contains(call, " up -d ") {
 		return exec.CommandContext(ctx, "sh", "-c", "echo 'no space left on device'; exit 1")
@@ -217,5 +227,88 @@ func TestFailureCodes_MatchSource(t *testing.T) {
 		if _, ok := found[code]; !ok {
 			t.Errorf("FailureCodes lists %q, which nothing records", code)
 		}
+	}
+}
+
+func TestRun_PlaywrightInContainerUsesTheStackNetwork(t *testing.T) {
+	var project string
+	suite := t.TempDir()
+	fake, path, ran, err := runWithFakeDocker(t, context.Background(), RunConfig{
+		PlaywrightDir:   suite,
+		PlaywrightImage: "m2test/playwright:1.60.0-abc",
+		OnProject:       func(name string) { project = name },
+	}, &fakeDocker{quick: true})
+	if err != nil || !ran {
+		t.Fatalf("Run() = %v, %v", ran, err)
+	}
+	var install, pw, rm, down = -1, -1, -1, -1
+	for i, c := range fake.calls {
+		switch {
+		case strings.Contains(c, " exec -T php-fpm env ") && strings.Contains(c, "MAGENTO_BASE_URL=http://webserver/"):
+			install = i
+		case strings.HasPrefix(c, "docker run "):
+			pw = i
+			for _, want := range []string{
+				"--name " + project + "-pw", "--network " + project + "_magento",
+				"--label com.docker.compose.project=" + project, "--label " + PlaywrightRole,
+				"-e MAGENTO_BASE_URL=http://webserver", suite + ":/pw/suite:ro", " m2test/playwright:1.60.0-abc ",
+			} {
+				if !strings.Contains(c, want) {
+					t.Errorf("playwright run lacks %q:\n%s", want, c)
+				}
+			}
+			if strings.Contains(c, "--network host") || strings.Contains(c, "docker.sock") {
+				t.Errorf("playwright run reaches the host: %s", c)
+			}
+		case c == "docker rm --force "+project+"-pw":
+			rm = i
+		case strings.Contains(c, " down --volumes"):
+			down = i
+		}
+	}
+	if install < 0 || pw < install || rm < pw || down < rm {
+		t.Errorf("install %d, playwright %d, rm %d, down %d: want them in that order\n%s", install, pw, rm, down, strings.Join(fake.calls, "\n"))
+	}
+	var r result.TestResult
+	data, _ := os.ReadFile(path)
+	json.Unmarshal(data, &r)
+	if r.Steps["playwright"].Status != result.StatusPass {
+		t.Errorf("playwright step = %+v", r.Steps["playwright"])
+	}
+}
+
+func TestRun_HostPlaywrightKeepsThePublishedPort(t *testing.T) {
+	fake, _, _, _ := runWithFakeDocker(t, context.Background(), RunConfig{}, &fakeDocker{quick: true})
+	if fake.called("MAGENTO_BASE_URL=http://webserver") || fake.called("docker run ") || fake.called("docker rm ") {
+		t.Errorf("a host run used container mode:\n%s", strings.Join(fake.calls, "\n"))
+	}
+	if !fake.called("MAGENTO_BASE_URL=http://localhost:") {
+		t.Errorf("no localhost base URL:\n%s", strings.Join(fake.calls, "\n"))
+	}
+}
+
+func TestRun_FailedTeardownIsACleanupError(t *testing.T) {
+	cfg := RunConfig{PlaywrightDir: t.TempDir(), PlaywrightImage: "pw"}
+	_, _, ran, err := runWithFakeDocker(t, context.Background(), cfg, &fakeDocker{quick: true, failRm: true})
+	if !ran || !errors.Is(err, ErrCleanup) {
+		t.Errorf("Run() = %v, %v; want a written result and ErrCleanup", ran, err)
+	}
+	_, _, ran, err = runWithFakeDocker(t, context.Background(), cfg, &fakeDocker{quick: true})
+	if !ran || err != nil {
+		t.Errorf("control: Run() = %v, %v", ran, err)
+	}
+}
+
+func TestRun_CancelledRunStillReportsAFailedTeardown(t *testing.T) {
+	cfg := RunConfig{PlaywrightDir: t.TempDir(), PlaywrightImage: "pw"}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, _, ran, err := runWithFakeDocker(t, ctx, cfg, &fakeDocker{quick: true, failRm: true, cancel: cancel})
+	if ran || !errors.Is(err, ErrCleanup) {
+		t.Errorf("Run() = %v, %v; want no result and ErrCleanup", ran, err)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	_, _, ran, err = runWithFakeDocker(t, ctx, cfg, &fakeDocker{quick: true, cancel: cancel})
+	if ran || err != nil {
+		t.Errorf("control: Run() = %v, %v", ran, err)
 	}
 }
