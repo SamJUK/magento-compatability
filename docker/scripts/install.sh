@@ -282,20 +282,24 @@ cd "${MAGENTO_DIR}"
 
 apply_version_fixes
 
-if vendor_cache_exists "${VENDOR_CACHE_PATH}"; then
+CACHE_USABLE=1
+vendor_cache_usable || CACHE_USABLE=0
+
+if [[ "${CACHE_USABLE}" == "1" ]] && vendor_cache_exists "${VENDOR_CACHE_PATH}"; then
   echo ""
   echo "=== Vendor cache hit — ${VENDOR_CACHE_KEY} ==="
 
   echo "[INFO] Restoring vendor from cache"
-  if ! vendor_cache_restore "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then
-    restore_status=$?
-    if [[ "${restore_status}" -ne 1 ]]; then
-      echo "[ERROR] Failed to restore vendor cache (${restore_status})" >&2
-      exit "${restore_status}"
-    fi
+  restore_status=0
+  vendor_cache_restore "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}" || restore_status=$?
+  # 1 is a bad cache entry. A part-extracted vendor can still pass the
+  # autoload check, so it never counts as a hit.
+  if [[ "${restore_status}" -gt 1 ]]; then
+    echo "[ERROR] Failed to restore vendor cache (${restore_status})" >&2
+    exit "${restore_status}"
   fi
 
-  if ! validate_composer_autoload_files; then
+  if [[ "${restore_status}" -eq 1 ]] || ! validate_composer_autoload_files; then
     echo "[WARN] Vendor cache ${VENDOR_CACHE_KEY} is incomplete — invalidating and reinstalling from scratch" >&2
     rm -rf "${MAGENTO_DIR}/vendor"
     vendor_cache_invalidate "${VENDOR_CACHE_PATH}" || true
@@ -456,7 +460,7 @@ disable_optional_admin_modules() {
 disable_optional_admin_modules
 
 # ─── Save vendor cache (before sample data — cache key is version-only) ──────
-if [[ "${CACHE_SAVE:-1}" == "1" ]] && ! vendor_cache_exists "${VENDOR_CACHE_PATH}" && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
+if [[ "${CACHE_SAVE:-1}" == "1" && "${CACHE_USABLE}" == "1" ]] && ! vendor_cache_exists "${VENDOR_CACHE_PATH}" && [[ -w "${VENDOR_CACHE_DIR}" ]]; then
   echo ""
   echo "=== Saving vendor cache — ${VENDOR_CACHE_KEY} ==="
   if vendor_cache_save "${VENDOR_CACHE_PATH}" "${MAGENTO_DIR}"; then

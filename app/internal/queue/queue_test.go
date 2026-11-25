@@ -137,30 +137,46 @@ func TestLocal_RetryFailuresAndForce(t *testing.T) {
 	}
 }
 
-func TestLocal_RerunsCountOnlyTheirOwnResults(t *testing.T) {
+func TestLocal_Settled(t *testing.T) {
 	c := combo("8.3")
+	started := time.Now()
+	old, own := started.Add(-time.Hour), started.Add(time.Minute)
+	type res struct{ stackUp, overall string }
+	pass, fail, setup := res{"pass", "pass"}, res{"pass", "fail"}, res{"fail", "fail"}
+	hostDown := comboState{Tries: 1, HostFailures: MaxHostFailures}
 	for _, tc := range []struct {
-		stackUp, overall string
-		force, retry     bool
-		status           string
+		name         string
+		force, retry bool
+		result       *res
+		at           time.Time
+		cs           comboState
+		status       string
+		exhausted    bool
 	}{
-		{"pass", "pass", true, false, StatusPass},
-		{"pass", "fail", false, true, StatusFail},
-		{"fail", "fail", false, false, StatusSetupFail}, // retried regardless
+		{"no result", false, false, nil, old, comboState{}, StatusTodo, false},
+		{"no result, out of tries", false, false, nil, old, comboState{Tries: MaxTries}, StatusTodo, false},
+		{"old pass", false, false, &pass, old, comboState{}, StatusPass, false},
+		{"forced, old pass only", true, false, &pass, old, hostDown, StatusTodo, false},
+		{"forced, own pass", true, false, &pass, own, comboState{Tries: 1}, StatusPass, false},
+		{"old fail kept", false, false, &fail, old, comboState{}, StatusFail, false},
+		{"retried, old fail only", false, true, &fail, old, hostDown, StatusTodo, false},
+		{"retried, own fail confirmed", false, true, &fail, own, comboState{Tries: 2}, StatusFail, false},
+		{"own fail awaiting confirmation", false, false, &fail, own, comboState{Tries: 1}, StatusTodo, false},
+		{"own fail, confirmation out of budget", false, false, &fail, own, hostDown, StatusFail, true},
+		{"old setup failure only", false, false, &setup, old, hostDown, StatusTodo, false},
+		{"own setup failure with tries left", false, false, &setup, own, comboState{Tries: 1}, StatusTodo, false},
+		{"own setup failure, out of tries", false, false, &setup, own, comboState{Tries: MaxTries}, StatusSetupFail, true},
 	} {
-		for _, writes := range []bool{false, true} {
-			results := t.TempDir()
-			writeResult(t, results, c, tc.stackUp, tc.overall, time.Now().Add(-time.Hour))
-			l := newLocal(t, t.TempDir(), results, []matrix.Combination{c}, false)
-			l.Force, l.RetryFailures = tc.force, tc.retry
-			drain(t, l, func(c matrix.Combination) {
-				if writes {
-					writeResult(t, results, c, tc.stackUp, tc.overall, time.Now())
-				}
-			})
-			if n := l.Counts(); (n[tc.status] == 1) != writes || (n[StatusTodo] == 1) == writes {
-				t.Errorf("%s rerun wrote %v: counts %v", tc.status, writes, n)
-			}
+		results := t.TempDir()
+		if tc.result != nil {
+			writeResult(t, results, c, tc.result.stackUp, tc.result.overall, tc.at)
+		}
+		l := newLocal(t, t.TempDir(), results, []matrix.Combination{c}, false)
+		l.Force, l.RetryFailures = tc.force, tc.retry
+		cs := tc.cs
+		s := &sweep{Started: started, Combos: map[string]*comboState{c.ID(): &cs}}
+		if status, exhausted := l.settled(s, c); status != tc.status || exhausted != tc.exhausted {
+			t.Errorf("%s: %s exhausted %v, want %s %v", tc.name, status, exhausted, tc.status, tc.exhausted)
 		}
 	}
 }
@@ -528,5 +544,85 @@ func TestParseSize(t *testing.T) {
 		if got := parseSize(in); got != want {
 			t.Errorf("parseSize(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestLocal_AFailedSaveStillEndsTheClaim(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	results, state := t.TempDir(), t.TempDir()
+	c := combo("8.1")
+	l := newLocal(t, state, results, []matrix.Combination{c}, false)
+	var lost []error
+	l.OnLost = func(err error) { lost = append(lost, err) }
+	j, st := next(t, l)
+	if st != StateJob {
+		t.Fatal("nothing to claim")
+	}
+	os.Chmod(state, 0o555)
+	l.Release(j, finished)
+	os.Chmod(state, 0o755)
+	if len(lost) != 1 {
+		t.Errorf("OnLost called %d times after a failed save, want 1", len(lost))
+	}
+	if len(l.claimed) != 0 {
+		t.Error("a failed save kept the claim, so the sweep never ends")
+	}
+	// Uncounted, it would run again and again: nothing more runs.
+	if _, _, err := l.Claim(context.Background(), "", ""); err == nil {
+		t.Error("claimed again after losing a count")
+	}
+}
+
+func TestLocal_ASavedReleaseIsNotLost(t *testing.T) {
+	results, state := t.TempDir(), t.TempDir()
+	l := newLocal(t, state, results, []matrix.Combination{combo("8.1")}, false)
+	l.OnLost = func(err error) { t.Errorf("OnLost after a saved release: %v", err) }
+	j, st := next(t, l)
+	if st != StateJob {
+		t.Fatal("nothing to claim")
+	}
+	l.Release(j, finished)
+}
+
+func TestLocal_SettlingTwiceKeepsANewerClaim(t *testing.T) {
+	results, state := t.TempDir(), t.TempDir()
+	c := combo("8.1")
+	l := newLocal(t, state, results, []matrix.Combination{c}, false)
+	l.Force = true
+	j, _, err := l.Claim(context.Background(), "w1", "r1")
+	if err != nil || j.Attempt == "" {
+		t.Fatalf("claim: %+v %v", j, err)
+	}
+	l.Release(j, Outcome{Kind: OutcomeAborted, Requested: true})
+	j2, st, err := l.Claim(context.Background(), "w1", "r2")
+	if err != nil || st != StateJob {
+		t.Fatalf("no second claim: %v", err)
+	}
+	if err := l.Settle(j, finished); err != nil {
+		t.Fatal(err)
+	}
+	if _, held := l.claimed[c.ID()]; !held {
+		t.Error("settling the old attempt again dropped the new claim")
+	}
+	l.Release(j2, finished)
+}
+
+func TestLocal_AFailedClaimSaveClaimsNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	results, state := t.TempDir(), t.TempDir()
+	c := combo("8.1")
+	l := newLocal(t, state, results, []matrix.Combination{c}, false)
+	os.Chmod(state, 0o555)
+	_, _, err := l.Claim(context.Background(), "", "")
+	os.Chmod(state, 0o755)
+	if err == nil {
+		t.Fatal("claim saved in a read-only dir")
+	}
+	if j, st := next(t, l); st != StateJob || j.Combination.ID() != c.ID() {
+		t.Errorf("after a failed save: %v", st)
 	}
 }

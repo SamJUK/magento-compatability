@@ -42,7 +42,16 @@ type Server struct {
 	drained   map[string]bool
 	busy      map[string]int
 	settling  map[string]int // taken out of live by uploads still being answered
+	failing   map[string]int // host failures in a row it reported
+	benched   map[string]time.Time
 }
+
+// FailingAfter host failures in a row, a worker gets no work for BenchFor:
+// each one it fails spends a combination's budget. Lapsing, not for the
+// sweep, so a sweep whose only worker is benched still ends.
+const FailingAfter = 3
+
+var BenchFor = 15 * time.Minute
 
 type liveAttempt struct {
 	job     queue.Job
@@ -56,6 +65,8 @@ func (s *Server) Start(ctx context.Context) error {
 	s.drained = map[string]bool{}
 	s.busy = map[string]int{}
 	s.settling = map[string]int{}
+	s.failing = map[string]int{}
+	s.benched = map[string]time.Time{}
 	s.stopping = ctx
 	jobs, err := s.Src.Resume()
 	if err != nil {
@@ -68,10 +79,8 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Wait returns once expiry has stopped.
 func (s *Server) Wait() { s.bg.Wait() }
 
-// Live is the number of attempts remote workers hold.
 func (s *Server) Live() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,7 +271,6 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request, worker string) {
 	reply(w, rep)
 }
 
-// hold keeps the worker from draining while a job is handed out or settled.
 func (s *Server) hold(worker string) (release func()) {
 	s.mu.Lock()
 	s.busy[worker]++
@@ -289,7 +297,7 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 	until := time.Now().Add(ClaimWait)
 	for {
 		s.mu.Lock()
-		ready, healthy := s.ready[worker], s.unhealthy[worker] == "" && !s.drained[worker]
+		ready, healthy := s.ready[worker], s.unhealthy[worker] == "" && !s.drained[worker] && time.Now().After(s.benched[worker])
 		s.busy[worker]++
 		s.mu.Unlock()
 		release := func() {
@@ -513,6 +521,19 @@ func (s *Server) answer(w http.ResponseWriter, j queue.Job, o queue.Outcome) boo
 	if !s.release(j, o) {
 		http.Error(w, "couldn't save the ledger", http.StatusServiceUnavailable)
 		return false
+	}
+	// Only what the worker reports: an expiry is as likely the tunnel.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch o.Kind {
+	case queue.OutcomeResult:
+		s.failing[j.Worker] = 0
+	case queue.OutcomeHost:
+		if s.failing[j.Worker]++; s.failing[j.Worker] >= FailingAfter {
+			s.failing[j.Worker] = 0
+			s.benched[j.Worker] = time.Now().Add(BenchFor)
+			s.Log.Printf("%s: %d host failures in a row, the last %q; no work for %s", j.Worker, FailingAfter, o.Reason, BenchFor)
+		}
 	}
 	return true
 }

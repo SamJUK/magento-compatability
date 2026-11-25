@@ -9,8 +9,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samjuk/magento-compatability/internal/images"
 	rel "github.com/samjuk/magento-compatability/internal/release"
 )
+
+func TestBaseConfig_NoPlaywrightImageSkipsPlaywright(t *testing.T) {
+	if c := baseConfig("/r", images.Manifest{}); c.PlaywrightDir != "" || c.PlaywrightImage != "" {
+		t.Errorf("playwright off, got %+v", c)
+	}
+	if c := baseConfig("/r", images.Manifest{Playwright: "pw@sha256:x"}); c.PlaywrightDir == "" || c.PlaywrightImage != "pw@sha256:x" {
+		t.Errorf("control: playwright on, got %+v", c)
+	}
+}
 
 func TestPrepare_RefusesATarballThatIsNotTheRelease(t *testing.T) {
 	src, out := t.TempDir(), t.TempDir()

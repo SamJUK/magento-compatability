@@ -23,14 +23,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samjuk/magento-compatability/internal/atomicfile"
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/result"
 	"github.com/samjuk/magento-compatability/internal/runner"
 )
-
-// hostCodes are failures that describe the worker, not the combination.
-var hostCodes = map[string]bool{"docker_name_conflict": true, "docker_cleanup_race": true, "disk_space": true}
 
 type Client struct {
 	HTTP  *http.Client
@@ -107,6 +105,7 @@ type Worker struct {
 	ready     bool
 	stale     string
 	unhealthy map[string]string
+	clearing  map[string]bool // stacks a clearStack is already retrying
 	running   map[string]*running
 	kick      chan struct{}
 	bg        sync.WaitGroup
@@ -132,6 +131,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	handled := w.stacks().RemoveLeftovers(ctx, func(name string, _ error) { w.clearLater(name) })
 	for _, e := range entries {
 		dir := filepath.Join(w.Spool, e.Name())
 		// Cut off between the sync and the rename: the upload is whole.
@@ -141,9 +141,10 @@ func (w *Worker) Start(ctx context.Context) error {
 		if _, err := os.Stat(filepath.Join(dir, "upload.json")); errors.Is(err, os.ErrNotExist) {
 			// Even with its result written: aborting charges no try, and Run decides what a result counts as.
 			w.Log.Printf("%s: left running by the last start, reporting it aborted", e.Name())
-			if name, err := os.ReadFile(filepath.Join(dir, "project")); err == nil {
+			if name, err := os.ReadFile(filepath.Join(dir, "project")); err == nil && !slices.Contains(handled, string(name)) {
 				if err := queue.RemoveStack(ctx, string(name)); err != nil {
 					w.Log.Printf("removing leftover stack %s: %v", name, err)
+					w.clearLater(string(name))
 				}
 			}
 			if err := w.spool(e.Name(), Upload{Schema: Schema, Attempt: e.Name(), Outcome: OutcomeAborted, Reason: "worker restarted"}); err != nil {
@@ -168,6 +169,15 @@ func (w *Worker) SetUnhealthy(cause, reason string) {
 		delete(w.unhealthy, cause)
 	} else {
 		w.unhealthy[cause] = reason
+	}
+}
+
+// Reporting wraps a wait so a held-back worker says why; otherwise a burst worker would bill idle looking healthy.
+func (w *Worker) Reporting(cause string, wait func() string) func() string {
+	return func() string {
+		reason := wait()
+		w.SetUnhealthy(cause, reason)
+		return reason
 	}
 }
 
@@ -289,25 +299,34 @@ func (w *Worker) Run(ctx context.Context, _ int, j queue.Job) queue.Outcome {
 		// Host npx isn't set up on workers; a run without it isn't a result.
 		return queue.Outcome{Kind: queue.OutcomeHost, Reason: "release has no Playwright image"}
 	}
+	// Here before the run, so a restart finds it if this process dies.
+	if err := os.MkdirAll(filepath.Join(w.Spool, j.Attempt), 0o700); err != nil {
+		return queue.Outcome{Kind: queue.OutcomeHost, Reason: "spool: " + err.Error()}
+	}
 	project := ""
 	cfg.OnProject = func(name string) {
 		project = name
-		os.WriteFile(filepath.Join(w.Spool, j.Attempt, "project"), []byte(name), 0o600)
+		if err := os.WriteFile(filepath.Join(w.Spool, j.Attempt, "project"), []byte(name), 0o600); err != nil {
+			w.Log.Printf("%s: recording project %s: %v", j.Attempt, name, err)
+		}
+		w.stacks().Record(name)
 	}
 
 	w.Log.Printf("%s: start %s", j.Attempt, j.Combination.ID())
-	_, err := w.Runner(ctx, j.Combination, cfg)
+	ran, err := w.Runner(ctx, j.Combination, cfg)
 
-	if errors.Is(err, runner.ErrCleanup) {
-		// Unhealthy before the next claim, not when the goroutine runs.
-		w.SetUnhealthy("stack "+project, "teardown failed for "+project)
-		go w.clearStack(project)
+	if project != "" {
+		if errors.Is(err, runner.ErrCleanup) {
+			w.clearLater(project)
+		} else {
+			w.stacks().ForgetIfGone(ctx, project)
+		}
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && !ran {
 		// The coordinator or whoever stopped this worker asked for it.
 		return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true, Reason: "stopped"}
 	}
-	path := filepath.Join(cfg.ResultsDir, j.Combination.Product, j.Combination.ID()+".json")
+	path := queue.ResultPath(cfg.ResultsDir, j.Combination)
 	if _, statErr := os.Stat(path); statErr != nil {
 		reason := "no result written"
 		if err != nil {
@@ -315,27 +334,10 @@ func (w *Worker) Run(ctx context.Context, _ int, j queue.Job) queue.Outcome {
 		}
 		return queue.Outcome{Kind: queue.OutcomeHost, Reason: reason}
 	}
-	if code := hostFailure(path); code != "" {
+	if code := queue.HostFailure(path); code != "" {
 		return queue.Outcome{Kind: queue.OutcomeHost, Reason: code}
 	}
 	return queue.Outcome{Kind: queue.OutcomeResult, Wrote: true}
-}
-
-func hostFailure(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var r result.TestResult
-	if json.Unmarshal(data, &r) != nil {
-		return ""
-	}
-	for _, st := range r.Steps {
-		if st.Failure != nil && hostCodes[st.Failure.Code] {
-			return st.Failure.Code
-		}
-	}
-	return ""
 }
 
 var preflightTimeout = 2 * time.Minute
@@ -364,8 +366,42 @@ func (w *Worker) runPreflight(ctx context.Context) (queue.Outcome, bool) {
 	return queue.Outcome{Kind: queue.OutcomeHost, Reason: err.Error()}, false
 }
 
-// clearStack keeps the worker off new work until a stack whose teardown
-// timed out is gone.
+var clearEvery = 30 * time.Second
+
+// attempts is the spool's attempt directories, named by their ID; anything
+// else in it is left alone.
+func (w *Worker) attempts() ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(w.Spool)
+	return slices.DeleteFunc(entries, func(e os.DirEntry) bool {
+		_, err := hex.DecodeString(e.Name())
+		return !e.IsDir() || len(e.Name()) != 24 || err != nil
+	}), err
+}
+
+// stacksDir records stacks still to remove: the spool entry naming one is
+// gone once its attempt uploads.
+func (w *Worker) stacksDir() string { return filepath.Clean(w.Spool) + "-stacks" }
+
+func (w *Worker) stacks() queue.Stacks { return queue.Stacks{Dir: w.stacksDir(), Log: w.Log} }
+
+// clearLater keeps the worker off new work until a stack whose teardown
+// failed is gone, across restarts.
+func (w *Worker) clearLater(project string) {
+	// Unhealthy before the next claim, not when the goroutine runs.
+	w.SetUnhealthy("stack "+project, "teardown failed for "+project)
+	w.stacks().Record(project)
+	w.mu.Lock()
+	clearing := w.clearing[project]
+	if w.clearing == nil {
+		w.clearing = map[string]bool{}
+	}
+	w.clearing[project] = true
+	w.mu.Unlock()
+	if !clearing {
+		go w.clearStack(project)
+	}
+}
+
 func (w *Worker) clearStack(project string) {
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -375,8 +411,12 @@ func (w *Worker) clearStack(project string) {
 			break
 		}
 		w.Log.Printf("removing %s: %v", project, err)
-		time.Sleep(30 * time.Second)
+		time.Sleep(clearEvery)
 	}
+	os.Remove(filepath.Join(w.stacksDir(), project))
+	w.mu.Lock()
+	delete(w.clearing, project)
+	w.mu.Unlock()
 	w.SetUnhealthy("stack "+project, "")
 }
 
@@ -400,14 +440,19 @@ func (w *Worker) Release(j queue.Job, o queue.Outcome) {
 			up.Outcome, up.Reason = OutcomeHost, err.Error()
 			break
 		}
-		// Hashed as it travels: encoding/json compacts a RawMessage.
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, raw); err != nil {
+		// Hashed as it travels: encoding/json compacts a RawMessage and
+		// escapes <, > and &, so this is what every later Marshal sends.
+		if cut := fit(raw, int(MaxUpload)*3/4); len(cut) < len(raw) {
+			w.Log.Printf("%s: result of %d bytes cut to %d to fit the upload", j.Attempt, len(raw), len(cut))
+			raw = cut
+		}
+		wire, err := json.Marshal(json.RawMessage(raw))
+		if err != nil {
 			up.Outcome, up.Reason = OutcomeHost, "result isn't JSON: "+err.Error()
 			break
 		}
-		sum := sha256.Sum256(compact.Bytes())
-		up.Result, up.SHA256 = compact.Bytes(), hex.EncodeToString(sum[:])
+		sum := sha256.Sum256(wire)
+		up.Result, up.SHA256 = wire, hex.EncodeToString(sum[:])
 	}
 	if err := w.spool(j.Attempt, up); err != nil {
 		w.Log.Printf("%s: spooling: %v", j.Attempt, err)
@@ -423,6 +468,35 @@ func (w *Worker) Release(j queue.Job, o queue.Outcome) {
 	case w.kick <- struct{}{}:
 	default:
 	}
+}
+
+// fit cuts a result that would be refused as too big: container logs go, then each step keeps the end of its log.
+func fit(raw []byte, limit int) []byte {
+	if len(raw) <= limit {
+		return raw
+	}
+	var r result.TestResult
+	if json.Unmarshal(raw, &r) != nil {
+		return raw
+	}
+	r.ContainerLogs = nil
+	// Escaping can grow a log several times over, so measure and go again.
+	for keep := limit / (2 * (len(r.Steps) + 1)); keep > 0; keep /= 2 {
+		for name, s := range r.Steps {
+			if len(s.Log) > keep {
+				s.Log = "[cut to fit the upload]\n" + strings.ToValidUTF8(s.Log[len(s.Log)-keep:], "")
+				r.Steps[name] = s
+			}
+		}
+		b, err := json.Marshal(r)
+		if err != nil {
+			return raw
+		}
+		if len(b) <= limit {
+			return b
+		}
+	}
+	return raw
 }
 
 func (w *Worker) spool(attempt string, up Upload) error {
@@ -449,17 +523,10 @@ func (w *Worker) spool(attempt string, up Upload) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, "upload.json"))
-}
-
-// attempts is the spool's attempt directories, named by their ID; anything
-// else in it is left alone.
-func (w *Worker) attempts() ([]os.DirEntry, error) {
-	entries, err := os.ReadDir(w.Spool)
-	return slices.DeleteFunc(entries, func(e os.DirEntry) bool {
-		_, err := hex.DecodeString(e.Name())
-		return !e.IsDir() || len(e.Name()) != 24 || err != nil
-	}), err
+	if err := os.Rename(tmp, filepath.Join(dir, "upload.json")); err != nil {
+		return err
+	}
+	return atomicfile.SyncDir(dir)
 }
 
 func (w *Worker) held() []string {

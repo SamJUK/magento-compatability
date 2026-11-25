@@ -752,6 +752,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 			ran, err = false, cleanupErr
 			return
 		}
+		ran = ran && wrote
 		err = errors.Join(err, cleanupErr)
 	}()
 

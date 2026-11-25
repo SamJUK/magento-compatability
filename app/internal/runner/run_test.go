@@ -42,17 +42,17 @@ func (f *fakeDocker) exec(ctx context.Context, name string, args ...string) *exe
 	if !f.quick && strings.Contains(call, " exec -T php-fpm ") && !strings.Contains(call, "smoke.sh") {
 		return exec.CommandContext(ctx, "sh", "-c", "exec sleep 30")
 	}
-	if f.cancel != nil && strings.HasPrefix(call, "docker run ") {
-		f.cancel()
-	}
-	if f.failRm && strings.HasPrefix(call, "docker rm ") {
-		return exec.CommandContext(ctx, "false")
-	}
 	if f.diskFull && strings.Contains(call, " up -d ") {
 		return exec.CommandContext(ctx, "sh", "-c", "echo 'no space left on device'; exit 1")
 	}
 	if f.diskFull && strings.Contains(call, " ps -a") {
 		return exec.CommandContext(ctx, "sh", "-c", "exec sleep 1")
+	}
+	if f.cancel != nil && strings.HasPrefix(call, "docker run ") {
+		f.cancel()
+	}
+	if f.failRm && strings.HasPrefix(call, "docker rm ") {
+		return exec.CommandContext(ctx, "false")
 	}
 	if f.slowDown && strings.Contains(call, " down ") {
 		return exec.CommandContext(ctx, "sh", "-c", "exec sleep 2")
@@ -87,7 +87,9 @@ func runWithFakeDocker(t *testing.T, ctx context.Context, cfg RunConfig, fake *f
 	}
 	_, file, _, _ := runtime.Caller(0)
 	cfg.ComposeDir = filepath.Join(filepath.Dir(file), "..", "..", "..", "docker", "compose")
-	cfg.ResultsDir = t.TempDir()
+	if cfg.ResultsDir == "" {
+		cfg.ResultsDir = t.TempDir()
+	}
 	ran, err := Run(ctx, c, cfg)
 	return fake, filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json"), ran, err
 }
@@ -310,5 +312,18 @@ func TestRun_CancelledRunStillReportsAFailedTeardown(t *testing.T) {
 	_, _, ran, err = runWithFakeDocker(t, ctx, cfg, &fakeDocker{quick: true, cancel: cancel})
 	if ran || err != nil {
 		t.Errorf("control: Run() = %v, %v", ran, err)
+	}
+}
+
+func TestRun_AResultThatWontWriteIsNotARun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	results := t.TempDir()
+	os.Chmod(results, 0o555)
+	t.Cleanup(func() { os.Chmod(results, 0o755) })
+	cfg := RunConfig{PlaywrightDir: t.TempDir(), PlaywrightImage: "pw", ResultsDir: results}
+	if _, _, ran, err := runWithFakeDocker(t, context.Background(), cfg, &fakeDocker{quick: true}); ran || err == nil {
+		t.Errorf("Run() = %v, %v; want not ran, with the write error", ran, err)
 	}
 }

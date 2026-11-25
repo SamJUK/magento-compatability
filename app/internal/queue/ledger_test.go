@@ -386,3 +386,28 @@ func TestCounts_QueuedLeavesOutClaimed(t *testing.T) {
 		t.Errorf("one claimed: %v; want eligible 2, queued 1", n)
 	}
 }
+
+func TestLocal_ALeaseOnAFinishedCombinationDoesntHoldTheSweep(t *testing.T) {
+	state, results := t.TempDir(), t.TempDir()
+	a := combo("8.1")
+	writeResult(t, results, a, "pass", "pass", before)
+	test := openLedger(t, state)
+	test.Lease(results, a.ID())
+	l := newLocal(t, state, results, []matrix.Combination{a}, false)
+	if _, st := next(t, l); st != StateDone {
+		t.Errorf("state %v, want done", st)
+	}
+}
+
+func TestLocal_AHostFailureWaitsBehindFreshWork(t *testing.T) {
+	a, b := combo("8.3"), combo("8.4")
+	l := newLocal(t, t.TempDir(), t.TempDir(), []matrix.Combination{a, b}, false)
+	j, _ := next(t, l)
+	if j.Combination.ID() != a.ID() {
+		t.Fatalf("first claim %s, want %s", j.Combination.ID(), a.ID())
+	}
+	l.Release(j, Outcome{Kind: OutcomeHost})
+	if j, _ := next(t, l); j.Combination.ID() != b.ID() {
+		t.Errorf("after a host failure got %s, want the fresh %s", j.Combination.ID(), b.ID())
+	}
+}

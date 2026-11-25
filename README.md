@@ -54,7 +54,7 @@ It takes the same filters and options as `test`, with `-deadline` at 45 minutes 
 Stack setup failures are retried up to three times, and any other failure from the sweep gets one more go.
 Failures from before the sweep run once with `-retry-failures`, and passes once with `-force`.
 A sweep is the same filters and results directory; it remembers when it started, so a failure written since then (by `test` too) counts as the sweep's own until `-fresh` starts it over.
-Resuming a sweep with different `-playwright`, `-sample-data`, `-max-log-bytes` or `-deadline` is refused, since its results would be mixed; `-fresh` starts it over.
+Resuming a sweep with different `-playwright`, `-sample-data`, `-max-log-bytes` or `-deadline` is refused, since its results would be mixed; `-fresh` starts it over. With remote workers, `-max-log-bytes` must be 0 to 2MiB, as logs travel in the upload.
 A run that errors without writing a result is put down to the host and retried up to three times without using up the combination's tries.
 It runs 2 stacks at once (`-slots`), drops one while memory is short and waits while the disk is under 40GB free.
 Writing a number to the `slots` file it names at startup changes the slot count without a restart, up to `-slots` or the file's value at startup, whichever is larger.
@@ -77,32 +77,34 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ./bin/magento-compatibility-builder queue -ids-file sweep.txt -workers lab1 -slots 0
 ```
 
-The host needs Docker with buildx and Compose, an `m2test` user in the docker group whose only key is the pool key, lingering for that user, `/var/lib/m2test` owned by it, and these sshd settings for it: `StreamLocalBindUnlink yes` (a reconnect replaces a stale socket) and `AllowTcpForwarding remote` with `PermitListen none` (OpenSSH refuses a forwarded Unix socket under `AllowTcpForwarding no`).
+The host needs Docker with buildx and Compose, an `m2test` user in the docker group whose only key is the pool key, lingering for that user, `/var/lib/m2test` owned by it, and these sshd settings for it: `StreamLocalBindUnlink yes` (a reconnect replaces a stale socket), `AllowStreamLocalForwarding` left at its default of yes (or `remote`), `AllowTcpForwarding remote` with `PermitListen none` (OpenSSH refuses a forwarded Unix socket under `AllowTcpForwarding no`), and `ClientAliveInterval 15` with `ClientAliveCountMax 3` (a laptop that went to sleep is dropped quickly). sshd keeps the first value it reads for each setting, so change existing lines (Alpine ships `AllowTcpForwarding no`) or put these in a `Match User m2test` block rather than appending them.
+Its login shell must be POSIX `sh` compatible and print nothing: the queue reads the output of the scripts it runs there.
 
-For each remote worker, `queue -workers` keeps an SSH tunnel open from the worker's `/var/lib/m2test/worker.sock` to `worker.sock` here, reconnecting with backoff, and deploys the sweep's release to it before restarting its unit.
+For each remote worker, `queue -workers` keeps an SSH tunnel open from the worker's `/var/lib/m2test/worker.sock` to `worker.sock` here, reconnecting with backoff (it gives up on a worker whose sshd refuses the forward for 10 minutes), and deploys the sweep's release to it before restarting its unit.
 A remote worker serves one sweep at a time: a second sweep on this machine naming it stops at once.
-`worker add NAME` with no `-host` makes a worker for this machine, which runs `m2test-worker -socket <state dir>/worker.sock` itself.
+`worker add NAME` with no `-host` makes a worker for this machine and prints its token; you start it yourself, as `m2test-worker -socket <state dir>/worker.sock -token-file <file holding the token> -release <releases dir>/<hash>`, once `m2test-worker prepare` has readied the sweep's release.
 `worker remove` stops a worker's unit and forgets it and its host key; `worker list` shows them.
 `-slots 0` leaves every run to the workers.
 
 A sweep with `-workers` runs a release: a snapshot of `matrix.yml` and `docker/` with every upstream image pinned to the digest its tag had at the start, in `releases/` in the state directory.
-Resuming the sweep runs the same release, even if the checkout or the upstream tags have moved since; `-fresh` takes a new one.
-Local slots run the release too, on its pinned images and with Playwright in its container, so `-compose-dir` can't be used with `-workers`.
+Resuming the sweep runs the same release, even if the checkout or the upstream tags have moved since; `-fresh` takes a new one. A resume is refused if `matrix.yml` has since changed the settings of any of its combinations; adding or removing combinations makes it a different sweep.
+Local slots run the release too, on its pinned images and with Playwright in its container, so `-compose-dir` can't be used with `-workers` or when resuming a sweep that has a release.
 Readying those images retags this machine's upstream tags (`mariadb:11.4` and so on) to the pinned digests.
 
 Each worker unpacks the release tarball, refusing it unless it holds the release the queue asked for, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
 The queue does this through `m2test-worker prepare -hash <hash> -tarball <file> -releases <dir>`, which works by hand too.
 With `DOCKERHUB_USERNAME` and a read-only `DOCKERHUB_TOKEN` set, the queue lends them to each worker's pulls, since anonymous Docker Hub limits are per IP.
-They go in a Docker config under the worker's `XDG_RUNTIME_DIR`, which must be tmpfs, and are removed when the deploy ends.
+They go in a Docker config under the worker's `XDG_RUNTIME_DIR`, which must be tmpfs, and are removed when the deploy ends. A killed deploy leaves them there until a later deploy with the token (the config at once, the copy of the script after an hour) or a reboot.
 That config replaces `~/.docker` for the pull, so buildx must be installed system-wide (as `docker-buildx-plugin` is), not under `~/.docker/cli-plugins`, and the worker must use the default Docker socket rather than a context.
 After each deploy a worker removes its unused harness images from other releases; nothing else it holds is touched.
 
-The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run.
+The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run. A worker also takes none while its disk is under 15GB free (`-min-free-gb`), and reports that to the queue as unhealthy.
+A worker that reports three host failures in a row gets no work for 15 minutes.
 Workers run Playwright in a container on the stack's own network, against `http://varnish` or `http://webserver`, so they need no Node.
 A sweep started without `-workers` runs the checkout, so it can't take workers later without `-fresh`.
 
 A worker keeps each finished run in its spool until the queue has answered for it, so results outlive a dropped tunnel or a restarted queue.
-A worker that goes quiet for two minutes loses its runs to the next claim; its late uploads are refused.
+A worker that goes quiet for five minutes (ten after the coordinator restarts) loses its runs to the next claim; its late uploads are refused.
 The queue checks every uploaded result against the combination it handed out and keeps any it refuses in `rejected/`.
 `test -ignore-queue` aborts a worker's run of the same combination and refuses its upload.
 
@@ -141,7 +143,7 @@ Instances go in the region's default VPC (a default subnet in a zone offering th
 A security group named `m2test-<id>` allows SSH from `ssh_from` only, which must be IPv4 here.
 Each one powers itself off an hour past `max_age`, which terminates it, so an instance the queue lost track of stops billing on its own; this also happens at any boot after that time.
 The time comes from this machine's clock, so keep it right.
-Each EC2 worker records the AWS account it was made in, and `worker gc` leaves alone an entry from another account, or with none recorded, unless its instance is listed by label in this one. Run it with the same credentials as the burst; otherwise set the entry's `cloud.account` in `workers.json`, or remove the entry, as its log line says.
+Each cloud worker records the account it was made in (on Hetzner, the ID of the project's `m2test-pool-<pool>` SSH key, as Hetzner IDs are unique across projects), and `worker gc` leaves alone an entry from another account, or with none recorded, unless its instance is listed by label in this one. Run it with the same credentials or `HCLOUD_TOKEN` as the burst; otherwise set the entry's `cloud.account` in `workers.json`, or remove the entry, as its log line says.
 An existing group or (on Hetzner) firewall by that name is only changed if it carries the `m2test=firewall` tag or label.
 The credentials need `ec2:RunInstances`, `TerminateInstances`, `CreateTags`, the `Describe*` calls for instances, images, instance types and their offerings, VPCs, subnets and security groups, and `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress` and `RevokeSecurityGroupIngress`.
 

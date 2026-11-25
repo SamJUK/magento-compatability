@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -77,6 +78,14 @@ Flags:`)
 	)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
+	}
+	if *numSlots < 0 || *numSlots > pool.MaxSlots {
+		fatalf("-slots %d: 0 to %d", *numSlots, pool.MaxSlots)
+	}
+	// Remote logs ride in the upload; the worker's fit cuts what is still
+	// too big.
+	if (*workerNames != "" || *cloudFlag != "") && (sel.maxLogBytes < 0 || sel.maxLogBytes > 2<<20) {
+		fatalf("-max-log-bytes %d: 0 to %d with remote workers", sel.maxLogBytes, 2<<20)
 	}
 
 	combos := sel.load()
@@ -145,11 +154,21 @@ Flags:`)
 	signal.Ignore(syscall.SIGPIPE)
 	signalled, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	// After the first signal, a second one kills the process instead of
-	// waiting out teardown; the next start removes what it left.
+	// A second signal kills the process rather than waiting out teardown; the next start removes its stacks, worker gc its servers.
 	go func() { <-signalled.Done(); stop() }()
-	ctx, cancel := context.WithCancel(signalled)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(signalled)
+	defer cancel(nil)
+	incomplete := false
+	// Deferred first so it runs last, after a burst's teardown.
+	defer func() {
+		if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			fatalf("%v", err)
+		}
+		// Stopped, or runs left without a result of their own: a caller mustn't publish what's there.
+		if signalled.Err() != nil || incomplete {
+			os.Exit(1)
+		}
+	}()
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 
 	stacksDir := filepath.Join(stateDir, "stacks")
@@ -160,7 +179,7 @@ Flags:`)
 		n := *numSlots
 		if data, err := os.ReadFile(slotsFile); err == nil {
 			if v, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && v >= 0 {
-				n = v
+				n = min(v, pool.MaxSlots)
 			}
 		}
 		if free, err := queue.MemoryFreePercent(); err == nil && free < *minFreeMem && n > 1 {
@@ -171,8 +190,11 @@ Flags:`)
 	maxSlots := *numSlots
 	if data, err := os.ReadFile(slotsFile); err == nil {
 		if v, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			maxSlots = max(maxSlots, v)
+			maxSlots = max(maxSlots, min(v, pool.MaxSlots))
 		}
+	}
+	if maxSlots == 0 && ws == nil {
+		fatalf("-slots 0 runs nothing here; give it -workers or -cloud")
 	}
 
 	var mem queue.MemorySampler
@@ -180,6 +202,10 @@ Flags:`)
 
 	base := sel.runConfig()
 	base.Force = true
+	// Rechecked before each local claim: a prune mid-sweep would have
+	// compose pull by tag.
+	var imagesMu sync.Mutex
+	readyImages := func(context.Context) error { return nil }
 	if contract.Release != "" {
 		logger.Printf("running release %s", contract.Release)
 		dir := filepath.Join(releases, contract.Release)
@@ -192,7 +218,22 @@ Flags:`)
 				fatalf("%v", err)
 			}
 			logger.Print("readying the release's images for local slots")
-			if err := images.Ready(ctx, dir, contract.Release, m); err != nil {
+			var checked time.Time
+			readyImages = func(ctx context.Context) error {
+				imagesMu.Lock()
+				defer imagesMu.Unlock()
+				// Idle slots poll every few seconds; a docker inspect per
+				// image each time is a lot.
+				if time.Since(checked) < 30*time.Second {
+					return nil
+				}
+				err := images.Ready(ctx, dir, contract.Release, m)
+				if err == nil {
+					checked = time.Now()
+				}
+				return err
+			}
+			if err := readyImages(ctx); err != nil {
 				fatalf("%v", err)
 			}
 			// The image also sets the base URL, as on workers, even with
@@ -213,7 +254,9 @@ Flags:`)
 
 	var stopWorkers func()
 	if ws != nil {
-		f := serveWorkers(ctx, logger, src, contract, releases, ws, stateDir)
+		// Local slots or a burst can still finish a sweep the named
+		// workers can't.
+		f := serveWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, maxSlots > 0 || *cloudFlag != "")
 		stopWorkers = f.wait
 		if *cloudFlag != "" {
 			endBurst := startBurst(ctx, logger, f, src, burstProvider, burstN, *yes)
@@ -225,7 +268,7 @@ Flags:`)
 		Source:   src,
 		MaxSlots: maxSlots,
 		Slots:    slots,
-		Wait:     queue.DiskGuard(*diskPath, *minFreeGB),
+		Wait:     guards(queue.DiskGuard(*diskPath, *minFreeGB), imagesGuard(ctx, readyImages)),
 		Run: func(ctx context.Context, slot int, j queue.Job) queue.Outcome {
 			c := j.Combination
 			cfg := base
@@ -267,8 +310,9 @@ Flags:`)
 	}
 	engine.Start(ctx)
 	if stopWorkers != nil {
-		// Cancelling, not stop(), so a signal during teardown is still the first.
-		defer func() { cancel(); stopWorkers() }()
+		// cancel, not stop(): a first signal during teardown is still caught;
+		// only a second kills.
+		defer func() { cancel(nil); stopWorkers() }()
 		for ctx.Err() == nil && !src.Done() {
 			select {
 			case <-ctx.Done():
@@ -284,6 +328,12 @@ Flags:`)
 	counts = src.Counts()
 	logger.Printf("done: pass=%d fail=%d setup_fail=%d todo=%d",
 		counts[queue.StatusPass], counts[queue.StatusFail], counts[queue.StatusSetupFail], counts[queue.StatusTodo])
+	if n := counts["exhausted"]; n > 0 {
+		logger.Printf("%d results stand only because their retries ran out", n)
+	}
+	// Short of every combination when the ledger couldn't be read.
+	incomplete = counts[queue.StatusTodo] > 0 ||
+		counts[queue.StatusPass]+counts[queue.StatusFail]+counts[queue.StatusSetupFail] != len(combos)
 }
 
 type workers struct {
@@ -299,6 +349,20 @@ func loadWorkers(names, sock string, burst bool) *workers {
 	p, err := pool.Open()
 	if err != nil {
 		fatalf("%v", err)
+	}
+	// Before the inventory is read, local workers too: a worker remove
+	// finishing first must not leave this sweep accepting its token.
+	locked := map[string]bool{}
+	for name := range strings.SplitSeq(names, ",") {
+		if names == "" || locked[name] {
+			continue
+		}
+		lock, err := p.Lock(name)
+		if err != nil {
+			fatalf("%v", err)
+		}
+		heldLocks = append(heldLocks, lock)
+		locked[name] = true
 	}
 	inv, err := p.Load()
 	if err != nil {
@@ -340,9 +404,6 @@ func loadWorkers(names, sock string, burst bool) *workers {
 			if err := pool.LocalSocket(sock); err != nil {
 				fatalf("%v", err)
 			}
-			if _, err := p.Lock(name); err != nil {
-				fatalf("%v", err)
-			}
 			ws.remote[name] = w
 		}
 	}
@@ -365,7 +426,7 @@ type fleet struct {
 	wait    func()
 }
 
-func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string) *fleet {
+func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string, others bool) *fleet {
 	p, tokens, remote := ws.pool, ws.tokens, ws.remote
 	releaseDir := filepath.Join(releases, contract.Release)
 	workarounds, err := coord.LoadWorkarounds(filepath.Join(releaseDir, "docker", "scripts", "workarounds.json"))
@@ -381,26 +442,78 @@ func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, con
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
+		// Not fatal here: exiting now would skip a burst's teardown.
 		if err := srv.Serve(ctx, sock); err != nil {
-			fatalf("worker socket: %v", err)
+			fail(fmt.Errorf("worker socket: %w", err))
 		}
 	}()
 	logger.Printf("serving %d workers on %s", len(tokens), sock)
 	connect := func(ctx context.Context, name string, w *pool.Worker) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		var tunnel sync.WaitGroup
-		tunnel.Go(func() { p.Tunnel(ctx, name, w, sock, logger) })
+		tunnel.Go(func() {
+			if err := p.Tunnel(ctx, name, w, sock, logger); err != nil {
+				// Without a tunnel it can't claim; stop deploying to it too.
+				logger.Printf("%s: giving up on it, it gets no work this sweep: %v", name, err)
+				cancel()
+			}
+		})
 		logger.Printf("%s: deploying release %.12s", name, contract.Release)
 		started := time.Now()
-		if p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger) {
+		switch err := p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger); {
+		case err == nil:
 			logger.Printf("%s: release %.12s ready after %s", name, contract.Release, time.Since(started).Round(time.Second))
+		case errors.Is(err, pool.ErrUnfit):
+			logger.Printf("%s: giving up on it, it gets no work this sweep: %v", name, err)
+			cancel()
+		case errors.Is(err, pool.ErrPermanent):
+			// Every worker would fail the same; a burst's would bill idle.
+			fail(fmt.Errorf("%s: %w", name, err))
 		}
 		tunnel.Wait()
 	}
-	var tunnels sync.WaitGroup
-	for name, w := range remote {
-		tunnels.Go(func() { connect(ctx, name, w) })
-	}
+	tunnels := connectAll(ctx, remote, connect, fail, others || len(tokens) > len(remote))
 	return &fleet{srv: srv, connect: connect, wait: func() { <-served; srv.Wait(); tunnels.Wait() }}
+}
+
+// connectAll connects each named worker; the last to give up ends the sweep when nothing else can run it.
+func connectAll(ctx context.Context, remote map[string]*pool.Worker, connect func(context.Context, string, *pool.Worker), fail context.CancelCauseFunc, others bool) *sync.WaitGroup {
+	var tunnels sync.WaitGroup
+	var left atomic.Int32
+	left.Store(int32(len(remote)))
+	for name, w := range remote {
+		tunnels.Go(func() {
+			connect(ctx, name, w)
+			if left.Add(-1) == 0 && !others {
+				fail(errors.New("no worker left that can reach this coordinator"))
+			}
+		})
+	}
+	return &tunnels
+}
+
+// imagesGuard holds a local slot back, before it claims anything, while
+// the host's images aren't ready: the host's trouble, not the work's.
+func imagesGuard(ctx context.Context, ready func(context.Context) error) func() string {
+	return func() string {
+		// A stop isn't the images' fault; the engine sees ctx itself.
+		if err := ready(ctx); err != nil && ctx.Err() == nil {
+			return "images: " + err.Error()
+		}
+		return ""
+	}
+}
+
+func guards(gs ...func() string) func() string {
+	return func() string {
+		for _, g := range gs {
+			if reason := g(); reason != "" {
+				return reason
+			}
+		}
+		return ""
+	}
 }
 
 // runOutcome says how a finished run counts: an error with no result is the

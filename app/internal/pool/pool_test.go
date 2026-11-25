@@ -6,17 +6,22 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/samjuk/magento-compatability/internal/images"
 )
 
 const (
@@ -139,6 +144,12 @@ func TestValidateRefusesWhatWouldReachAShell(t *testing.T) {
 	}
 }
 
+func needTimeout(t *testing.T) {
+	if _, err := exec.LookPath("timeout"); err != nil {
+		t.Skip("needs timeout(1)")
+	}
+}
+
 func fakeSSH(t *testing.T, reply func(args []string) string) *[][]string {
 	var mu sync.Mutex
 	calls := &[][]string{}
@@ -172,6 +183,31 @@ func TestSetupSendsTheTokenOnStdin(t *testing.T) {
 	}
 }
 
+func TestSetupWaitsForADeploy(t *testing.T) {
+	needTimeout(t)
+	run := func(lock string) (string, bool) {
+		d, bin, home := t.TempDir(), t.TempDir(), t.TempDir()
+		os.WriteFile(bin+"/flock", []byte("#!/bin/sh\necho lock >> "+d+"/calls\n"+lock+"\n"), 0o755)
+		os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ : >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n"), 0o755)
+		os.WriteFile(d+"/m2test-worker.new", []byte("new"), 0o644)
+		w := lab()
+		w.Dir = d
+		cmd := exec.Command("sh", "-s")
+		cmd.Stdin = strings.NewReader(setupScript(w))
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+home)
+		cmd.Run()
+		calls, _ := os.ReadFile(d + "/calls")
+		_, err := os.Stat(d + "/bin/m2test-worker")
+		return string(calls), err == nil
+	}
+	if calls, swapped := run("exit 0"); calls != "lock\ndaemon-reload\nenable\ntry-restart\n" || !swapped {
+		t.Errorf("calls %q, binary swapped %v", calls, swapped)
+	}
+	if calls, swapped := run("exit 1"); calls != "lock\n" || swapped {
+		t.Errorf("lock timed out: calls %q, binary swapped %v", calls, swapped)
+	}
+}
+
 func TestDeploySkipsUploadWhenTheWorkerHasTheRelease(t *testing.T) {
 	p := testPool(t)
 	tar := filepath.Join(t.TempDir(), "r.tar.gz")
@@ -201,6 +237,7 @@ func TestDeploySkipsUploadWhenTheWorkerHasTheRelease(t *testing.T) {
 }
 
 func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
+	needTimeout(t)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip(err)
@@ -214,7 +251,8 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	// GNU mv's -T, which BSD mv lacks: without it mv moves into the dir a link points to.
 	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && { shift; rm -f \"$2\"; }\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
 	os.WriteFile(bin+"/flock", []byte("#!/bin/sh\n"), 0o755)
-	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\necho \"$2\" >> "+d+"/calls\n[ \"$2\" = restart ] && rm "+d+"/fail 2>/dev/null && exit 1\nexit 0\n"), 0o755)
+	// Whatever systemctl starts must not inherit the deploy lock.
+	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ : >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n[ \"$2\" = restart ] && rm "+d+"/fail 2>/dev/null && exit 1\nexit 0\n"), 0o755)
 	// Never the real daemon: housekeeping prunes images.
 	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\necho \"$*\" >> "+d+"/docker\n"), 0o755)
 	os.WriteFile(d+"/incoming/abc.tar.gz", []byte("x"), 0o644)
@@ -291,6 +329,7 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 }
 
 func TestDeployScriptLendsTheDockerHubTokenOnTmpfsOnly(t *testing.T) {
+	needTimeout(t)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip(err)
@@ -404,6 +443,68 @@ func TestTunnelReconnectsWithBackoffUntilCancelled(t *testing.T) {
 	}
 }
 
+// attemptClock makes each clock reading a second after the last, so
+// RefusedFor spans a fixed number of attempts however slow the machine.
+func attemptClock(t *testing.T) {
+	var now time.Time
+	old := clock
+	t.Cleanup(func() { clock = old })
+	clock = func() time.Time { now = now.Add(time.Second); return now }
+}
+
+func TestTunnelGivesUpOnlyOnSustainedRefusal(t *testing.T) {
+	p := testPool(t)
+	old, oldFor := Backoff, RefusedFor
+	Backoff, RefusedFor = [2]time.Duration{time.Millisecond, 4 * time.Millisecond}, 10*time.Second
+	attemptClock(t)
+	t.Cleanup(func() { Backoff, RefusedFor = old, oldFor })
+	refuse := "echo 'Error: remote port forwarding failed for listen path /x' >&2; exit 255"
+	wrongKey := "echo 'Host key verification failed.' >&2; exit 255"
+	denied := "echo 'git@lab1: Permission denied (password).' >&2; exit 255"
+	var mu sync.Mutex
+	n := 0
+	for _, tc := range []struct {
+		name   string
+		reply  func(int) string
+		giveUp bool
+	}{
+		{"refused", func(int) string { return refuse }, true},
+		{"wrong host key", func(int) string { return wrongKey }, true},
+		{"our key refused", func(int) string { return denied }, true},
+		{"wrong host key then refused", func(i int) string {
+			if (i/4)%2 == 0 {
+				return wrongKey
+			}
+			return refuse
+		}, false},
+		// A dropped connection between refusals starts the clock again.
+		{"interleaved", func(i int) string {
+			if i%3 == 0 {
+				return "exit 255"
+			}
+			return refuse
+		}, false},
+	} {
+		n = 0
+		// Ended by attempts, not time: giving up takes about five.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		fakeSSH(t, func([]string) string {
+			mu.Lock()
+			defer mu.Unlock()
+			if n++; n > 30 {
+				cancel()
+			}
+			return tc.reply(n)
+		})
+		start := time.Now()
+		err := p.Tunnel(ctx, "lab1", lab(), "/tmp/w.sock", log.New(io.Discard, "", 0))
+		cancel()
+		if gaveUp := err != nil; gaveUp != tc.giveUp {
+			t.Errorf("%s: gave up %v after %s: %v", tc.name, gaveUp, time.Since(start), err)
+		}
+	}
+}
+
 func TestTunnelForwardsToTheWorkerDir(t *testing.T) {
 	p := testPool(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -441,7 +542,7 @@ func TestTailKeepsOnlyTheEnd(t *testing.T) {
 			t.Fatalf("short write %d", n)
 		}
 	}
-	if got := tl.String(); got != "klmnopXY" {
+	if got := string(tl.Bytes()); got != "klmnopXY" {
 		t.Errorf("kept %q", got)
 	}
 }
@@ -502,11 +603,53 @@ func TestDeployUntilDoneRetries(t *testing.T) {
 		}
 		return ""
 	})
-	if !p.DeployUntilDone(context.Background(), "lab1", lab(), "abc", tar, log.New(io.Discard, "", 0)) {
-		t.Fatal("gave up")
+	if err := p.DeployUntilDone(context.Background(), "lab1", lab(), "abc", tar, log.New(io.Discard, "", 0)); err != nil {
+		t.Fatalf("gave up: %v", err)
 	}
 	if n < 4 {
 		t.Errorf("%d calls", n)
+	}
+}
+
+func TestDeployUntilDoneGivesUpOnASustainedRefusal(t *testing.T) {
+	p := testPool(t)
+	old, oldFor := Backoff, RefusedFor
+	Backoff, RefusedFor = [2]time.Duration{time.Millisecond, 4 * time.Millisecond}, 10*time.Second
+	attemptClock(t)
+	t.Cleanup(func() { Backoff, RefusedFor = old, oldFor })
+	tar := filepath.Join(t.TempDir(), "r.tar.gz")
+	os.WriteFile(tar, []byte("x"), 0o644)
+	wrongKey := "echo 'Host key verification failed.' >&2; exit 255"
+	denied := "echo 'git@lab1: Permission denied (password).' >&2; exit 255"
+	for _, tc := range []struct {
+		name   string
+		reply  func(int) string
+		giveUp bool
+	}{
+		{"wrong host key", func(int) string { return wrongKey }, true},
+		{"our key refused", func(int) string { return denied }, true},
+		// A dropped connection between them starts the clock again.
+		{"interleaved", func(i int) string {
+			if i%3 == 0 {
+				return "exit 255"
+			}
+			return wrongKey
+		}, false},
+	} {
+		n := 0
+		// Ended by attempts, not time: giving up takes about five.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		fakeSSH(t, func([]string) string {
+			if n++; n > 30 {
+				cancel()
+			}
+			return tc.reply(n)
+		})
+		err := p.DeployUntilDone(ctx, "lab1", lab(), "abc", tar, log.New(io.Discard, "", 0))
+		cancel()
+		if gaveUp := errors.Is(err, ErrUnfit); gaveUp != tc.giveUp {
+			t.Errorf("%s: gave up %v: %v", tc.name, gaveUp, err)
+		}
 	}
 }
 
@@ -563,6 +706,7 @@ func TestValidateBoundsRemoteSlots(t *testing.T) {
 
 func TestLockRefusesASecondSweep(t *testing.T) {
 	p := &Pool{Dir: t.TempDir()}
+	os.MkdirAll(filepath.Join(p.Dir, "ssh"), 0o700)
 	f, err := p.Lock("lab1")
 	if err != nil {
 		t.Fatal(err)
@@ -575,6 +719,22 @@ func TestLockRefusesASecondSweep(t *testing.T) {
 		t.Fatalf("other worker: %v", err)
 	}
 	other.Close()
+	// A worker named workers doesn't hold the inventory's lock.
+	named, err := p.Lock("workers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := make(chan error, 1)
+	go func() { updated <- p.Update(func(*Inventory) error { return nil }) }()
+	select {
+	case err := <-updated:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker workers's lock blocks the inventory")
+	}
+	named.Close()
 	f.Close()
 	if f, err = p.Lock("lab1"); err != nil {
 		t.Fatalf("lock not freed: %v", err)
@@ -629,7 +789,7 @@ func TestValidateCloudEntries(t *testing.T) {
 		"hetzner region":     func(w *Worker) { w.Cloud.Region = "eu-west-1" },
 		"region in provider": func(w *Worker) { w.Cloud.Provider = "aws eu-west-1" },
 		"aws bad account":    func(w *Worker) { w.Cloud.Provider, w.Cloud.Region, w.Cloud.Account = "aws", "eu-west-1", "12345" },
-		"hetzner account":    func(w *Worker) { w.Cloud.Account = "111111111111" },
+		"hetzner account":    func(w *Worker) { w.Cloud.Account = "key-7" },
 		"id":                 func(w *Worker) { w.Host, w.Cloud.ID = "203.0.113.7", "../42" },
 		"nonce":              func(w *Worker) { w.Cloud.Nonce = "x; reboot" },
 		"no host key":        func(w *Worker) { w.HostKey = "" },
@@ -730,8 +890,9 @@ func TestSecretScriptReadsNothingWithoutATmpfsRuntimeDir(t *testing.T) {
 		return string(out), err
 	}
 	for _, c := range [][2]string{{"ext4", runtime}, {"tmpfs", ""}} {
-		if out, err := run(c[0], c[1]); err == nil || out != "" {
-			t.Errorf("%v: ran (%q)", c, out)
+		// 97 is permanent: anything else is retried.
+		if out, err := run(c[0], c[1]); out != "" || !isExit(err, 97) {
+			t.Errorf("%v: %v (%q), want exit 97", c, err, out)
 		}
 	}
 	if out, err := run("tmpfs", runtime); err != nil || out != "ran "+runtime+"\n" {
@@ -764,7 +925,7 @@ func TestTokenDeployBlamesTmpfsOnlyWhenTheWrapperSaysSo(t *testing.T) {
 			return ""
 		})
 		err := p.Deploy(context.Background(), "lab1", lab(), "abc", tarball)
-		if err == nil || strings.Contains(err.Error(), "XDG_RUNTIME_DIR") != want {
+		if err == nil || strings.Contains(err.Error(), "XDG_RUNTIME_DIR") != want || errors.Is(err, ErrUnfit) != want || errors.Is(err, ErrPermanent) {
 			t.Errorf("%s: %v", code, err)
 		}
 	}
@@ -811,4 +972,96 @@ func TestServerIDsFromOlderInventoriesLoad(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"provider":"aws","id":"i-0123456789abcdef0","nonce":"abcdef12"}`), &c); err != nil || c.ID != "i-0123456789abcdef0" {
 		t.Fatalf("string: %q %v", c.ID, err)
 	}
+}
+
+func TestDeployUntilDoneStopsOnAnUnfitHost(t *testing.T) {
+	p := testPool(t)
+	p.DockerAuth, _ = DockerHubAuth("m2test", "dckr_pat_abc")
+	tar := filepath.Join(t.TempDir(), "r.tar.gz")
+	os.WriteFile(tar, []byte("x"), 0o644)
+	n := 0
+	fakeSSH(t, func(args []string) string {
+		if args[len(args)-1] == secretScript {
+			n++
+			return "exit 97"
+		}
+		return ""
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := p.DeployUntilDone(ctx, "lab1", lab(), "abc", tar, log.New(io.Discard, "", 0)); !errors.Is(err, ErrUnfit) || n != 1 {
+		t.Fatalf("%v after %d tries", err, n)
+	}
+}
+
+func TestDeployPrunesByTheHarnessLabel(t *testing.T) {
+	if !strings.Contains(deployScript("/d", "h", ""), "label!="+images.ReleaseLabel+"=$H") {
+		t.Error("prune filter doesn't match images.ReleaseLabel")
+	}
+}
+
+func TestStopWaitsForADeploy(t *testing.T) {
+	needTimeout(t)
+	p := testPool(t)
+	localSSH(t, "cat")
+	stop := func(lock string) (string, error) {
+		d, bin := t.TempDir(), t.TempDir()
+		os.WriteFile(bin+"/flock", []byte("#!/bin/sh\necho lock >> "+d+"/calls\n"+lock+"\n"), 0o755)
+		os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\necho \"$2\" >> "+d+"/calls\n"), 0o755)
+		t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+		w := lab()
+		w.Dir = d
+		err := p.Stop(context.Background(), "lab1", w)
+		calls, _ := os.ReadFile(d + "/calls")
+		return string(calls), err
+	}
+	if calls, err := stop("exit 0"); err != nil || calls != "lock\ndisable\n" {
+		t.Errorf("calls %q, %v; want the deploy lock first", calls, err)
+	}
+	if calls, err := stop("exit 1"); err == nil || calls != "lock\n" {
+		t.Errorf("lock timed out: calls %q, %v; want no disable", calls, err)
+	}
+}
+
+func isExit(err error, code int) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == code
+}
+
+func TestDeployScriptEndsWithinTheAttempt(t *testing.T) {
+	s := deployScript("/d", "h", "")
+	lock := regexp.MustCompile(`timeout (\d+) flock`).FindStringSubmatch(s)
+	prep := regexp.MustCompile(`timeout (\d+)m "\$D/bin/m2test-worker" prepare`).FindStringSubmatch(s)
+	if lock == nil || prep == nil {
+		t.Fatalf("no lock or prepare timeout in:\n%s", s)
+	}
+	l, _ := strconv.Atoi(lock[1])
+	p, _ := strconv.Atoi(prep[1])
+	if total := time.Duration(l)*time.Second + time.Duration(p)*time.Minute; total >= deployAttempt {
+		t.Errorf("lock %ds + prepare %dm = %s, not under the %s attempt", l, p, total, deployAttempt)
+	}
+	if p < 30 {
+		t.Errorf("prepare gets %dm; a wide release took over 20m on a cx33", p)
+	}
+	if total := time.Duration(l)*time.Second + time.Duration(p)*time.Minute; deployAttempt-total < 10*time.Minute {
+		t.Errorf("only %s of the attempt left for the upload", deployAttempt-total)
+	}
+	// Setup and Stop wait out a deploy's prepare, then its restart.
+	held := regexp.MustCompile(`timeout (\d+) flock`).FindStringSubmatch(setupScript(&Worker{Dir: "/d"}))
+	if w, _ := strconv.Atoi(held[1]); time.Duration(w)*time.Second < time.Duration(p)*time.Minute+5*time.Minute {
+		t.Errorf("setup waits %ds for the lock; a deploy can hold it for %dm and more", w, p)
+	}
+}
+
+func TestLockRefusesWhatIsntAWorkerName(t *testing.T) {
+	p := testPool(t)
+	if l, err := p.Lock("Lab1"); err == nil {
+		l.Close()
+		t.Error("locked Lab1")
+	}
+	l, err := p.Lock("lab1")
+	if err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	l.Close()
 }

@@ -142,10 +142,13 @@ func Snapshot(repoRoot, dir string, extra map[string][]byte) (string, error) {
 			return "", err
 		}
 	}
-	return settle(dir, tmp)
+	hash, err := settle(dir, tmp)
+	if err != nil {
+		return "", err
+	}
+	return hash, Pack(filepath.Join(dir, hash))
 }
 
-// settle names a finished tree by its hash and writes its tarball.
 func settle(dir, tmp string) (string, error) {
 	hash, err := Hash(tmp)
 	if err != nil {
@@ -164,13 +167,11 @@ func settle(dir, tmp string) (string, error) {
 			return "", err
 		}
 	}
-	if _, err := os.Stat(final + ".tar.gz"); errors.Is(err, os.ErrNotExist) {
-		if err := writeTar(final, final+".tar.gz"); err != nil {
-			return "", err
-		}
-	}
 	return hash, nil
 }
+
+// Pack writes dir's tarball afresh: one left by a crash may be cut short.
+func Pack(dir string) error { return writeTar(dir, dir+".tar.gz") }
 
 func put(root, rel string, data []byte, exec bool) error {
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -265,7 +266,7 @@ func Extract(tarball, dir string) (string, error) {
 		}
 		name := h.Name
 		// Skipped names aren't hashed, so they'd ride along unchecked.
-		if h.Typeflag != tar.TypeReg || slices.ContainsFunc(strings.Split(name, "/"), func(c string) bool { return skipped[c] }) || name != path.Clean(name) || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
+		if h.Typeflag != tar.TypeReg || slices.ContainsFunc(strings.Split(name, "/"), func(c string) bool { return skipped[c] }) || name != path.Clean(name) || name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
 			return "", fmt.Errorf("release: refusing tar entry %q", h.Name)
 		}
 		// Compared before adding, so a huge size can't wrap the total.

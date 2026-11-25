@@ -50,7 +50,7 @@ type Worker struct {
 type Cloud struct {
 	Provider string    `json:"provider"`
 	Region   string    `json:"region,omitempty"`  // AWS only
-	Account  string    `json:"account,omitempty"` // AWS only
+	Account  string    `json:"account,omitempty"` // AWS account; Hetzner pool key ID
 	ID       ServerID  `json:"id,omitempty"`
 	Nonce    string    `json:"nonce"`
 	Created  time.Time `json:"created"`
@@ -114,7 +114,10 @@ func Open() (*Pool, error) {
 const MaxSlots = 64
 
 func (p *Pool) Lock(name string) (*os.File, error) {
-	f, err := os.OpenFile(p.path(name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if !validName.MatchString(name) {
+		return nil, fmt.Errorf("no worker %q: names are lower-case letters, digits and dashes", name)
+	}
+	f, err := os.OpenFile(p.path("worker-"+name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +146,7 @@ var (
 	validServerID = regexp.MustCompile(`^([1-9][0-9]{0,18}|i-[0-9a-f]{8,17})?$`)
 	validRegion   = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 	validAccount  = regexp.MustCompile(`^[0-9]{12}$`)
+	validKeyID    = regexp.MustCompile(`^[0-9]{0,19}$`)
 )
 
 func (w *Worker) validate(name string) error {
@@ -153,7 +157,7 @@ func (w *Worker) validate(name string) error {
 		return fmt.Errorf("worker %s has no token", name)
 	case !w.Remote():
 		return nil
-	case w.Cloud != nil && (!(w.Cloud.Provider == "hetzner" && w.Cloud.Region == "" && w.Cloud.Account == "" ||
+	case w.Cloud != nil && (!(w.Cloud.Provider == "hetzner" && w.Cloud.Region == "" && validKeyID.MatchString(w.Cloud.Account) ||
 		w.Cloud.Provider == "aws" && ValidRegion(w.Cloud.Region) && (w.Cloud.Account == "" || validAccount.MatchString(w.Cloud.Account))) || !validNonce.MatchString(w.Cloud.Nonce) || !validServerID.MatchString(string(w.Cloud.ID))):
 		return fmt.Errorf("worker %s: bad cloud entry", name)
 	case w.Host == "" && w.Cloud.ID != "":
@@ -194,13 +198,12 @@ func (p *Pool) Load() (*Inventory, error) {
 	return inv, inv.validate()
 }
 
-// ValidRegion says if s looks like an AWS region name.
 func ValidRegion(s string) bool { return validRegion.MatchString(s) }
 
-// validate also refuses two entries for one token or one worker dir: they
-// would shadow each other on worker.sock, or race on the same host.
+// validate also refuses two entries for one token or one user on a host:
+// they would shadow each other on worker.sock, or share one unit.
 func (inv *Inventory) validate() error {
-	tokens, dirs := map[string]string{}, map[string]string{}
+	tokens, users := map[string]string{}, map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(inv.Workers)) {
 		w := inv.Workers[name]
 		if w == nil {
@@ -219,10 +222,10 @@ func (inv *Inventory) validate() error {
 		// One worker per user on a host: the unit is per user. The pinned
 		// key names the host however it's addressed.
 		for _, at := range []string{fmt.Sprintf("%s@%s:%d", w.User, w.Host, w.Port), w.User + " " + w.HostKey} {
-			if other, ok := dirs[at]; ok {
+			if other, ok := users[at]; ok {
 				return fmt.Errorf("workers %s and %s are the same worker", other, name)
 			}
-			dirs[at] = name
+			users[at] = name
 		}
 	}
 	return nil
@@ -355,10 +358,23 @@ func writeAtomic(name string, data []byte) error {
 		f.Close()
 		return err
 	}
+	// Synced: a pool ID lost to a power cut would hide its servers from gc.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), name)
+	if err := os.Rename(f.Name(), name); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func NewToken() (string, error) {
@@ -434,7 +450,7 @@ var Command = func(ctx context.Context, p *Pool, args ...string) *exec.Cmd {
 // A cut connection ends cat cleanly, so the script must end on scriptEnd.
 const (
 	scriptEnd = "# m2test end"
-	runScript = `d=${XDG_RUNTIME_DIR:-/tmp}; [ -d "$d" ] || d=/tmp; trap 'rm -f "$f"; exit 1' HUP INT TERM; f=$(mktemp -p "$d") && cat > "$f" && [ "$(tail -n 1 "$f")" = "` + scriptEnd + `" ] && sh "$f" </dev/null; r=$?; rm -f "$f"; exit $r`
+	runScript = `d=${XDG_RUNTIME_DIR:-/tmp}; [ -d "$d" ] || d=/tmp; trap 'rm -f "$f"; exit 1' HUP INT TERM; f=$(mktemp -p "$d" m2test-script.XXXXXX) && cat > "$f" && [ "$(tail -n 1 "$f")" = "` + scriptEnd + `" ] && sh "$f" </dev/null; r=$?; rm -f "$f"; exit $r`
 	// For a script holding a secret: tmpfs or nothing, checked before
 	// stdin is read. TMPDIR covers shells that spool heredocs.
 	secretScript = `command -v findmnt >/dev/null || exit 96; findmnt -no FSTYPE -T "${XDG_RUNTIME_DIR:?}" | grep -qx tmpfs || exit 97; export TMPDIR="$XDG_RUNTIME_DIR"; ` + runScript
@@ -475,8 +491,7 @@ func (t *tail) Write(b []byte) (int, error) {
 	return n, nil
 }
 
-func (t *tail) Bytes() []byte  { return t.buf.Bytes() }
-func (t *tail) String() string { return t.buf.String() }
+func (t *tail) Bytes() []byte { return t.buf.Bytes() }
 
 // Upload writes a local file to path on a worker, whole or not at all: a
 // cut connection ends cat cleanly, so the checksum decides.

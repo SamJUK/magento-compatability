@@ -4,10 +4,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samjuk/magento-compatability/internal/images"
@@ -71,11 +73,17 @@ func TestSweepRelease_WorkersSnapshotAndResumeReusesIt(t *testing.T) {
 		t.Errorf("want the release and its tarball, got %v", entries)
 	}
 	start(t, lg, sel, combos, first)
+	tarball := filepath.Join(dir, first) + ".tar.gz"
+	good, _ := os.ReadFile(tarball)
+	os.WriteFile(tarball, good[:len(good)/2], 0o644)
 
 	// Digests moved upstream since; a resume must not notice.
 	again, err := sweepRelease(lg, sel, combos, false, true, dir)
 	if err != nil || again != first {
 		t.Errorf("resume = %q %v, want %s", again, err, first)
+	}
+	if got, _ := os.ReadFile(tarball); !bytes.Equal(got, good) {
+		t.Error("resume kept a cut-short tarball")
 	}
 	local, err := sweepRelease(lg, sel, combos, false, false, dir)
 	if err != nil || local != first {
@@ -109,6 +117,22 @@ func TestSweepRelease_GoneReleaseNeedsFresh(t *testing.T) {
 
 func TestSweepRelease_RefusesOtherComposeDir(t *testing.T) {
 	lg, sel, combos, dir := releaseRig(t)
+	first, err := sweepRelease(lg, sel, combos, false, true, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start(t, lg, sel, combos, first)
+	sel.composeDir += "/" // the same dir, written differently
+	if again, err := sweepRelease(lg, sel, combos, false, false, dir); err != nil || again != first {
+		t.Fatalf("control: %q %v", again, err)
+	}
+	sel.composeDir = t.TempDir()
+	for _, workers := range []bool{true, false} {
+		if _, err := sweepRelease(lg, sel, combos, false, workers, dir); err == nil || !strings.Contains(err.Error(), "-compose-dir") {
+			t.Errorf("workers %v: resumed ignoring -compose-dir: %v", workers, err)
+		}
+	}
+	lg, sel, combos, dir = releaseRig(t)
 	sel.composeDir = t.TempDir()
 	if _, err := sweepRelease(lg, sel, combos, false, true, dir); err == nil {
 		t.Error("snapshot ignored -compose-dir")
@@ -147,5 +171,45 @@ func TestSweepRelease_ChangedReleaseNeedsFresh(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, h, "matrix.yml"), []byte("edited"), 0o644)
 	if _, err := sweepRelease(lg, sel, combos, false, true, dir); err == nil {
 		t.Error("resumed a release that no longer hashes to its name")
+	}
+}
+
+func TestSweepRelease_AChangedPackageNeedsFresh(t *testing.T) {
+	lg, sel, combos, dir := releaseRig(t)
+	first, err := sweepRelease(lg, sel, combos, false, true, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start(t, lg, sel, combos, first)
+	moved := []matrix.Combination{combos[0]}
+	moved[0].Package += "-fork"
+	if moved[0].ID() != combos[0].ID() {
+		t.Fatal("the package is in the ID now; this test needs another field")
+	}
+	if _, err := sweepRelease(lg, sel, moved, false, true, dir); err == nil || !strings.Contains(err.Error(), "isn't what") {
+		t.Errorf("resumed with another package: %v", err)
+	}
+	if again, err := sweepRelease(lg, sel, combos, false, true, dir); err != nil || again != first {
+		t.Errorf("control: %q %v", again, err)
+	}
+}
+
+func TestSweepRelease_AMatrixChangeTheReleaseDidntPinNeedsFresh(t *testing.T) {
+	lg, sel, combos, dir := releaseRig(t)
+	first, err := sweepRelease(lg, sel, combos, false, true, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start(t, lg, sel, combos, first)
+	moved := []matrix.Combination{combos[0]}
+	moved[0].WebserverVersion = "1.26"
+	if moved[0].ID() != combos[0].ID() {
+		t.Fatal("the version is in the ID now; this test needs another field")
+	}
+	if _, err := sweepRelease(lg, sel, moved, false, true, dir); err == nil || !strings.Contains(err.Error(), "-fresh") {
+		t.Errorf("resumed with an unpinned image: %v", err)
+	}
+	if again, err := sweepRelease(lg, sel, combos, false, true, dir); err != nil || again != first {
+		t.Errorf("control: %q %v", again, err)
 	}
 }

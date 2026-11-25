@@ -21,6 +21,7 @@ import (
 
 	"github.com/samjuk/magento-compatability/internal/coord"
 	"github.com/samjuk/magento-compatability/internal/images"
+	"github.com/samjuk/magento-compatability/internal/pool"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	rel "github.com/samjuk/magento-compatability/internal/release"
 	"github.com/samjuk/magento-compatability/internal/runner"
@@ -38,11 +39,11 @@ func main() {
 		spool     = flag.String("spool", "", "Where finished runs wait to upload (default: $XDG_STATE_HOME/m2test-worker/spool)")
 		slots     = flag.Int("slots", 2, "Concurrent runs")
 		diskPath  = flag.String("disk-path", "/", "Filesystem to check for free space (Docker's data root on Linux)")
-		minFreeGB = flag.Uint64("min-free-gb", 40, "Start no run while the disk has less than this free")
+		minFreeGB = flag.Uint64("min-free-gb", 15, "Start no run while the disk has less than this free")
 	)
 	flag.Parse()
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	if *socket == "" || *tokenFile == "" || *release == "" {
+	if *socket == "" || *tokenFile == "" || *release == "" || *slots < 1 || *slots > pool.MaxSlots {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -69,6 +70,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A second signal kills it: the first's handler is gone.
 	go func() { <-ctx.Done(); stop() }()
 
 	w := &coord.Worker{
@@ -76,18 +78,14 @@ func main() {
 		Spool:   *spool,
 		Version: hash,
 		Slots:   *slots,
-		Base: runner.RunConfig{
-			ComposeDir:      filepath.Join(dir, "docker", "compose"),
-			PlaywrightDir:   filepath.Join(dir, images.PlaywrightTests),
-			PlaywrightImage: manifest.Playwright,
-		},
-		Runner: runner.Run,
-		Log:    logger,
+		Base:    baseConfig(dir, manifest),
+		Runner:  runner.Run,
+		Log:     logger,
 	}
 	// Rechecked so prepare can finish, or a prune be noticed, without a
 	// restart. A run started on a missing image would pull it by tag.
-	// A wedged daemon would otherwise hold every claimed slot in preflight.
 	missingImages := func(ctx context.Context) ([]string, error) {
+		// A wedged daemon would otherwise hold every claimed slot.
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		return images.Missing(ctx, hash, manifest)
@@ -138,7 +136,7 @@ func main() {
 		Source:   w,
 		MaxSlots: *slots,
 		Slots:    func() int { return *slots },
-		Wait:     queue.DiskGuard(*diskPath, *minFreeGB),
+		Wait:     w.Reporting("disk", queue.DiskGuard(*diskPath, *minFreeGB)),
 		Run:      w.Run,
 		Log:      logger,
 	}
@@ -203,4 +201,14 @@ func stateHome() string {
 		log.Fatal(err)
 	}
 	return filepath.Join(home, ".local", "state")
+}
+
+// No Playwright image means the sweep turned it off: a dir alone would run
+// npx on the host.
+func baseConfig(dir string, m images.Manifest) runner.RunConfig {
+	c := runner.RunConfig{ComposeDir: filepath.Join(dir, "docker", "compose")}
+	if m.Playwright != "" {
+		c.PlaywrightDir, c.PlaywrightImage = filepath.Join(dir, images.PlaywrightTests), m.Playwright
+	}
+	return c
 }

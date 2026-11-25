@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,9 @@ type Local struct {
 	ResultsDir    string
 	Force         bool
 	RetryFailures bool
+	// OnLost is called, once, when a release couldn't be saved. Nothing
+	// claims after that, so the caller should end the sweep.
+	OnLost func(error)
 
 	ledger  *Ledger
 	key     string
@@ -57,6 +61,7 @@ type Local struct {
 
 	mu      sync.Mutex
 	claimed map[string]bool
+	lost    error // a Release that failed to save
 	// results caches each result's status, which carries full logs and is
 	// slow to parse. Entries are checked against the file's mtime and size.
 	results map[string]cachedResult
@@ -239,7 +244,6 @@ func (l *Local) stored(d *ledgerData) *sweep {
 	return s
 }
 
-// StatePath is where the sweep is saved.
 func (l *Local) StatePath() string { return l.ledger.Path() }
 
 func (l *Local) Tries(c matrix.Combination) int {
@@ -269,6 +273,9 @@ func (l *Local) Next(ctx context.Context) (Job, State, error) {
 func (l *Local) Claim(_ context.Context, worker, request string) (Job, State, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.lost != nil {
+		return Job{}, StateNone, l.lost
+	}
 	// Parse results before taking the ledger lock: the first pass reads
 	// every file and would hold up builder test meanwhile.
 	for _, c := range l.Combos {
@@ -276,6 +283,7 @@ func (l *Local) Claim(_ context.Context, worker, request string) (Job, State, er
 	}
 	var j Job
 	state := StateDone
+	before := maps.Clone(l.claimed)
 	// Idle workers ask every second; only a claim is worth an fsync.
 	err := l.ledger.locked(syscall.LOCK_EX, func(d *ledgerData) error {
 		if err := l.claimIn(d, worker, request, &j, &state); err != nil || state != StateJob {
@@ -284,6 +292,8 @@ func (l *Local) Claim(_ context.Context, worker, request string) (Job, State, er
 		return l.ledger.save(d)
 	})
 	if err != nil {
+		// Not saved, so not claimed: held here, it would block the sweep.
+		l.claimed = before
 		return Job{}, StateNone, err
 	}
 	return j, state, nil
@@ -307,25 +317,26 @@ func (l *Local) claimIn(d *ledgerData, worker, request string, j *Job, state *St
 	if len(l.claimed) > 0 {
 		*state = StateNone
 	}
+	// Resolved once: idle workers poll this every second.
+	dir := canonicalDir(l.ResultsDir) + "\x00"
 	for _, retries := range []bool{false, true} {
 		for _, c := range l.Combos {
 			id := c.ID()
 			cs := s.Combos[id]
-			tried := cs != nil && cs.Tries > 0
-			if tried != retries || l.claimed[id] {
+			// After fresh work, so a sick worker doesn't take back the
+			// combination it just failed until its budget is gone.
+			tried := cs != nil && (cs.Tries > 0 || cs.HostFailures > 0)
+			if tried != retries || l.claimed[id] || !l.eligible(s, c) {
 				continue
 			}
-			if ls, held := d.Leases[leaseKey(l.ResultsDir, id)]; held && ls.Holder != l.ledger.holder {
+			if ls, held := d.Leases[dir+id]; held && ls.Holder != l.ledger.holder {
 				*state = StateNone
-				continue
-			}
-			if !l.eligible(s, c) {
 				continue
 			}
 			l.claim(d, s, c)
 			*j, *state = Job{Combination: c, Tries: s.state(id).Tries}, StateJob
 			if worker != "" {
-				a := &Attempt{ID: newID(), Sweep: l.key, Combo: id, Lease: leaseKey(l.ResultsDir, id),
+				a := &Attempt{ID: newID(), Sweep: l.key, Combo: id, Lease: dir + id,
 					Worker: worker, Request: request, State: AttemptRunning, Claimed: time.Now().UTC()}
 				d.Attempts[a.ID] = a
 				j.Attempt, j.Worker, j.Claimed = a.ID, worker, a.Claimed
@@ -387,7 +398,7 @@ func (l *Local) claim(d *ledgerData, s *sweep, c matrix.Combination) {
 func (l *Local) result(c matrix.Combination) cachedResult {
 	var mod time.Time
 	var size int64
-	if fi, err := os.Stat(resultPath(l.ResultsDir, c)); err == nil {
+	if fi, err := os.Stat(ResultPath(l.ResultsDir, c)); err == nil {
 		mod, size = fi.ModTime(), fi.Size()
 	}
 	r, ok := l.results[c.ID()]
@@ -401,21 +412,32 @@ func (l *Local) result(c matrix.Combination) cachedResult {
 
 // ResultMod is when c's result file was last written, zero if there is none.
 func ResultMod(resultsDir string, c matrix.Combination) time.Time {
-	fi, err := os.Stat(resultPath(resultsDir, c))
+	fi, err := os.Stat(ResultPath(resultsDir, c))
 	if err != nil {
 		return time.Time{}
 	}
 	return fi.ModTime()
 }
 
-func resultPath(resultsDir string, c matrix.Combination) string {
+// ResultPath is where c's result file lives.
+func ResultPath(resultsDir string, c matrix.Combination) string {
 	return filepath.Join(resultsDir, c.Product, c.ID()+".json")
 }
 
 func (l *Local) Release(j Job, o Outcome) {
 	if err := l.Settle(j, o); err != nil {
-		// Losing the count only risks an extra retry after a restart.
+		// Without its count the combination would run forever, so nothing
+		// more runs until a restart.
 		fmt.Fprintf(os.Stderr, "queue: saving attempts: %v\n", err)
+		l.mu.Lock()
+		delete(l.claimed, j.Combination.ID())
+		first := l.lost == nil
+		l.lost = fmt.Errorf("a finished run wasn't counted (%w); restart the queue once its state dir is writable", err)
+		lost := l.lost
+		l.mu.Unlock()
+		if first && l.OnLost != nil {
+			l.OnLost(lost)
+		}
 	}
 }
 
@@ -424,10 +446,12 @@ func (l *Local) Settle(j Job, o Outcome) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	id := j.Combination.ID()
+	already := false
 	err := l.ledger.update(func(d *ledgerData) error {
 		if a := d.Attempts[j.Attempt]; a != nil {
 			switch {
 			case a.Released:
+				already = true
 				return nil // the claim may be another attempt's by now
 			case a.State == AttemptOverridden:
 				// builder test took it over; not held against anyone.
@@ -452,7 +476,7 @@ func (l *Local) Settle(j Job, o Outcome) error {
 		}
 		return nil
 	})
-	if err == nil {
+	if err == nil && !already {
 		delete(l.claimed, id)
 	}
 	return err
@@ -476,7 +500,7 @@ func (l *Local) Install(j Job, r result.TestResult, hash string) error {
 		if err := l.ledger.save(d); err != nil {
 			return err
 		}
-		if err := result.Write(resultPath(l.ResultsDir, j.Combination), r); err != nil {
+		if err := result.Write(ResultPath(l.ResultsDir, j.Combination), r); err != nil {
 			return err
 		}
 		a.State = AttemptInstalled
@@ -526,17 +550,27 @@ func (l *Local) Done() bool {
 }
 
 func (l *Local) eligible(s *sweep, c matrix.Combination) bool {
-	var cs comboState
+	cs := s.of(c)
+	return !cs.spent() && l.runnable(s, cs, l.result(c))
+}
+
+// of reads a combination's state without adding it.
+func (s *sweep) of(c matrix.Combination) comboState {
 	if p := s.Combos[c.ID()]; p != nil {
-		cs = *p
+		return *p
 	}
-	if cs.Tries >= MaxTries || cs.HostFailures >= MaxHostFailures || (cs.Once && cs.Tries >= 1) {
-		return false
-	}
+	return comboState{}
+}
+
+func (cs comboState) spent() bool {
+	return cs.Tries >= MaxTries || cs.HostFailures >= MaxHostFailures || (cs.Once && cs.Tries >= 1)
+}
+
+// runnable is whether this sweep's options call for another run, budget aside.
+func (l *Local) runnable(s *sweep, cs comboState, r cachedResult) bool {
 	if l.Force && cs.Tries == 0 {
 		return true
 	}
-	r := l.result(c)
 	switch r.status {
 	case StatusTodo, StatusSetupFail:
 		return true
@@ -549,6 +583,24 @@ func (l *Local) eligible(s *sweep, c matrix.Combination) bool {
 	return false
 }
 
+// settled is a combination's status at sweep end: todo while it's still runnable
+// with budget left, or was due a run and has no result of its own. Exhausted is
+// a result of its own that the options would still rerun.
+func (l *Local) settled(s *sweep, c matrix.Combination) (status string, exhausted bool) {
+	cs, r := s.of(c), l.result(c)
+	own := !r.at.Before(s.Started)
+	switch {
+	case r.status == StatusTodo, !own && l.runnable(s, comboState{}, r):
+		return StatusTodo, false
+	case l.runnable(s, cs, r):
+		if !cs.spent() {
+			return StatusTodo, false
+		}
+		return r.status, true
+	}
+	return r.status, false
+}
+
 func (l *Local) Counts() map[string]int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -556,13 +608,11 @@ func (l *Local) Counts() map[string]int {
 	l.ledger.view(func(d *ledgerData) error {
 		s := l.readSweep(d)
 		for _, c := range l.Combos {
-			r := l.result(c)
-			// A forced or retried rerun that left no result of its own confirmed nothing.
-			retried := l.Force || r.status == StatusSetupFail || l.RetryFailures && r.status == StatusFail
-			if retried && r.at.Before(s.Started) {
-				r.status = StatusTodo
+			status, exhausted := l.settled(s, c)
+			n[status]++
+			if exhausted {
+				n["exhausted"]++
 			}
-			n[r.status]++
 			if l.eligible(s, c) {
 				n["eligible"]++
 				if !l.claimed[c.ID()] {
@@ -593,7 +643,7 @@ func Status(resultsDir string, c matrix.Combination) string {
 // readResult returns the result's status and when it was written. An
 // unreadable timestamp reads as zero, so the result counts as older.
 func readResult(resultsDir string, c matrix.Combination) (string, time.Time) {
-	data, err := os.ReadFile(resultPath(resultsDir, c))
+	data, err := os.ReadFile(ResultPath(resultsDir, c))
 	if err != nil {
 		return StatusTodo, time.Time{}
 	}

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -77,8 +78,14 @@ func loadCloudConfig(p *pool.Pool) (cloudConfig, error) {
 		return c, fmt.Errorf("%s: ssh_from is empty", path)
 	case slices.ContainsFunc(c.SSHFrom, func(s string) bool { p, err := netip.ParsePrefix(s); return err != nil || p != p.Masked() }):
 		return c, fmt.Errorf("%s: ssh_from wants CIDRs such as 198.51.100.4/32", path)
+	case !slices.ContainsFunc(c.SSHFrom, func(s string) bool { return netip.MustParsePrefix(s).Addr().Is4() }):
+		return c, fmt.Errorf("%s: ssh_from has no IPv4 CIDR; workers only get an IPv4 address", path)
+	case slices.ContainsFunc(c.SSHFrom, func(s string) bool { return netip.MustParsePrefix(s).Bits() < 8 }):
+		return c, fmt.Errorf("%s: ssh_from opens SSH to a big share of the internet; name the coordinator's address", path)
 	case c.Hetzner.Slots < 1 || c.Hetzner.Slots > pool.MaxSlots || c.AWS.Slots < 1 || c.AWS.Slots > pool.MaxSlots:
 		return c, fmt.Errorf("%s: slots must be 1 to %d", path, pool.MaxSlots)
+	case c.AWS.Region != "" && !pool.ValidRegion(c.AWS.Region):
+		return c, fmt.Errorf("%s: aws region %q isn't a region name", path, c.AWS.Region)
 	case c.AWS.DiskGB < 30:
 		return c, fmt.Errorf("%s: aws disk_gb must be at least 30", path)
 	case slices.ContainsFunc([]float64{c.AWS.Hourly, c.MaxBurstCost, c.MinutesPerRun, c.SetupMinutes}, func(f float64) bool { return math.IsNaN(f) || math.IsInf(f, 0) }):
@@ -99,10 +106,9 @@ func parseCloud(s string) (provider string, count int, err error) {
 	return provider, count, nil
 }
 
-// burstPlan sizes a burst: no more workers than the runs can use or the
-// cap allows, and its cost if every worker runs to the end, in whole hours.
-func burstPlan(c cloudConfig, slots, asked, existing, runs int, hourly float64) (n int, cost float64) {
-	n = min(asked, c.MaxWorkers-existing, int(math.Ceil(float64(runs)/float64(slots))))
+// burstPlan caps a burst at what the runs can use and max_workers allows, and prices it in whole hours.
+func burstPlan(c cloudConfig, slots, asked, runs int, hourly float64) (n int, cost float64) {
+	n = min(asked, c.MaxWorkers, int(math.Ceil(float64(runs)/float64(slots))))
 	if n <= 0 {
 		return 0, 0
 	}
@@ -166,7 +172,6 @@ var (
 	deleteWait    = 2 * time.Minute
 )
 
-// start creates n workers in parallel; each joins the sweep once set up.
 func (b *burst) start(ctx context.Context, n int) {
 	b.workers = map[string]*burstWorker{}
 	for range n {
@@ -258,6 +263,11 @@ func (b *burst) create(ctx context.Context) error {
 		bw.ready = true
 		b.mu.Unlock()
 		b.connect(wctx, name, w)
+		// connect only ends early when the tunnel gave up.
+		if wctx.Err() == nil && b.take(name) != nil {
+			b.log.Printf("%s: no tunnel; destroying it", name)
+			b.delete(context.WithoutCancel(ctx), name, w)
+		}
 	})
 	return nil
 }
@@ -289,6 +299,16 @@ func (b *burst) provision(ctx context.Context, name string, w *pool.Worker) erro
 		}
 		select {
 		case <-ctx.Done():
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ctx.Err()
+			}
+			// The server goes with its log, so keep the end of it.
+			tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			tail, _ := b.host.Script(tctx, name, "tail -n 40 /var/log/cloud-init-output.log\n")
+			cancel()
+			if len(tail) > 0 {
+				b.log.Printf("%s: end of cloud-init-output.log:\n%s", name, tail)
+			}
 			return fmt.Errorf("not provisioned after %s: %v", provisionWait, err)
 		case <-time.After(provisionPoll):
 		}
@@ -309,7 +329,6 @@ func (b *burst) take(name string) *burstWorker {
 	return bw
 }
 
-// destroy stops a worker's tunnel and deletes its server.
 func (b *burst) destroy(ctx context.Context, name string) {
 	if bw := b.take(name); bw != nil {
 		bw.stop()
@@ -318,11 +337,13 @@ func (b *burst) destroy(ctx context.Context, name string) {
 	}
 }
 
+// inAccount describes an entry's account: on Hetzner, the ID of the pool
+// key in its project, as IDs are unique across projects.
 func inAccount(a string) string {
 	if a == "" {
-		return "has no AWS account recorded"
+		return "has no account recorded"
 	}
-	return "is in AWS account " + a
+	return "is in account " + a
 }
 
 // delete forgets a worker once its server is confirmed gone; otherwise it stays for gc.
@@ -402,13 +423,15 @@ func (b *burst) trim(ctx context.Context, waiting int, done bool) {
 			}
 		}
 	}
-	// A delete cut short would leave a server no one tracks but gc.
+	// A delete cut short would leave a server no one tracks but gc. Side by
+	// side, so slow deletes don't hold up teardown one after another.
+	var wg sync.WaitGroup
 	for _, name := range gone {
-		b.destroy(context.WithoutCancel(ctx), name)
+		wg.Go(func() { b.destroy(context.WithoutCancel(ctx), name) })
 	}
+	wg.Wait()
 }
 
-// end destroys every worker the burst still has.
 func (b *burst) end(ctx context.Context) {
 	b.creating.Wait()
 	b.mu.Lock()
@@ -430,8 +453,10 @@ func (b *burst) end(ctx context.Context) {
 		wg.Go(func() { b.delete(ctx, name, bw.w) })
 	}
 	wg.Wait()
-	if left, err := gc(ctx, b.pool, b.prov, b.target(), b.poolID, true, b.log); err != nil || left > 0 {
-		b.log.Printf("%d cloud workers left (%v); builder worker gc destroys them", left, err)
+	if left, err := gc(ctx, b.pool, b.prov, b.target(), b.poolID, true, b.log); err != nil {
+		b.log.Printf("cloud workers may be left (%v); run builder worker gc", err)
+	} else if left > 0 {
+		b.log.Printf("%d cloud workers left; builder worker gc destroys them, or clears an entry whose create was never answered (after 10 minutes on Hetzner, an hour on AWS)", left)
 	}
 }
 
@@ -511,7 +536,7 @@ func startBurst(ctx context.Context, logger *log.Logger, f *fleet, src *queue.Lo
 		fatalf("checking for servers an earlier burst left: %d found, %v; builder worker gc destroys them", len(left), err)
 	}
 	runs := src.Counts()["eligible"]
-	n, cost := burstPlan(cfg, b.slots, asked, 0, runs, hourly)
+	n, cost := burstPlan(cfg, b.slots, asked, runs, hourly)
 	if n == 0 {
 		logger.Print("no cloud workers needed")
 		return func() {}
@@ -530,6 +555,7 @@ func startBurst(ctx context.Context, logger *log.Logger, f *fleet, src *queue.Lo
 		if b.spec.SSHKey, err = c.SSHKey(ctx, "m2test-pool-"+poolID, poolKey); err != nil {
 			fatalf("%v", err)
 		}
+		b.account = b.spec.SSHKey
 		b.spec.Firewall, err = c.Firewall(ctx, "m2test-"+poolID, cfg.SSHFrom)
 	case *cloud.AWS:
 		b.spec.Firewall, err = c.Firewall(ctx, "m2test-"+poolID, cfg.SSHFrom)
@@ -552,6 +578,15 @@ func startBurst(ctx context.Context, logger *log.Logger, f *fleet, src *queue.Lo
 		exec.Command(path, "-i", "-s", "-w", strconv.Itoa(os.Getpid())).Start()
 	}
 	b.binary = bin
+	// Named workers have been at the sweep since the plan.
+	if now, _ := burstPlan(cfg, b.slots, asked, src.Counts()["eligible"], hourly); now < n {
+		logger.Printf("burst: %d cloud workers now, as the runs left went down to %d", now, src.Counts()["eligible"])
+		n = now
+	}
+	if n == 0 {
+		os.RemoveAll(tmp)
+		return func() {}
+	}
 	b.start(ctx, n)
 	trimmed := make(chan struct{})
 	go func() {
@@ -603,7 +638,9 @@ func workerGC(ctx context.Context, p *pool.Pool, args []string) {
 				prov, t.account = a, a.Account
 			}
 		} else {
-			prov = newHetzner()
+			h := newHetzner()
+			prov = h
+			t.account, err = h.KeyID(ctx, "m2test-pool-"+poolID)
 		}
 		n := 0
 		if err == nil {
@@ -631,9 +668,9 @@ func nonceSelector(poolID, nonce string) string {
 	return serverSelector(poolID) + "," + cloud.Label + "-nonce=" + nonce
 }
 
-// unseenFor is how long a create never answered must stay out of the
-// listing before gc takes it as never made.
-var unseenFor = time.Hour
+// unseenFor is how long a create never answered stays out of the listing before gc takes it as never made.
+// EC2 can be slow to list.
+var unseenFor = map[string]time.Duration{"hetzner": 10 * time.Minute, "aws": time.Hour}
 
 // gcTargets is every provider and region the inventory has workers in, and any set up here, so gc also finds servers by label.
 func gcTargets(p *pool.Pool, hcloud bool, awsRegion string, logger *log.Logger) ([]target, error) {
@@ -666,7 +703,8 @@ func gcTargets(p *pool.Pool, hcloud bool, awsRegion string, logger *log.Logger) 
 	}), nil
 }
 
-// target is one provider's servers gc checks: a region and account on AWS.
+// target is one provider's servers gc checks. account is the AWS account,
+// or on Hetzner the project's pool key ID.
 type target struct{ provider, region, account string }
 
 func (b *burst) target() target { return target{b.provider, b.region, b.account} }
@@ -693,20 +731,25 @@ func gc(ctx context.Context, p *pool.Pool, prov provider, t target, poolID strin
 		}
 		// Another account's IDs mean nothing here: not found isn't gone.
 		// Listed by label, though, it is in this one.
-		if _, listed := doomed[string(c.ID)]; c.Account != t.account && !listed {
-			logger.Printf("%s: %s; left alone. If it is in %s, set its cloud.account to that in workers.json, or remove the entry", name, inAccount(c.Account), t.account)
+		if _, listed := doomed[string(c.ID)]; (c.Account != t.account || t.account == "") && !listed {
+			if t.account == "" {
+				logger.Printf("%s: %s; left alone, this project has no pool key. Remove the entry from workers.json once the server is gone", name, inAccount(c.Account))
+			} else {
+				logger.Printf("%s: %s; left alone. If it is in %s, set its cloud.account to that in workers.json, or remove the entry", name, inAccount(c.Account), t.account)
+			}
 			left++
 			continue
 		}
+		unseen := cmp.Or(unseenFor[t.provider], time.Hour)
 		if c.ID == "" {
 			// Its create was never answered. If the server exists, its labels
 			// listed it above; one made late may not show yet.
-			if found, err := prov.List(ctx, nonceSelector(poolID, c.Nonce)); err != nil || len(found) > 0 || time.Since(c.Created) < unseenFor {
+			if found, err := prov.List(ctx, nonceSelector(poolID, c.Nonce)); err != nil || len(found) > 0 || time.Since(c.Created) < unseen {
 				if err != nil {
 					logger.Printf("%s: %v", name, err)
 					left++
 				} else if len(found) == 0 {
-					logger.Printf("%s: create never answered, %s ago; kept until it's been out of sight for %s", name, time.Since(c.Created).Round(time.Second), unseenFor)
+					logger.Printf("%s: create never answered, %s ago; kept until it's been out of sight for %s", name, time.Since(c.Created).Round(time.Second), unseen)
 					left++
 				}
 				for _, s := range found {
@@ -728,7 +771,7 @@ func gc(ctx context.Context, p *pool.Pool, prov provider, t target, poolID strin
 		srv, err := prov.Get(ctx, string(c.ID))
 		switch {
 		// EC2 may not show an instance yet for a while after its create.
-		case errors.Is(err, cloud.ErrNotFound) && errors.As(err, new(*cloud.APIError)) && t.provider == "aws" && time.Since(c.Created) < unseenFor:
+		case errors.Is(err, cloud.ErrNotFound) && errors.As(err, new(*cloud.APIError)) && t.provider == "aws" && time.Since(c.Created) < unseen:
 			logger.Printf("%s: instance %s not visible yet, %s after its create; kept", name, c.ID, time.Since(c.Created).Round(time.Second))
 			left++
 		case errors.Is(err, cloud.ErrNotFound):

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: OSL-3.0
 
 // Package cloud creates and deletes burst workers. Only the calls a burst
-// needs are here; nothing reads or changes resources without the m2test label.
+// needs are here. Firewalls and keys it changes only if labelled m2test;
+// which servers are the burst's is the caller's to check.
 package cloud
 
 import (
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -28,7 +30,6 @@ const Label = "m2test"
 
 var ErrNotFound = errors.New("not found")
 
-// Server is a cloud server as far as a burst cares.
 type Server struct {
 	ID     string // "" until the provider has said
 	Name   string
@@ -37,7 +38,6 @@ type Server struct {
 	Labels map[string]string
 }
 
-// Spec is what Create asks for.
 type Spec struct {
 	Name     string
 	Type     string
@@ -54,7 +54,6 @@ type Spec struct {
 	Subnets    []string
 }
 
-// APIError is an error the provider answered with.
 type APIError struct {
 	Provider string // hetzner unless set
 	Status   int    // how to treat it, as an HTTP status
@@ -95,7 +94,6 @@ func Locked(err error) bool {
 	return errors.As(err, &api) && (api.Status == 423 || api.Status == 429)
 }
 
-// Hetzner talks to the Hetzner Cloud API.
 type Hetzner struct {
 	Token    string
 	Endpoint string // https://api.hetzner.cloud/v1 unless a test says otherwise
@@ -138,7 +136,7 @@ func (h *Hetzner) do(ctx context.Context, method, path string, body, out any) er
 		}
 		json.Unmarshal(data, &e)
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%s %s: %w", method, path, ErrNotFound)
+			return fmt.Errorf("%s %s: %w (%s)", method, path, ErrNotFound, e.Error.Message)
 		}
 		return &APIError{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
 	}
@@ -270,7 +268,7 @@ func (h *Hetzner) ServerType(ctx context.Context, serverType, location string) (
 	}
 	for _, p := range t.Prices {
 		if p.Location == location {
-			price, err = strconv.ParseFloat(p.PriceHourly.Gross, 64)
+			price, err = parsePrice(p.PriceHourly.Gross)
 			return price + ip, goarch, err
 		}
 	}
@@ -299,11 +297,20 @@ func (h *Hetzner) ipv4Price(ctx context.Context, location string) (float64, erro
 	for _, ip := range out.Pricing.PrimaryIPs {
 		for _, p := range ip.Prices {
 			if ip.Type == "ipv4" && p.Location == location {
-				return strconv.ParseFloat(p.PriceHourly.Gross, 64)
+				return parsePrice(p.PriceHourly.Gross)
 			}
 		}
 	}
 	return 0, fmt.Errorf("hetzner: no IPv4 price for %s", location)
+}
+
+// parsePrice refuses what would slip past the cost cap: NaN compares false.
+func parsePrice(s string) (float64, error) {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
+		return 0, fmt.Errorf("hetzner: price %q", s)
+	}
+	return f, nil
 }
 
 // SSHKey returns the ID of the pool key's entry, adding it if missing.
@@ -313,11 +320,24 @@ func (h *Hetzner) SSHKey(ctx context.Context, name, publicKey string) (string, e
 	return strconv.FormatInt(id, 10), err
 }
 
+func (h *Hetzner) KeyID(ctx context.Context, name string) (string, error) {
+	var out struct {
+		SSHKeys []struct {
+			ID int64 `json:"id"`
+		} `json:"ssh_keys"`
+	}
+	if err := h.do(ctx, "GET", "/ssh_keys?"+url.Values{"name": {name}}.Encode(), nil, &out); err != nil || len(out.SSHKeys) == 0 {
+		return "", err
+	}
+	return strconv.FormatInt(out.SSHKeys[0].ID, 10), nil
+}
+
 func (h *Hetzner) sshKey(ctx context.Context, name, publicKey string) (int64, error) {
 	var out struct {
 		SSHKeys []struct {
-			ID        int64  `json:"id"`
-			PublicKey string `json:"public_key"`
+			ID        int64             `json:"id"`
+			PublicKey string            `json:"public_key"`
+			Labels    map[string]string `json:"labels"`
 		} `json:"ssh_keys"`
 	}
 	if err := h.do(ctx, "GET", "/ssh_keys?"+url.Values{"name": {name}}.Encode(), nil, &out); err != nil {
@@ -326,6 +346,9 @@ func (h *Hetzner) sshKey(ctx context.Context, name, publicKey string) (int64, er
 	for _, k := range out.SSHKeys {
 		if sameKey(k.PublicKey, publicKey) {
 			return k.ID, nil
+		}
+		if k.Labels[Label] != "pool" {
+			return 0, fmt.Errorf("hetzner: ssh key %s isn't labelled %s=pool; remove it by hand if it's a stale pool key", name, Label)
 		}
 		if err := h.do(ctx, "DELETE", "/ssh_keys/"+strconv.FormatInt(k.ID, 10), nil, nil); err != nil {
 			return 0, err

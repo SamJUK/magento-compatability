@@ -4,6 +4,7 @@
 package coord
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -502,6 +503,74 @@ func TestWorker_RestartReportsAbandonedRuns(t *testing.T) {
 	}
 }
 
+func TestWorker_RestartKeepsRemovingALeftoverStack(t *testing.T) {
+	old := clearEvery
+	clearEvery = 10 * time.Millisecond
+	defer func() { clearEvery = old }()
+	bin := t.TempDir()
+	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\n[ ! -e "+bin+"/down ]\n"), 0o755)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	job := r.claim("tok-a", "req1")
+	spool := t.TempDir()
+	os.MkdirAll(filepath.Join(spool, job.Attempt), 0o700)
+	os.WriteFile(filepath.Join(spool, job.Attempt, "project"), []byte("m2test-0123456789abcdef-01234567"), 0o600)
+	os.WriteFile(bin+"/down", nil, 0o600)
+	w := &Worker{Client: NewClient(r.sock, "tok-a"), Spool: spool, Version: "rel1", Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Wait()
+	defer cancel()
+	unhealthy := func() bool { w.mu.Lock(); defer w.mu.Unlock(); return len(w.unhealthy) > 0 }
+	if !unhealthy() {
+		t.Fatal("took work with a stack it couldn't remove")
+	}
+	os.Remove(bin + "/down")
+	waitFor(t, func() bool { return !unhealthy() })
+}
+
+func TestWorker_AFailedTeardownOutlivesItsUploadAndARestart(t *testing.T) {
+	old := clearEvery
+	clearEvery = 10 * time.Millisecond
+	defer func() { clearEvery = old }()
+	bin := t.TempDir()
+	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\n[ ! -e "+bin+"/down ]\n"), 0o755)
+	os.WriteFile(bin+"/down", nil, 0o600)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	spool := t.TempDir()
+	const project = "m2test-0123456789abcdef-01234567"
+	first, stop := r.workerIn("tok-a", spool, func(ctx context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		cfg.OnProject(project)
+		ran, err := writes(func(matrix.Combination) string { return result.StatusPass })(ctx, c, cfg)
+		return ran, errors.Join(err, runner.ErrCleanup)
+	})
+	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+	waitFor(t, func() bool { entries, _ := os.ReadDir(spool); return len(entries) == 0 })
+	stop()
+
+	w := &Worker{Client: NewClient(r.sock, "tok-a"), Spool: spool, Version: "rel1", Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Wait()
+	defer cancel()
+	unhealthy := func(w *Worker) bool { w.mu.Lock(); defer w.mu.Unlock(); return len(w.unhealthy) > 0 }
+	if !unhealthy(w) {
+		t.Fatal("the restarted worker forgot the stack it couldn't remove")
+	}
+	os.Remove(bin + "/down")
+	// Both, so neither still retries once clearEvery is put back.
+	waitFor(t, func() bool { return !unhealthy(w) && !unhealthy(first) })
+	if left, _ := os.ReadDir(spool + "-stacks"); len(left) != 0 {
+		t.Errorf("record kept once the stack went: %v", left)
+	}
+}
+
 func TestHello_StaleWorkerGetsNoWork(t *testing.T) {
 	r := newRig(t, []matrix.Combination{combo("8.3")})
 	cl := NewClient(r.sock, "tok-a")
@@ -560,7 +629,7 @@ func TestWorker_RefusedUploadCountsAgainstTheHost(t *testing.T) {
 	_, stop := r.workerIn("tok-a", spool, func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
 		runs.Add(1)
 		res := goodResult(c, result.StatusPass)
-		res.ContainerLogs = map[string]string{"php": strings.Repeat("x", 8<<10)}
+		res.Workarounds = []string{strings.Repeat("x", 8<<10)} // nothing fit can cut
 		return true, result.Write(filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json"), res)
 	})
 	defer stop()
@@ -569,6 +638,41 @@ func TestWorker_RefusedUploadCountsAgainstTheHost(t *testing.T) {
 		t.Errorf("%d runs, %d tries; want %d runs on the host budget", runs.Load(), r.src.Tries(c), queue.MaxHostFailures)
 	}
 	waitFor(t, func() bool { e, _ := os.ReadDir(spool); return len(e) == 0 })
+}
+
+func TestWorker_AnOversizedResultIsCutToFit(t *testing.T) {
+	old := MaxUpload
+	MaxUpload = 16 << 10
+	defer func() { MaxUpload = old }()
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	_, stop := r.workerIn("tok-a", t.TempDir(), func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		res := goodResult(c, result.StatusPass)
+		res.ContainerLogs = map[string]string{"php": strings.Repeat("\x00", 8<<10)} // six bytes each in JSON
+		for name, s := range res.Steps {
+			s.Log = strings.Repeat("\x01", 8<<10) + "the end" // escaped, more than the cap
+			res.Steps[name] = s
+		}
+		return true, result.Write(filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json"), res)
+	})
+	defer stop()
+	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+	raw, err := os.ReadFile(filepath.Join(r.results, c.Product, c.ID()+".json"))
+	var got result.TestResult
+	if err == nil {
+		err = json.Unmarshal(raw, &got)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ContainerLogs != nil {
+		t.Error("container logs kept")
+	}
+	for name, s := range got.Steps {
+		if !strings.HasSuffix(s.Log, "the end") || !strings.HasPrefix(s.Log, "[cut") {
+			t.Errorf("step %s log %.40q...", name, s.Log)
+		}
+	}
 }
 
 func TestWorker_StoppingIsNotAHostFailure(t *testing.T) {
@@ -592,6 +696,25 @@ func TestWorker_StoppingIsNotAHostFailure(t *testing.T) {
 	_, stop := r.workerIn("tok-a", spool, writes(func(matrix.Combination) string { return result.StatusPass }))
 	defer stop()
 	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+}
+
+func TestWorker_AResultWrittenBeforeAStopIsKept(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	var started atomic.Bool
+	write := writes(func(matrix.Combination) string { return result.StatusPass })
+	fn := func(ctx context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		ran, err := write(ctx, c, cfg)
+		started.Store(true)
+		<-ctx.Done() // the stop lands during teardown
+		return ran && err == nil, ctx.Err()
+	}
+	_, stop := r.workerIn("tok-a", t.TempDir(), fn)
+	waitFor(t, started.Load)
+	stop()
+	if st := r.status(c); st != queue.StatusPass {
+		t.Errorf("status %s, want the written pass", st)
+	}
 }
 
 func TestWorker_RecoversUploadCutOffBeforeRename(t *testing.T) {
@@ -696,24 +819,6 @@ func TestWorker_PlaywrightSweepNeedsTheImage(t *testing.T) {
 	}
 }
 
-func TestUpload_APlaywrightSweepNeedsPlaywrightRun(t *testing.T) {
-	c := combo("8.3")
-	r := newRig(t, nil)
-	r.down()
-	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
-	r.start()
-	job := r.claim("tok-a", "req1")
-	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "rejected" {
-		t.Errorf("Playwright skipped: %s, want rejected", rep.Status)
-	}
-	job = r.claim("tok-a", "req2")
-	ran := goodResult(c, result.StatusPass)
-	ran.Steps["playwright"] = result.Step{Status: result.StatusPass}
-	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, ran)); rep.Status != "installed" {
-		t.Errorf("control: Playwright run %s", rep.Status)
-	}
-}
-
 func TestUpload_AnInstallCutOffBeforeAnotherSweepIsStale(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through 0500")
@@ -767,6 +872,24 @@ func TestUpload_ARetryWhileTheFirstIsSettlingWaits(t *testing.T) {
 	}
 }
 
+func TestUpload_APlaywrightSweepNeedsPlaywrightRun(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, nil)
+	r.down()
+	r.combos, r.contract = []matrix.Combination{c}, queue.Contract{Playwright: true}
+	r.start()
+	job := r.claim("tok-a", "req1")
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "rejected" {
+		t.Errorf("Playwright skipped: %s, want rejected", rep.Status)
+	}
+	job = r.claim("tok-a", "req2")
+	ran := goodResult(c, result.StatusPass)
+	ran.Steps["playwright"] = result.Step{Status: result.StatusPass}
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, ran)); rep.Status != "installed" {
+		t.Errorf("control: Playwright run %s", rep.Status)
+	}
+}
+
 func TestServe_LongSocketPathSaysSo(t *testing.T) {
 	err := (&Server{}).Serve(context.Background(), "/"+strings.Repeat("d", 120)+"/worker.sock")
 	if err == nil || !strings.Contains(err.Error(), "XDG_STATE_HOME") {
@@ -785,6 +908,19 @@ func TestWorker_HealthCausesClearIndependently(t *testing.T) {
 	w.SetUnhealthy("images", "")
 	if got := w.health(); got != "" {
 		t.Errorf("health = %q", got)
+	}
+}
+
+func TestWorker_ReportsWhyItWaits(t *testing.T) {
+	w := &Worker{}
+	reason := "under 40GB free on /"
+	wait := w.Reporting("disk", func() string { return reason })
+	if got := wait(); got != reason || w.health() != reason {
+		t.Errorf("wait = %q, health = %q", got, w.health())
+	}
+	reason = ""
+	if got := wait(); got != "" || w.health() != "" {
+		t.Errorf("after the disk freed: wait = %q, health = %q", got, w.health())
 	}
 }
 
@@ -972,6 +1108,94 @@ func TestDrain_NotWhileAnUploadIsBeingSettled(t *testing.T) {
 	<-done
 	if !r.srv.Drain("a", false) {
 		t.Error("control: not idle once the upload was answered")
+	}
+}
+
+func TestWorker_ResultWithHTMLCharactersIsAccepted(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	var recorded atomic.Bool
+	r.worker("tok-a", func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		cfg.OnProject("m2test-p1")
+		_, err := os.Stat(filepath.Join(filepath.Dir(cfg.ResultsDir), "project"))
+		recorded.Store(err == nil)
+		res := goodResult(c, result.StatusPass)
+		res.Steps["install"] = result.Step{Status: result.StatusPass, Log: "a && b > c <x>"}
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(res); err != nil {
+			return false, err
+		}
+		path := filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json")
+		os.MkdirAll(filepath.Dir(path), 0o700)
+		return true, os.WriteFile(path, buf.Bytes(), 0o600)
+	})
+	waitFor(t, func() bool { return r.src.Done() && r.srv.Live() == 0 })
+	if st := r.status(c); st != queue.StatusPass {
+		t.Errorf("status %s, want pass", st)
+	}
+	if !recorded.Load() {
+		t.Error("the run's project wasn't recorded in the spool")
+	}
+}
+
+func TestClaim_AWorkerFailingEveryRunIsBenched(t *testing.T) {
+	old := BenchFor
+	BenchFor = 300 * time.Millisecond
+	defer func() { BenchFor = old }()
+	first := combo("8.1")
+	r := newRig(t, []matrix.Combination{first, combo("8.2"), combo("8.3"), combo("8.4"), combo("8.5")})
+	// A result in between starts the count again.
+	for i := range FailingAfter - 1 {
+		job := r.claim("tok-a", fmt.Sprint("early", i))
+		r.upload("tok-a", Upload{Schema: Schema, Attempt: job.Attempt, Outcome: OutcomeHost, Reason: "flaky"})
+	}
+	job := r.claim("tok-a", "good")
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(job.Combo, result.StatusPass))); rep.Status != "installed" {
+		t.Fatalf("good result: %s", rep.Status)
+	}
+	for i := range FailingAfter {
+		job := r.claim("tok-a", fmt.Sprint("req", i))
+		if job.State != ClaimJob {
+			t.Fatalf("claim %d: %s", i, job.State)
+		}
+		if rep, err := r.upload("tok-a", Upload{Schema: Schema, Attempt: job.Attempt, Outcome: OutcomeHost, Reason: "docker: cannot connect"}); err != nil || rep.Status != "accepted" {
+			t.Fatalf("host failure %d: %v %v", i, rep, err)
+		}
+	}
+	if rep := r.claim("tok-a", "late"); rep.State != ClaimNone {
+		t.Errorf("benched worker got %s", rep.State)
+	}
+	if rep := r.claim("tok-b", "other"); rep.State != ClaimJob {
+		t.Errorf("control: another worker got %s", rep.State)
+	}
+	// A sole worker benched for good would leave the sweep waiting forever.
+	time.Sleep(BenchFor)
+	if rep := r.claim("tok-a", "later"); rep.State != ClaimJob {
+		t.Errorf("bench lapsed, worker got %s", rep.State)
+	}
+}
+
+func TestClaim_ExpiriesDontBenchAWorker(t *testing.T) {
+	old := LeaseFor
+	LeaseFor = 50 * time.Millisecond
+	defer func() { LeaseFor = old }()
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2"), combo("8.3"), combo("8.4")})
+	for i := range FailingAfter {
+		if job := r.claim("tok-a", fmt.Sprint("req", i)); job.State != ClaimJob {
+			t.Fatalf("claim %d: %s", i, job.State)
+		}
+	}
+	waitFor(t, func() bool { return r.srv.Live() == 0 })
+	if rep := r.claim("tok-a", "after"); rep.State != ClaimJob {
+		t.Errorf("after %d expiries the worker got %s", FailingAfter, rep.State)
+	}
+}
+
+func TestWorker_StacksSitBesideATrailingSlashSpool(t *testing.T) {
+	if got := (&Worker{Spool: "/data/spool/"}).stacksDir(); got != "/data/spool-stacks" {
+		t.Errorf("stacksDir = %q, want it beside the spool", got)
 	}
 }
 

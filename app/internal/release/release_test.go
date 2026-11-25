@@ -63,6 +63,10 @@ func TestSnapshot_RoundTrip(t *testing.T) {
 	if err != nil || info.Mode()&0o111 == 0 {
 		t.Errorf("install.sh lost its exec bit: %v %v", info, err)
 	}
+	// The deploy keeps the uploaded tarball; prepare mustn't write its own.
+	if _, err := os.Stat(filepath.Join(worker, hash+".tar.gz")); err == nil {
+		t.Error("Extract packed a tarball")
+	}
 }
 
 func TestSnapshot_SameTreeSameTarball(t *testing.T) {

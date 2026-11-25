@@ -17,8 +17,7 @@ import (
 // Schema changes whenever a request or reply changes shape.
 const Schema = 1
 
-// MaxUpload caps a result upload. Container logs are capped per service by
-// the runner, so a real result is far smaller.
+// MaxUpload caps a result upload; the worker cuts a larger result (see fit).
 var MaxUpload int64 = 64 << 20
 
 type HelloRequest struct {
@@ -90,7 +89,7 @@ type UploadReply struct {
 
 // Lease timings. Var so tests can shorten them.
 var (
-	LeaseFor       = 2 * time.Minute
+	LeaseFor       = 5 * time.Minute
 	RestartGrace   = 10 * time.Minute
 	HeartbeatEvery = 20 * time.Second
 	ClaimWait      = 30 * time.Second

@@ -154,8 +154,8 @@ func (a *AWS) Subnets(ctx context.Context, typ string) ([]string, error) {
 	return ids, nil
 }
 
-// Image finds the newest Debian 13 AMI for an architecture, unless image
-// already names one, and its root device.
+// Image finds the newest Debian 13 AMI for an architecture, or checks that
+// image is one of Debian's, and returns its root device.
 func (a *AWS) Image(ctx context.Context, image, goarch string) (id, root string, err error) {
 	in := &ec2.DescribeImagesInput{Owners: []string{debianOwner}}
 	if strings.HasPrefix(image, "ami-") {
@@ -346,7 +346,6 @@ func (a *AWS) run(ctx context.Context, s Spec, subnet, token string) (*ec2.RunIn
 	return out, awsErr(err)
 }
 
-// wait polls a new instance until it runs with a public address.
 func (a *AWS) wait(ctx context.Context, srv Server) (Server, error) {
 	started := time.Now()
 	wait, cancel := context.WithTimeout(ctx, a.RunningWait)

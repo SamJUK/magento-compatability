@@ -210,7 +210,7 @@ func TestServerTypeArm(t *testing.T) {
 
 func TestSSHKeyReplacesAStaleKey(t *testing.T) {
 	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
-		"GET /v1/ssh_keys":      write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool", "public_key": "ssh-ed25519 OLD"}]}`),
+		"GET /v1/ssh_keys":      write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool", "public_key": "ssh-ed25519 OLD", "labels": {"m2test": "pool"}}]}`),
 		"DELETE /v1/ssh_keys/3": write(204, ""),
 		"POST /v1/ssh_keys":     write(201, `{"ssh_key": {"id": 4, "name": "m2test-pool", "public_key": "ssh-ed25519 NEW"}}`),
 	})
@@ -378,5 +378,43 @@ func TestUserDataRefusesInjection(t *testing.T) {
 		if _, err := UserData(h); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+func TestKeyIDAsksByName(t *testing.T) {
+	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+		"GET /v1/ssh_keys": func(w http.ResponseWriter, c call) {
+			if c.query == "name=m2test-pool-a1" {
+				w.Write([]byte(`{"ssh_keys": [{"id": 3}]}`))
+				return
+			}
+			w.Write([]byte(`{"ssh_keys": []}`))
+		},
+	})
+	if id, err := h.KeyID(context.Background(), "m2test-pool-a1"); id != "3" || err != nil {
+		t.Errorf("own key: %q %v", id, err)
+	}
+	if id, err := h.KeyID(context.Background(), "m2test-pool-b2"); id != "" || err != nil || len(*calls) != 2 {
+		t.Errorf("no key: %q %v", id, err)
+	}
+}
+
+func TestParsePriceRefusesWhatSkipsTheCap(t *testing.T) {
+	for _, bad := range []string{"NaN", "Inf", "-0.01", "0", "x"} {
+		if _, err := parsePrice(bad); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+	if f, err := parsePrice("0.0952"); err != nil || f != 0.0952 {
+		t.Errorf("control: %v %v", f, err)
+	}
+}
+
+func TestSSHKeyLeavesAnUnlabelledKey(t *testing.T) {
+	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+		"GET /v1/ssh_keys": write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool", "public_key": "ssh-ed25519 OLD"}]}`),
+	})
+	if _, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 NEW"); err == nil || len(*calls) != 1 {
+		t.Fatalf("%v after %d calls", err, len(*calls))
 	}
 }

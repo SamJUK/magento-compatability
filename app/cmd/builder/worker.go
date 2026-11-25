@@ -16,7 +16,7 @@ import (
 	"github.com/samjuk/magento-compatability/internal/pool"
 )
 
-const workerUsage = `Usage: magento-compatibility-builder worker <add|setup|remove|list> [flags] [name]
+const workerUsage = `Usage: magento-compatibility-builder worker <add|setup|remove|list|gc> [flags] [name]
 
   add NAME -host H -host-key SHA256:...   pin a worker's host key and give it a token
   add NAME                                a worker on this machine, on worker.sock directly
@@ -25,13 +25,29 @@ const workerUsage = `Usage: magento-compatibility-builder worker <add|setup|remo
   remove NAME                             stop its unit (and its runs) and forget it
   list
   gc [-yes]                               destroy cloud workers dead bursts left behind
-                                          (needs HCLOUD_TOKEN; lists them without -yes)
+                                          (needs HCLOUD_TOKEN or aws.region in pool.yml;
+                                          lists them without -yes)
 
 The inventory and the pool's SSH key, config and known hosts live in
 $XDG_CONFIG_HOME/magento-compatibility. A worker host needs Docker, a user
 whose only authorised key is the pool key (printed by add), lingering,
-its dir owned by that user, and StreamLocalBindUnlink yes in sshd.
+its dir owned by that user, and in sshd StreamLocalBindUnlink yes,
+AllowStreamLocalForwarding yes, AllowTcpForwarding remote, PermitListen none, ClientAliveInterval 15 and
+ClientAliveCountMax 3.
 `
+
+// lockWorker keeps a running sweep's worker from being set up or removed
+// under it; held until exit.
+func lockWorker(p *pool.Pool, name string) {
+	lock, err := p.Lock(name)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	heldLocks = append(heldLocks, lock)
+}
+
+// heldLocks lives as long as the process: a collected lock file unlocks.
+var heldLocks []*os.File
 
 func runWorker(args []string) {
 	if len(args) == 0 {
@@ -42,17 +58,24 @@ func runWorker(args []string) {
 	if err != nil {
 		fatalf("%v", err)
 	}
+	// Longer than setup or remove may wait out a deploy.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	// Before the inventory is read: gc copes with one that won't load.
+	if args[0] == "gc" {
+		workerGC(ctx, p, args[1:])
+		return
+	}
 	inv, err := p.Load()
 	if err != nil {
 		fatalf("%v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
 	switch args[0] {
 	case "add":
 		workerAdd(ctx, p, inv, args[1:])
 	case "setup":
 		name, w := namedWorker(inv, args[1:])
+		lockWorker(p, name)
 		if !w.Remote() || w.Cloud != nil {
 			fatalf("%s runs on this machine or belongs to a burst; nothing to set up", name)
 		}
@@ -75,20 +98,19 @@ func runWorker(args []string) {
 		logOK(fmt.Sprintf("%s set up (linux/%s); it starts at the next sweep with -workers %s", name, arch, name))
 	case "remove":
 		name, w := namedWorker(inv, args[1:])
+		lockWorker(p, name)
 		if w.Cloud != nil {
 			fatalf("%s belongs to a burst; builder worker gc destroys it", name)
 		}
 		if w.Remote() {
-			if err := p.Stop(ctx, name); err != nil {
-				logWarn(fmt.Sprintf("stopping %s: %v; forgetting it anyway", name, err))
+			if err := p.Stop(ctx, name, w); err != nil {
+				logWarn(fmt.Sprintf("stopping %s: %v; forgetting it anyway, so its unit and the pool key stay on the host", name, err))
 			}
 		}
 		if err := p.Update(func(inv *pool.Inventory) error { delete(inv.Workers, name); return nil }); err != nil {
 			fatalf("%v", err)
 		}
 		logOK("removed " + name)
-	case "gc":
-		workerGC(ctx, p, args[1:])
 	case "list":
 		for _, name := range slices.Sorted(maps.Keys(inv.Workers)) {
 			w := inv.Workers[name]

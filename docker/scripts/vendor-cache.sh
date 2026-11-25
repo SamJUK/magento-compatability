@@ -55,6 +55,13 @@ vendor_cache_release_lock() {
   fi
 }
 
+# An image built before the lock has no util-linux flock: run uncached.
+vendor_cache_usable() {
+  flock --version 2>/dev/null | grep -q util-linux && return 0
+  echo "[WARN] util-linux flock is missing from the PHP image, so the vendor cache is skipped; rebuild it with docker compose build" >&2
+  return 1
+}
+
 vendor_cache_acquire_lock() {
   local lock_file="$1.flock"
 

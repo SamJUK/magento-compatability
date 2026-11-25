@@ -34,16 +34,17 @@ type fakeCloud struct {
 	next     int64
 	servers  map[string]cloud.Server
 	// createErr fails Create; made says whether the server exists anyway.
-	createErr error
-	made      bool
-	listErr   error
-	hideFor   int // List shows nothing this many times first
-	lockedFor int // Delete answers 423 this many times first
-	actionErr error
-	deleteErr error
-	getLabels map[string]string // what Get says the labels are, if set
-	onCreate  func(cloud.Spec)
-	specs     []cloud.Spec
+	createErr  error
+	made       bool
+	listErr    error
+	hideFor    int // List shows nothing this many times first
+	lockedFor  int // Delete answers 423 this many times first
+	actionErr  error
+	deleteErr  error
+	slowDelete time.Duration
+	getLabels  map[string]string // what Get says the labels are, if set
+	onCreate   func(cloud.Spec)
+	specs      []cloud.Spec
 }
 
 func (f *fakeCloud) Create(_ context.Context, s cloud.Spec) (cloud.Server, error) {
@@ -86,6 +87,7 @@ func (f *fakeCloud) Get(_ context.Context, id string) (cloud.Server, error) {
 }
 
 func (f *fakeCloud) Delete(ctx context.Context, id string) error {
+	time.Sleep(f.slowDelete)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ctx.Err() != nil {
@@ -136,11 +138,15 @@ type fakeHost struct {
 	mu       sync.Mutex
 	notYet   int // Script fails this many times first
 	setupErr error
+	tails    int
 }
 
-func (h *fakeHost) Script(context.Context, string, string) ([]byte, error) {
+func (h *fakeHost) Script(_ context.Context, _ string, script string) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if strings.HasPrefix(script, "tail ") {
+		h.tails++
+	}
 	if h.notYet > 0 {
 		h.notYet--
 		return nil, errors.New("connection refused")
@@ -168,7 +174,7 @@ func testBurst(t *testing.T, prov *fakeCloud, host *fakeHost) (*burst, *fakeFlee
 	}
 	ff := &fakeFleet{admitted: map[string]bool{}, busy: map[string]bool{}, drained: map[string]bool{}}
 	b := &burst{
-		pool: &pool.Pool{Dir: dir}, host: host, prov: prov, provider: "hetzner", slots: 5, log: log.New(io.Discard, "", 0),
+		pool: &pool.Pool{Dir: dir}, host: host, prov: prov, provider: "hetzner", account: "7", slots: 5, log: log.New(io.Discard, "", 0),
 		poolKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPool m2test-pool", poolID: "a1b2c3d4e5f6",
 		connect: func(ctx context.Context, _ string, _ *pool.Worker) { <-ctx.Done() },
 		admit: func(_, name string) {
@@ -311,14 +317,14 @@ func TestGCKeepsAnUnansweredCreateForAWhile(t *testing.T) {
 	hk = keyOnly(hk)
 	if err := b.pool.Update(func(inv *pool.Inventory) error {
 		inv.Workers["hz-recent"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: hk, Token: tok, Slots: 5,
-			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "aaaaaaaa", Created: time.Now().UTC()}}
+			Cloud: &pool.Cloud{Provider: "hetzner", Account: "7", Nonce: "aaaaaaaa", Created: time.Now().UTC()}}
 		inv.Workers["hz-old"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: hk, Token: tok2, Slots: 5,
-			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "bbbbbbbb", Created: time.Now().UTC().Add(-2 * unseenFor)}}
+			Cloud: &pool.Cloud{Provider: "hetzner", Account: "7", Nonce: "bbbbbbbb", Created: time.Now().UTC().Add(-20 * time.Minute)}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 1 {
 		t.Fatalf("%d left, %v", left, err)
 	}
 	inv := inventory(t, b)
@@ -328,7 +334,7 @@ func TestGCKeepsAnUnansweredCreateForAWhile(t *testing.T) {
 	prov.mu.Lock()
 	prov.servers["90"] = cloud.Server{ID: "90", Name: "hz-recent", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
 		t.Fatalf("%d left (%v), %d servers, inventory %v", left, err, prov.count(), inventory(t, b))
 	}
 }
@@ -340,7 +346,7 @@ func TestGCDestroysALateServerFoundOnlyByItsNonce(t *testing.T) {
 	_, hk, _ := pool.HostKeyPair("t")
 	if err := b.pool.Update(func(inv *pool.Inventory) error {
 		inv.Workers["hz-late"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: keyOnly(hk), Token: tok, Slots: 5,
-			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "aaaaaaaa", Created: time.Now().UTC()}}
+			Cloud: &pool.Cloud{Provider: "hetzner", Account: "7", Nonce: "aaaaaaaa", Created: time.Now().UTC()}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -348,7 +354,7 @@ func TestGCDestroysALateServerFoundOnlyByItsNonce(t *testing.T) {
 	prov.servers["90"] = cloud.Server{ID: "90", Name: "hz-late", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
 	// The pool listing misses it; the nonce listing after it doesn't.
 	prov.hideFor = 1
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
 		t.Fatalf("%d left (%v), %d servers, inventory %v", left, err, prov.count(), inventory(t, b))
 	}
 }
@@ -379,7 +385,7 @@ func TestGCLeavesAnotherProjectsServer(t *testing.T) {
 		prov.servers[id] = s
 	}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 	// Control: with this pool's labels back, the same gc destroys it.
@@ -389,7 +395,7 @@ func TestGCLeavesAnotherProjectsServer(t *testing.T) {
 		prov.servers[id] = s
 	}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
 		t.Fatalf("control: %d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -481,7 +487,7 @@ func TestGCGoesByLabelWithoutAnInventory(t *testing.T) {
 	if _, err := b.pool.Load(); err == nil {
 		t.Fatal("control: the inventory still loads")
 	}
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || prov.count() != 0 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -520,6 +526,19 @@ func TestBurstDestroysAWorkerThatFailsSetup(t *testing.T) {
 	waitFor(t, "the server to go", func() bool { return prov.count() == 0 && len(inventory(t, b)) == 0 })
 	if len(ff.admitted) != 0 {
 		t.Fatal("a worker that failed setup was let in")
+	}
+	b.end(context.Background())
+}
+
+func TestBurstDestroysAWorkerWhoseTunnelGaveUp(t *testing.T) {
+	prov := &fakeCloud{}
+	b, ff := testBurst(t, prov, &fakeHost{})
+	b.connect = func(context.Context, string, *pool.Worker) {}
+	b.start(context.Background(), 1)
+	b.creating.Wait()
+	waitFor(t, "the server to go", func() bool { return prov.count() == 0 && len(inventory(t, b)) == 0 })
+	if len(ff.admitted) != 1 {
+		t.Fatal("control: the worker was never let in")
 	}
 	b.end(context.Background())
 }
@@ -570,6 +589,17 @@ func TestTrimKeepsOneUntilTheSweepIsDone(t *testing.T) {
 	}
 }
 
+func TestTrimDeletesSideBySide(t *testing.T) {
+	b, _, prov := readyBurst(t, 4)
+	prov.slowDelete = 500 * time.Millisecond
+	start := time.Now()
+	b.trim(context.Background(), 0, true)
+	// One after another takes 2s; the margin is for a loaded machine.
+	if took := time.Since(start); prov.count() != 0 || took > 1500*time.Millisecond {
+		t.Errorf("servers %d left, took %s for four 500ms deletes", prov.count(), took)
+	}
+}
+
 func TestTrimLeavesBusyWorkersAndCountsThemAsKept(t *testing.T) {
 	b, ff, prov := readyBurst(t, 3)
 	var busy string
@@ -609,16 +639,16 @@ func TestBurstPlan(t *testing.T) {
 	var c cloudConfig
 	c.Hetzner.Slots, c.MaxWorkers, c.MinutesPerRun, c.SetupMinutes = 5, 10, 4, 10
 	for _, tc := range []struct {
-		asked, existing, runs, n int
-		cost                     float64
+		asked, runs, n int
+		cost           float64
 	}{
-		{asked: 10, runs: 1000, n: 10, cost: 10 * 2},            // 80 + 10 minutes: 2 hours each
-		{asked: 20, runs: 1000, n: 10, cost: 10 * 2},            // max_workers
-		{asked: 10, existing: 8, runs: 1000, n: 2, cost: 2 * 7}, // 400 + 10 minutes
-		{asked: 10, runs: 7, n: 2, cost: 2 * 1},                 // no more than the runs can use
+		{asked: 10, runs: 1000, n: 10, cost: 10 * 2}, // 80 + 10 minutes: 2 hours each
+		{asked: 20, runs: 1000, n: 10, cost: 10 * 2}, // max_workers
+		{asked: 2, runs: 1000, n: 2, cost: 2 * 7},    // 400 + 10 minutes
+		{asked: 10, runs: 7, n: 2, cost: 2 * 1},      // no more than the runs can use
 		{asked: 3, runs: 0, n: 0},
 	} {
-		n, cost := burstPlan(c, c.Hetzner.Slots, tc.asked, tc.existing, tc.runs, 1)
+		n, cost := burstPlan(c, c.Hetzner.Slots, tc.asked, tc.runs, 1)
 		if n != tc.n || cost != tc.cost {
 			t.Errorf("%+v: got %d workers for %v", tc, n, cost)
 		}
@@ -653,7 +683,7 @@ func TestLoadCloudConfig(t *testing.T) {
 		t.Fatalf("aws defaults %+v", c.AWS)
 	}
 	ok := "ssh_from: [198.51.100.4/32, 2001:db8::/32]\n"
-	for _, bad := range []string{"max_age: 3h\n", "ssh_from: [x]\n", "ssh_from: [198.51.100.4/24]\n", ok + "max_workers: 0\n", ok + "max_wrokers: 3\n",
+	for _, bad := range []string{"max_age: 3h\n", "ssh_from: [x]\n", "ssh_from: [198.51.100.4/24]\n", "ssh_from: [0.0.0.0/0]\n", "ssh_from: [128.0.0.0/1]\n", "ssh_from: [\"2001:db8::/32\"]\n", ok + "aws: {region: eu west 2}\n", "ssh_from: [\"::/0\"]\n", ok + "max_workers: 0\n", ok + "max_wrokers: 3\n",
 		ok + "max_burst_cost: .nan\n", ok + "aws: {hourly: .inf}\n", ok + "minutes_per_run: .nan\n", ok + "hetzner: {slots: 100}\n", ok + "aws: {slots: 0}\n", ok + "aws: {disk_gb: 20}\n"} {
 		write(bad)
 		if _, err := loadCloudConfig(p); err == nil {
@@ -700,17 +730,17 @@ func TestGC(t *testing.T) {
 	b.pool.Update(func(inv *pool.Inventory) error {
 		tok, _ := pool.NewToken()
 		inv.Workers["hz-lost"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: anyKey, Token: tok, Slots: 5,
-			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "abcdef12"}}
+			Cloud: &pool.Cloud{Provider: "hetzner", Account: "7", Nonce: "abcdef12"}}
 		tok2, _ := pool.NewToken()
 		inv.Workers["hz-never"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: anyKey, Token: tok2, Slots: 5,
-			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "99999999"}}
+			Cloud: &pool.Cloud{Provider: "hetzner", Account: "7", Nonce: "99999999"}}
 		return nil
 	})
 
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, false, b.log); err != nil || left != 4 || prov.count() != 5 || len(inventory(t, b)) != 3 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, false, b.log); err != nil || left != 4 || prov.count() != 5 || len(inventory(t, b)) != 3 {
 		t.Fatalf("a dry run: %d listed (%v), %d servers, inventory %d", left, err, prov.count(), len(inventory(t, b)))
 	}
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 0 {
 		t.Fatalf("%d left, %v", left, err)
 	}
 	if prov.count() != 2 || prov.servers["70"].Name != "someone-elses" || prov.servers["80"].Name != "another-pools" || len(inventory(t, b)) != 0 {
@@ -747,6 +777,9 @@ func TestEndRetriesWhatADeleteLeft(t *testing.T) {
 }
 
 func TestGCCountsAnEntryItCouldNotForget(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through 0555")
+	}
 	b, _, prov := readyBurst(t, 1)
 	b.mu.Lock()
 	for _, bw := range b.workers {
@@ -758,7 +791,7 @@ func TestGCCountsAnEntryItCouldNotForget(t *testing.T) {
 	dir := b.pool.Dir
 	os.Chmod(dir, 0o555)
 	defer os.Chmod(dir, 0o755)
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 0 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -809,7 +842,7 @@ func TestGCLeavesAnotherProvidersWorkers(t *testing.T) {
 		for _, w := range inv.Workers {
 			aw := *w
 			aw.Token, aw.Host, aw.User = strings.Repeat("a", 32), "198.51.100.9", "other"
-			aw.Cloud = &pool.Cloud{Provider: "aws", Region: "eu-west-1", Account: "111111111111", ID: "i-0123456789abcdef0", Nonce: "abcdef12", Created: time.Now()}
+			aw.Cloud = &pool.Cloud{Provider: "aws", Region: "eu-west-1", Account: "111111111111", ID: "i-0123456789abcdef0", Nonce: "abcdef12", Created: time.Now().Add(-30 * time.Minute)} // past Hetzner's wait
 			inv.Workers["aws-abcdef12"] = &aw
 			break
 		}
@@ -818,7 +851,7 @@ func TestGCLeavesAnotherProvidersWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Hetzner has never heard of it, which must not read as "gone".
-	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner", account: "7"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 	if inv := inventory(t, b); len(inv) != 1 || inv["aws-abcdef12"] == nil {
@@ -899,7 +932,7 @@ func TestGCLeavesAnotherAccountsInstances(t *testing.T) {
 	// Another account sees none of it, and says so long after the create.
 	b.pool.Update(func(inv *pool.Inventory) error {
 		for _, w := range inv.Workers {
-			w.Cloud.Created = time.Now().Add(-2 * unseenFor)
+			w.Cloud.Created = time.Now().Add(-2 * unseenFor["aws"])
 		}
 		return nil
 	})
@@ -966,5 +999,67 @@ func TestUseAWSSetsTheDeadlineAndAccount(t *testing.T) {
 	}
 	if s := b.spec; s.Type != "m7g.2xlarge" || s.Image != "ami-0123456789abcdef0" || s.RootDevice != "/dev/xvda" || s.DiskGB != 60 || !slices.Equal(s.Subnets, []string{"subnet-a"}) {
 		t.Errorf("spec %+v", s)
+	}
+}
+
+func TestGCLeavesWhatAnotherProjectCantSee(t *testing.T) {
+	prov := &fakeCloud{}
+	b, _ := testBurst(t, prov, &fakeHost{})
+	b.start(context.Background(), 1)
+	b.creating.Wait()
+	waitFor(t, "a ready worker", func() bool { return b.readyCount() == 1 })
+	b.mu.Lock()
+	for _, bw := range b.workers {
+		bw.stop()
+	}
+	b.workers = nil
+	b.mu.Unlock()
+	b.running.Wait()
+	// Another project, with or without a pool key of its own.
+	elsewhere := &fakeCloud{servers: map[string]cloud.Server{}}
+	for _, key := range []string{"9", ""} {
+		if left, err := gc(context.Background(), b.pool, elsewhere, target{"hetzner", "", key}, b.poolID, true, b.log); err != nil || left != 1 || len(inventory(t, b)) != 1 {
+			t.Fatalf("project with key %q: %d left (%v), inventory %v", key, left, err, inventory(t, b))
+		}
+	}
+	// Recorded with no key ID, under a token whose project has no pool key.
+	b.pool.Update(func(inv *pool.Inventory) error {
+		for _, w := range inv.Workers {
+			w.Cloud.Account = ""
+		}
+		return nil
+	})
+	if left, err := gc(context.Background(), b.pool, elsewhere, target{"hetzner", "", ""}, b.poolID, true, b.log); err != nil || left != 1 || len(inventory(t, b)) != 1 {
+		t.Fatalf("no key either side: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	b.pool.Update(func(inv *pool.Inventory) error {
+		for _, w := range inv.Workers {
+			w.Cloud.Account = "7"
+		}
+		return nil
+	})
+	// Control: the burst's own project, where it's really gone.
+	gone := &fakeCloud{servers: map[string]cloud.Server{}}
+	if left, err := gc(context.Background(), b.pool, gone, b.target(), b.poolID, true, b.log); err != nil || left != 0 || len(inventory(t, b)) != 0 {
+		t.Fatalf("own project: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+}
+
+func TestProvisionReadsTheLogOnlyWhenItTimesOut(t *testing.T) {
+	host := &fakeHost{notYet: 1 << 30}
+	b, _ := testBurst(t, &fakeCloud{}, host)
+	old := provisionWait
+	defer func() { provisionWait = old }()
+
+	provisionWait = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	if err := b.provision(ctx, "w", &pool.Worker{}); !errors.Is(err, context.Canceled) || host.tails != 0 {
+		t.Errorf("cancelled: %v, %d tails; want Canceled and no tail", err, host.tails)
+	}
+
+	provisionWait = 20 * time.Millisecond
+	if err := b.provision(context.Background(), "w", &pool.Worker{}); err == nil || host.tails != 1 {
+		t.Errorf("control: timed out: %v, %d tails", err, host.tails)
 	}
 }

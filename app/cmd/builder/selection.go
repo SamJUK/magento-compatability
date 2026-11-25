@@ -47,7 +47,7 @@ func addSelectionFlags(fs *flag.FlagSet, deadline time.Duration) *selection {
 	fs.BoolVar(&s.playwright, "playwright", true, "Run Playwright E2E tests after smoke tests")
 	fs.BoolVar(&s.sampleData, "sample-data", false, "Install Magento sample data before smoke/Playwright validation")
 	fs.BoolVar(&s.noCacheSave, "no-cache-save", false, "Don't grow the shared Composer and vendor caches (saves disk on one-off sweeps)")
-	fs.Int64Var(&s.maxLogBytes, "max-log-bytes", 1<<20, "Maximum bytes to capture per container log (0 = unlimited)")
+	fs.Int64Var(&s.maxLogBytes, "max-log-bytes", 1<<20, "Maximum bytes to capture per container log (0 = 1MiB, negative = no limit; at most 2MiB with remote workers)")
 	fs.DurationVar(&s.deadline, "deadline", deadline, "Fail a combination that runs longer than this (0 = no limit)")
 	return s
 }
