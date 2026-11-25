@@ -5,6 +5,7 @@ The results are published at [magento.works](https://magento.works).
 
 ## Requirements
 
+- Linux or macOS (Windows isn't supported)
 - Docker 24+ with Compose v2
 - Go 1.22+
 - Node.js 22.12+ and pnpm 12+ (`packageManager` in `site/package.json` pins the exact version)
@@ -37,6 +38,29 @@ Common runs:
 Results already on disk are skipped unless you pass `-force`.
 `test -h` lists every filter and option, including `-sample-data`, `-no-tui` for CI logs and `-playwright=false`.
 Ctrl+C stops cleanly and writes no partial results.
+`-deadline 45m` fails a combination that runs longer, with `deadline_exceeded`, and still writes its result.
+
+### Long sweeps
+
+`queue` works through a sweep unattended and picks up where it left off after Ctrl+C, a crash or a reboot:
+
+```bash
+./bin/magento-compatibility-builder queue -product magento -version 2.4.8
+./bin/magento-compatibility-builder queue -ids-file sweep.txt   # one combination ID per line
+./bin/magento-compatibility-builder queue -ids-file sweep.txt -status
+```
+
+It takes the same filters and options as `test`, with `-deadline` at 45 minutes by default.
+Stack setup failures are retried up to three times, and any other failure from the sweep gets one more go.
+Failures from before the sweep run once with `-retry-failures`, and passes once with `-force`.
+A sweep is the same filters and results directory; it remembers when it started, so a failure written since then (by `test` too) counts as the sweep's own until `-fresh` starts it over.
+Resuming a sweep with different `-playwright`, `-sample-data`, `-max-log-bytes` or `-deadline` is refused, since its results would be mixed; `-fresh` starts it over.
+A run that errors without writing a result is put down to the host and retried up to three times without using up the combination's tries.
+It runs 2 stacks at once (`-slots`), drops one while memory is short and waits while the disk is under 40GB free.
+Writing a number to the `slots` file it names at startup changes the slot count without a restart, up to `-slots` or the file's value at startup, whichever is larger.
+A second Ctrl+C stops at once without tearing down running stacks; the next `queue` start removes them.
+One queue runs per machine. Its state lives in `~/.local/state/magento-compatibility/queue/ledger.json`.
+`test` skips any combination a queue is running at that moment, and the queue skips any `test` is running; `test -ignore-queue` runs it anyway.
 
 ## What gets tested
 

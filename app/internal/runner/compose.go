@@ -138,6 +138,7 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		projectName: projectName,
 		files:       files,
 		env:         env,
+		execCommand: stubExec,
 	}, nil
 }
 
@@ -150,11 +151,15 @@ func (cp *Compose) args(sub ...string) []string {
 	return append(a, sub...)
 }
 
+var stubExec func(context.Context, string, ...string) *exec.Cmd
+
 func (cp *Compose) command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	if cp.execCommand != nil {
-		return cp.execCommand(ctx, name, args...)
+		cmd := cp.execCommand(ctx, name, args...)
+		cmd.WaitDelay = WaitDelay
+		return cmd
 	}
-	return exec.CommandContext(ctx, name, args...)
+	return Command(ctx, name, args...)
 }
 
 // run executes docker with the given arguments, capturing combined output.
@@ -195,12 +200,10 @@ func (cp *Compose) Up(ctx context.Context) (string, error) {
 
 // removeEphemeralVolumes deletes the per-run volumes created by this stack.
 // Compose names them {COMPOSE_PROJECT_NAME}_{suffix}. Errors are ignored —
-// volumes may not exist if Up never succeeded. Uses a fresh context so cleanup
-// runs even when the caller's context is already cancelled.
-func (cp *Compose) removeEphemeralVolumes() {
-	bg := context.Background()
+// volumes may not exist if Up never succeeded.
+func (cp *Compose) removeEphemeralVolumes(ctx context.Context) {
 	for _, suffix := range []string{"_magento", "_db-data", "_search-data"} {
-		cmd := cp.command(bg, "docker", "volume", "rm", "--force", cp.projectName+suffix)
+		cmd := cp.command(ctx, "docker", "volume", "rm", "--force", cp.projectName+suffix)
 		cmd.Env = cp.env
 		_ = cmd.Run()
 	}
@@ -210,7 +213,7 @@ func (cp *Compose) removeEphemeralVolumes() {
 // and RabbitMQ images declare; the external cache volumes survive it.
 func (cp *Compose) Down(ctx context.Context) error {
 	_, err := cp.run(ctx, "down", "--volumes", "--remove-orphans")
-	cp.removeEphemeralVolumes()
+	cp.removeEphemeralVolumes(ctx)
 	return err
 }
 

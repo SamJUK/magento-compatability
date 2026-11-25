@@ -11,6 +11,7 @@ package result
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,9 +113,8 @@ func Now() string {
 // ── Write ─────────────────────────────────────────────────────────────────────
 
 // Write serialises r as indented JSON to path, creating parent directories as
-// needed. This replaces write_result_json in scripts/lib.sh and, crucially,
-// never calls jq — eliminating the --argjson failures caused by unescaped log
-// content.
+// needed. The file is replaced atomically, so readers never see a partial
+// result, even if the process dies mid-write.
 func Write(path string, r TestResult) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("result: mkdir %s: %w", filepath.Dir(path), err)
@@ -123,10 +123,50 @@ func Write(path string, r TestResult) error {
 	if err != nil {
 		return fmt.Errorf("result: marshalling %s: %w", r.ID, err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	if err := writeAtomic(path, append(data, '\n')); err != nil {
 		return fmt.Errorf("result: writing %s: %w", path, err)
 	}
 	return nil
+}
+
+// writeAtomic writes to a temp file in the same directory, then renames it
+// over path. The temp name ends in .tmp so ReadAll and the site skip it.
+func writeAtomic(path string, data []byte) (err error) {
+	dir := filepath.Dir(path)
+	// Not CreateTemp: its 0600 ignores the umask, as did a chmod after it.
+	tmp := filepath.Join(dir, fmt.Sprintf(".%s.%d.tmp", filepath.Base(path), rand.Uint64()))
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // ── ReadAll ───────────────────────────────────────────────────────────────────

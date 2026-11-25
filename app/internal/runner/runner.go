@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +29,16 @@ const defaultMaxLogBytes int64 = 1 << 20 // 1 MiB per service
 const (
 	installRetryAttempts = 3
 	installRetryDelay    = 5 * time.Second
+
+	// Bounds on teardown and log capture, so a wedged Docker daemon can't
+	// hold a slot forever.
+	CleanupTimeout    = 5 * time.Minute
+	diagnosticTimeout = 2 * time.Minute
 )
+
+// ErrCleanupTimeout means the stack could not be torn down in time and may
+// still be holding ports, memory or disk.
+var ErrCleanupTimeout = errors.New("stack teardown timed out")
 
 var transientComposerCurlErrors = []string{
 	"curl error 6",
@@ -43,6 +53,44 @@ var retryableInstallFailureSignatures = []string{
 	"no alive nodes found in your cluster",
 	"corrupted zip archive (0 bytes), try again",
 	"does not contain valid json",
+}
+
+// FailureCodes maps every failure code Run can record to its category, so
+// anything reading results can reject codes the harness never produces.
+var FailureCodes = map[string]string{
+	"compile_class_missing":             "compatibility",
+	"composer_allow_plugins":            "harness",
+	"composer_audit_policy":             "harness",
+	"composer_cache_corruption":         "harness",
+	"composer_dependency_conflict":      "harness",
+	"composer_network":                  "infrastructure",
+	"db_version_unsupported":            "compatibility",
+	"deadline_exceeded":                 "infrastructure",
+	"disk_space":                        "infrastructure",
+	"docker_cleanup_race":               "harness",
+	"docker_name_conflict":              "harness",
+	"elasticsearch8_module_unavailable": "harness",
+	"elasticsearch8_unsupported":        "compatibility",
+	"glob_brace_unsupported":            "harness",
+	"legacy_search_flags":               "harness",
+	"order_success_redirect":            "harness",
+	"package_extract_timeout":           "infrastructure",
+	"package_layout_invalid":            "compatibility",
+	"pagebuilder_render_lock":           "harness",
+	"php84_nullable_deprecation":        "compatibility",
+	"php_syntax_incompatible":           "compatibility",
+	"php_version_unsupported":           "compatibility",
+	"playwright_browser_missing":        "harness",
+	"queue_not_ready":                   "harness",
+	"search_cluster_unhealthy":          "harness",
+	"search_engine_unsupported":         "compatibility",
+	"search_mapping_types_removed":      "compatibility",
+	"search_not_ready":                  "harness",
+	"service_startup":                   "harness",
+	"service_unhealthy":                 "harness",
+	"stack_up_no_output":                "harness",
+	"stomp_unsupported":                 "compatibility",
+	"storefront_timeout":                "infrastructure",
 }
 
 func classifyStepFailure(stepName, log string) *result.Failure {
@@ -325,6 +373,14 @@ type RunConfig struct {
 	InstallSampleData bool
 	Force             bool
 	MaxLogBytes       int64 // bytes to tail per container log; 0 = use default (1 MiB)
+
+	// Deadline caps one run. When it passes, the running step fails with
+	// code deadline_exceeded and the result is still written. 0 = no limit.
+	Deadline time.Duration
+
+	// OnProject, when set, gets the compose project name before the stack
+	// starts, so a caller can tell its own stacks from leftovers.
+	OnProject func(name string)
 }
 
 // searchConfigFlag returns the search type identifier for the Magento install
@@ -591,8 +647,10 @@ func runInstallWithRetries(
 }
 
 // Run executes the full test pipeline for one combination and writes a result
-// JSON file.  It returns (true, nil) when the result was written, (false, nil)
-// when skipped (already exists and Force=false).
+// JSON file. ran is true once the result is written. It is false, with no
+// error, when the result already exists and Force is off, or when ctx is
+// cancelled before the write, which leaves any earlier result untouched. A
+// teardown that times out returns ErrCleanupTimeout, with ran still true.
 func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, err error) {
 	maxLog := cfg.MaxLogBytes
 	if maxLog == 0 {
@@ -611,6 +669,14 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		return false, nil
 	}
 
+	// ctx is the caller's: cancelling it abandons the run and writes nothing.
+	// runCtx adds the deadline: passing it fails the step that was running.
+	runCtx, cancelRun := ctx, context.CancelFunc(func() {})
+	if cfg.Deadline > 0 {
+		runCtx, cancelRun = context.WithTimeout(ctx, cfg.Deadline)
+	}
+	defer cancelRun()
+
 	magentoEnv := buildMagentoEnv(c, searchConfigFlag(c), cfg.InstallSampleData)
 	if cfg.SkipCacheSave {
 		magentoEnv = append(magentoEnv, "CACHE_SAVE=0")
@@ -624,66 +690,94 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 	steps := make(map[string]result.Step)
 	overallStatus := result.StatusPass
 
-	recordStep := func(name, status string, dur float64, log string) {
+	// late: the deadline had passed when the step ended, not just by now.
+	record := func(name, status string, dur float64, log string, late bool) {
 		step := result.Step{Status: status, DurationS: dur, Log: log}
 		if status == result.StatusFail || status == result.StatusError {
-			step.Failure = classifyStepFailureForCombination(c, name, log)
+			if ctx.Err() == nil && late {
+				step.Failure = &result.Failure{
+					Category:    "infrastructure",
+					Code:        "deadline_exceeded",
+					Summary:     fmt.Sprintf("The run passed its %s deadline during this step.", cfg.Deadline),
+					LikelyFlaky: true,
+				}
+			} else {
+				step.Failure = classifyStepFailureForCombination(c, name, log)
+			}
 		}
 		steps[name] = step
 		if status != result.StatusPass && status != result.StatusSkip {
 			overallStatus = result.StatusFail
 		}
 	}
+	recordStep := func(name, status string, dur float64, log string) {
+		record(name, status, dur, log, runCtx.Err() != nil)
+	}
 
-	// Reruns reuse the same deterministic project name, so clear any leftover
-	// resources from earlier failed attempts before bringing the stack up again.
-	_ = cp.Down(context.Background())
+	if cfg.OnProject != nil {
+		cfg.OnProject(cp.ProjectName())
+	}
+
+	wrote := false
+	finish := func() (err error) {
+		wrote, err = writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+		return err
+	}
 
 	defer func() {
-		_ = cp.Down(context.Background())
-		// A cancelled run leaves any previous result untouched.
-		if ctx.Err() != nil {
+		// Fresh context: teardown must run after a cancel or a deadline too.
+		downCtx, cancel := context.WithTimeout(context.Background(), CleanupTimeout)
+		defer cancel()
+		_ = cp.Down(downCtx)
+		if ctx.Err() != nil && !wrote {
 			ran = false
 			err = nil
+			return
+		}
+		if downCtx.Err() != nil && err == nil {
+			err = fmt.Errorf("runner: tearing down %s: %w", cp.ProjectName(), ErrCleanupTimeout)
 		}
 	}()
 
 	t := time.Now()
-	upLog, upErr := cp.Up(ctx)
+	upLog, upErr := cp.Up(runCtx)
 	dur := time.Since(t).Seconds()
 	if upErr != nil {
-		psLog, _ := cp.run(ctx, "ps", "-a")
-		composeLogs, _ := cp.run(ctx, "logs", "--no-color", "--timestamps")
+		late := runCtx.Err() != nil
+		diagCtx, cancel := context.WithTimeout(ctx, diagnosticTimeout)
+		psLog, _ := cp.run(diagCtx, "ps", "-a")
+		composeLogs, _ := cp.run(diagCtx, "logs", "--no-color", "--timestamps")
+		cancel()
 		upLog = formatStackUpFailureLog(cp.ProjectName(), upLog, psLog, composeLogs)
-		recordStep("stack_up", result.StatusFail, dur, upLog)
-		return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+		record("stack_up", result.StatusFail, dur, upLog, late)
+		return true, finish()
 	}
 	recordStep("stack_up", result.StatusPass, dur, upLog)
 
-	baseURL := resolveBaseURL(ctx, c, cp)
+	baseURL := resolveBaseURL(runCtx, c, cp)
 	installArgs := buildInstallArgs(magentoEnv, baseURL)
 
 	t = time.Now()
 	installLog, installErr := runInstallWithRetries(
-		ctx,
+		runCtx,
 		func() (string, error) {
-			return cp.Exec(ctx, "php-fpm", installArgs...)
+			return cp.Exec(runCtx, "php-fpm", installArgs...)
 		},
 		sleepWithContext,
 	)
 	dur = time.Since(t).Seconds()
 	if installErr != nil {
 		recordStep("install", result.StatusFail, dur, installLog)
-		return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+		return true, finish()
 	}
 	recordStep("install", result.StatusPass, dur, installLog)
 
 	t = time.Now()
-	smokeLog, smokeErr := cp.Exec(ctx, "php-fpm", "bash", "/scripts/tests/smoke.sh")
+	smokeLog, smokeErr := cp.Exec(runCtx, "php-fpm", "bash", "/scripts/tests/smoke.sh")
 	dur = time.Since(t).Seconds()
 	if smokeErr != nil {
 		recordStep("smoke", result.StatusFail, dur, smokeLog)
-		return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+		return true, finish()
 	}
 	recordStep("smoke", result.StatusPass, dur, smokeLog)
 
@@ -691,7 +785,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		recordStep("playwright", result.StatusSkip, 0, "Playwright skipped — no playwright dir configured")
 	} else {
 		t = time.Now()
-		pwLog, pwErr := runPlaywright(ctx, cfg.PlaywrightDir, baseURL, c.ID())
+		pwLog, pwErr := runPlaywright(runCtx, cfg.PlaywrightDir, baseURL, c.ID())
 		dur = time.Since(t).Seconds()
 		if pwErr != nil {
 			recordStep("playwright", result.StatusFail, dur, pwLog)
@@ -700,7 +794,7 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
-	return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+	return true, finish()
 }
 
 // writeResult captures container logs then persists the result file.
@@ -712,8 +806,10 @@ func writeResult(
 	overallStatus string,
 	cp *Compose,
 	maxLog int64,
-) error {
-	containerLogs := captureContainerLogs(ctx, cp, maxLog)
+) (wrote bool, err error) {
+	logCtx, cancel := context.WithTimeout(ctx, diagnosticTimeout)
+	containerLogs := captureContainerLogs(logCtx, cp, maxLog)
+	cancel()
 
 	r := result.TestResult{
 		ID:            c.ID(),
@@ -736,9 +832,12 @@ func writeResult(
 	}
 
 	if ctx.Err() != nil {
-		return nil
+		return false, nil
 	}
-	return result.Write(path, r)
+	if err := result.Write(path, r); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // captureContainerLogs collects per-service logs while the stack is still up.
@@ -786,7 +885,7 @@ func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID st
 
 	outputDir := filepath.Join("test-results", combinationID)
 	reportFile := filepath.Join("playwright-report", combinationID+".json")
-	cmd := exec.CommandContext(ctx, npx, "playwright", "test", "--project", "chromium", "--output", outputDir)
+	cmd := Command(ctx, npx, "playwright", "test", "--project", "chromium", "--output", outputDir)
 	cmd.Dir = playwrightDir
 	cmd.Env = playwrightEnv(baseURL, reportFile)
 	var buf bytes.Buffer
@@ -795,6 +894,16 @@ func runPlaywright(ctx context.Context, playwrightDir, baseURL, combinationID st
 
 	err = cmd.Run()
 	return summarisePlaywrightRun(buf.String(), filepath.Join(playwrightDir, reportFile), baseURL), err
+}
+
+// WaitDelay bounds how long a killed command's children, such as a compose or
+// buildx plugin or the browser npx starts, can hold its output pipes open.
+var WaitDelay = 10 * time.Second
+
+func Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = WaitDelay
+	return cmd
 }
 
 type playwrightReport struct {

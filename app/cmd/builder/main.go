@@ -10,6 +10,7 @@
 // Subcommands:
 //
 //	test    Run compatibility test combinations
+//	queue   Work through a sweep unattended, resumably
 //	report  Aggregate results into MD / CSV / JSON artefacts
 //	help    Show this help
 package main
@@ -29,6 +30,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/samjuk/magento-compatability/internal/matrix"
+	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/report"
 	"github.com/samjuk/magento-compatability/internal/result"
 	"github.com/samjuk/magento-compatability/internal/runner"
@@ -43,6 +45,8 @@ func main() {
 	switch os.Args[1] {
 	case "test":
 		runTest(os.Args[2:])
+	case "queue":
+		runQueue(os.Args[2:])
 	case "report":
 		runReport(os.Args[2:])
 	case "help", "--help", "-h":
@@ -62,6 +66,7 @@ Usage:
 
 Subcommands:
   test    Run compatibility test combinations
+  queue   Work through a sweep unattended, resumably
   report  Aggregate results into MD / CSV / JSON artefacts
   help    Show this help
 
@@ -104,74 +109,23 @@ Flags:`)
 	}
 
 	var (
-		flagProduct            = fs.String("product", "", "Filter by product name (magento|mageos)")
-		flagVersion            = fs.String("version", "", "Filter by product version (e.g. 2.4.8)")
-		flagPHP                = fs.String("php", "", "Filter by PHP version (e.g. 8.3)")
-		flagWebserver          = fs.String("webserver", "", "Filter by webserver type (nginx|apache)")
-		flagDB                 = fs.String("db", "", "Filter by database (type:version, e.g. mariadb:11.4)")
-		flagSearch             = fs.String("search", "", "Filter by search engine (type:version, e.g. opensearch:3)")
-		flagCache              = fs.String("cache", "", "Filter by cache (type:version, e.g. valkey:8)")
-		flagQueue              = fs.String("queue", "", "Filter by queue (type:version, e.g. rabbitmq:4.2)")
-		flagVarnish            = fs.String("varnish", "", "Filter by varnish version or \"none\"")
+		sel                    = addSelectionFlags(fs, 0)
 		flagConcurrency        = fs.Int("concurrency", 1, "Number of combinations to run in parallel")
 		flagForce              = fs.Bool("force", false, "Re-run combinations that already have a result on disk")
 		flagListJSON           = fs.Bool("list-json", false, "Print matching combinations as JSON and exit")
 		flagDryRun             = fs.Bool("dry-run", false, "Print combinations without running them")
-		flagMaxLogBytes        = fs.Int64("max-log-bytes", 1<<20, "Maximum bytes to capture per container log (0 = unlimited)")
-		flagMatrixFile         = fs.String("matrix", "", "Path to matrix.yml (default: auto-detect from repo root)")
-		flagResultsDir         = fs.String("results-dir", "", "Path to results directory (default: <repo-root>/results)")
-		flagComposeDir         = fs.String("compose-dir", "", "Path to compose directory (default: <repo-root>/docker/compose)")
-		flagPlaywright         = fs.Bool("playwright", true, "Run Playwright E2E tests after smoke tests")
-		flagSampleData         = fs.Bool("sample-data", false, "Install Magento sample data before smoke/Playwright validation")
-		flagNoCacheSave        = fs.Bool("no-cache-save", false, "Don't grow the shared Composer and vendor caches (saves disk on one-off sweeps)")
-		flagBaselines          = fs.Bool("baseline", false, "Run only the baseline combination(s) and print a structured pass/fail summary")
 		flagNoTUI              = fs.Bool("no-tui", false, "Disable TUI — plain log output suitable for CI (also set by $CI env var)")
 		flagRetrySetupFailures = fs.Bool("retry-setup-failures", false, "Re-run only combinations whose stack_up step previously failed (implies -force)")
+		flagIgnoreQueue        = fs.Bool("ignore-queue", false, "Run combinations even while a queue is running them")
 	)
 
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
 	}
 
-	repoRoot := findRepoRoot()
-
-	matrixFile := *flagMatrixFile
-	if matrixFile == "" {
-		matrixFile = filepath.Join(repoRoot, "matrix.yml")
-	}
-	resultsDir := *flagResultsDir
-	if resultsDir == "" {
-		resultsDir = filepath.Join(repoRoot, "results")
-	}
-	composeDir := *flagComposeDir
-	if composeDir == "" {
-		composeDir = filepath.Join(repoRoot, "docker", "compose")
-	}
-
-	m, err := matrix.Load(matrixFile)
-	if err != nil {
-		fatalf("loading matrix: %v", err)
-	}
-
-	f := matrix.Filter{
-		Product:   *flagProduct,
-		Version:   *flagVersion,
-		PHP:       *flagPHP,
-		Webserver: *flagWebserver,
-		DB:        *flagDB,
-		Search:    *flagSearch,
-		Cache:     *flagCache,
-		Queue:     *flagQueue,
-		Varnish:   *flagVarnish,
-	}
-
-	var combos []matrix.Combination
-	if *flagBaselines {
-		combos = matrix.BuildBaselineCombinations(m, f)
-	} else {
-		combos = matrix.BuildCombinations(m, f)
-	}
-	logStep(fmt.Sprintf("Building combination list from %s", matrixFile))
+	combos := sel.load()
+	resultsDir := sel.resultsDir
+	logStep(fmt.Sprintf("Building combination list from %s", sel.matrixFile))
 	logInfo(fmt.Sprintf("Total combinations matching filters: %d", len(combos)))
 
 	if *flagRetrySetupFailures {
@@ -224,20 +178,8 @@ Flags:`)
 	g, _ := errgroup.WithContext(ctx)
 	g.SetLimit(*flagConcurrency)
 
-	cfg := runner.RunConfig{
-		ResultsDir: resultsDir,
-		ComposeDir: composeDir,
-		PlaywrightDir: func() string {
-			if *flagPlaywright {
-				return filepath.Join(repoRoot, "docker", "scripts", "tests", "playwright")
-			}
-			return ""
-		}(),
-		InstallSampleData: *flagSampleData,
-		SkipCacheSave:     *flagNoCacheSave,
-		Force:             *flagForce || *flagRetrySetupFailures,
-		MaxLogBytes:       *flagMaxLogBytes,
-	}
+	cfg := sel.runConfig()
+	cfg.Force = *flagForce || *flagRetrySetupFailures
 
 	// Auto-disable TUI in CI environments.
 	noTUI := *flagNoTUI || os.Getenv("CI") != ""
@@ -246,13 +188,34 @@ Flags:`)
 	for i, c := range combos {
 		comboIDs[i] = c.ID()
 	}
-	prog := newProgressUI(comboIDs, *flagConcurrency, isTerminal(os.Stderr) && !noTUI, *flagBaselines)
+	prog := newProgressUI(comboIDs, *flagConcurrency, isTerminal(os.Stderr) && !noTUI, sel.baseline)
 
 	tickerCtx, cancelTicker := context.WithCancel(context.Background())
 	prog.startTicker(tickerCtx)
 
+	var lg *queue.Ledger
+	if !*flagIgnoreQueue {
+		var err error
+		if lg, err = queue.OpenLedger(queueStateDir()); err != nil {
+			fatalf("%v", err)
+		}
+		defer lg.Close()
+	}
+
 	for _, c := range combos {
 		g.Go(func() error {
+			if lg != nil {
+				ok, err := lg.Lease(resultsDir, c.ID())
+				if err != nil {
+					return err
+				}
+				if !ok {
+					logWarn(fmt.Sprintf("%s: a queue is running it; skipped (-ignore-queue runs it anyway)", c.ID()))
+					prog.done(c.ID(), comboSkip, 0, "", nil)
+					return nil
+				}
+				defer lg.Unlease(resultsDir, c.ID())
+			}
 			prog.started(c.ID())
 			comboStart := time.Now()
 			ran, err := runner.Run(ctx, c, cfg)
@@ -262,7 +225,7 @@ Flags:`)
 			if ran {
 				b = readBaselineEntry(c, resultsDir)
 			}
-			if *flagBaselines && b != nil {
+			if sel.baseline && b != nil {
 				prog.addBaseline(b)
 			}
 			var steps []stepResult
@@ -287,7 +250,7 @@ Flags:`)
 	cancelTicker()
 	prog.redraw() // final repaint before any trailing log lines
 
-	if *flagBaselines {
+	if sel.baseline {
 		allPassed := printBaselineSummary(prog.baselines)
 		if !allPassed || waitErr != nil {
 			os.Exit(1)

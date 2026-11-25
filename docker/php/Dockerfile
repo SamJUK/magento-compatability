@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
 	icu-dev \
 	libxslt-dev \
 	libzip-dev \
-    jq yq git patch zstd
+    jq yq git patch zstd flock
 
 # Install PHP extensions (changes with PHP version)
 ARG PHP_EXTENSIONS="bcmath gd intl opcache pcntl pdo_mysql soap sockets xsl zip ftp"
