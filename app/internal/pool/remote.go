@@ -5,6 +5,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -100,29 +101,67 @@ func (p *Pool) Deploy(ctx context.Context, name string, w *Worker, hash, tarball
 			return err
 		}
 	}
-	_, err = p.Script(ctx, name, deployScript(w.Dir, hash))
+	if p.DockerAuth == "" {
+		_, err = p.Script(ctx, name, deployScript(w.Dir, hash, ""))
+		return err
+	}
+	// The token must never touch the worker's disk.
+	_, err = p.script(ctx, name, deployScript(w.Dir, hash, p.DockerAuth), secretScript)
+	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
+		switch exit.ExitCode() {
+		case 96:
+			return fmt.Errorf("the Docker Hub token needs findmnt to check XDG_RUNTIME_DIR: %w", err)
+		case 97:
+			return fmt.Errorf("the Docker Hub token needs a tmpfs XDG_RUNTIME_DIR: %w", err)
+		}
+	}
 	return err
 }
 
-func deployScript(d, hash string) string {
+func deployScript(d, hash, auth string) string {
+	login := ""
+	if auth != "" {
+		login = fmt.Sprintf(`# A killed deploy skips its trap; the lock says none is running now.
+rm -rf "${XDG_RUNTIME_DIR:?}"/m2test-docker.*
+C=$(mktemp -d "${XDG_RUNTIME_DIR:?}/m2test-docker.XXXXXX")
+trap 'rm -rf "$C"' EXIT
+trap 'exit 1' HUP INT TERM
+# Script input, never an argument.
+cat > "$C/config.json" <<'AUTH'
+{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}
+AUTH
+export DOCKER_CONFIG="$C"
+`, auth)
+	}
 	return fmt.Sprintf(`set -eu
-D='%s' H='%s'
+# C is the token dir; one inherited from the shell must not be removed.
+D='%s' H='%s' C=
 # A deploy left running by an earlier sweep must not flip current back.
 exec 9>"$D/deploy.lock"
 timeout 600 flock 9
 T="$D/incoming/$H.tar.gz"
 test -s "$T" || T="$D/releases/$H.tar.gz"
-"$D/bin/m2test-worker" prepare -hash "$H" -tarball "$T" -releases "$D/releases" >/dev/null
+%s"$D/bin/m2test-worker" prepare -hash "$H" -tarball "$T" -releases "$D/releases" >/dev/null
+if [ -n "${C:-}" ]; then rm -rf "$C"; unset DOCKER_CONFIG; fi
 # prepare checked it, so it becomes the copy the next sweep compares with.
 if [ -s "$D/incoming/$H.tar.gz" ]; then mv "$D/incoming/$H.tar.gz" "$D/releases/$H.tar.gz"; fi
-if [ "$(readlink "$D/releases/current" || true)" = "$H" ]; then
+# What the worker last restarted on: after a failed restart, current is ahead of it,
+# and a later deploy of that release must restart too.
+if [ "$(cat "$D/running" 2>/dev/null || true)" = "$H" ] && [ "$(readlink "$D/releases/current" || true)" = "$H" ]; then
   systemctl --user start m2test-worker
 else
+  # Not this release's, whatever restarts next, until a restart says so.
+  rm -f "$D/running"
   ln -sfn "$H" "$D/releases/current.new"
   mv -T "$D/releases/current.new" "$D/releases/current"
   systemctl --user restart m2test-worker
+  echo "$H" > "$D/running"
 fi
-`, d, hash)
+# Housekeeping, of our own images only: other releases' harness images and
+# superseded builds. Images in use stay.
+{ docker image prune -af --filter label=m2test.release --filter "label!=m2test.release=$H"
+  docker image prune -f --filter label=m2test.release; } >/dev/null 2>&1 || true
+`, d, hash, login)
 }
 
 // Stop disables a worker's unit, leaving its files.

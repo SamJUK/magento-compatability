@@ -310,6 +310,11 @@ func loadWorkers(names, sock string, burst bool) *workers {
 		}
 		logWarn(fmt.Sprintf("cloud workers from an earlier burst are still in the inventory, maybe still billing: %s; builder worker gc destroys them", strings.Join(left, ", ")))
 	}
+	if p.DockerAuth, err = pool.DockerHubAuth(os.Getenv("DOCKERHUB_USERNAME"), os.Getenv("DOCKERHUB_TOKEN")); err != nil {
+		fatalf("%v", err)
+	}
+	// Nothing this process starts needs it.
+	os.Unsetenv("DOCKERHUB_TOKEN")
 	ws := &workers{pool: p, tokens: map[string]string{}, remote: map[string]*pool.Worker{}}
 	if burst {
 		if err := pool.LocalSocket(sock); err != nil {
@@ -385,8 +390,9 @@ func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, con
 		var tunnel sync.WaitGroup
 		tunnel.Go(func() { p.Tunnel(ctx, name, w, sock, logger) })
 		logger.Printf("%s: deploying release %.12s", name, contract.Release)
+		started := time.Now()
 		if p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger) {
-			logger.Printf("%s: release %.12s ready", name, contract.Release)
+			logger.Printf("%s: release %.12s ready after %s", name, contract.Release, time.Since(started).Round(time.Second))
 		}
 		tunnel.Wait()
 	}

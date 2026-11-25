@@ -92,6 +92,10 @@ Readying those images retags this machine's upstream tags (`mariadb:11.4` and so
 
 Each worker unpacks the release tarball, refusing it unless it holds the release the queue asked for, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
 The queue does this through `m2test-worker prepare -hash <hash> -tarball <file> -releases <dir>`, which works by hand too.
+With `DOCKERHUB_USERNAME` and a read-only `DOCKERHUB_TOKEN` set, the queue lends them to each worker's pulls, since anonymous Docker Hub limits are per IP.
+They go in a Docker config under the worker's `XDG_RUNTIME_DIR`, which must be tmpfs, and are removed when the deploy ends.
+That config replaces `~/.docker` for the pull, so buildx must be installed system-wide (as `docker-buildx-plugin` is), not under `~/.docker/cli-plugins`, and the worker must use the default Docker socket rather than a context.
+After each deploy a worker removes its unused harness images from other releases; nothing else it holds is touched.
 
 The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run.
 Workers run Playwright in a container on the stack's own network, against `http://varnish` or `http://webserver`, so they need no Node.

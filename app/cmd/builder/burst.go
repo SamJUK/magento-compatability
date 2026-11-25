@@ -264,7 +264,12 @@ func (b *burst) provision(ctx context.Context, name string, w *pool.Worker) erro
 		case <-time.After(provisionPoll):
 		}
 	}
-	return b.host.Setup(ctx, name, w, b.binary)
+	b.log.Printf("%s: cloud-init done after %s", name, time.Since(w.Cloud.Created).Round(time.Second))
+	if err := b.host.Setup(ctx, name, w, b.binary); err != nil {
+		return err
+	}
+	b.log.Printf("%s: set up after %s", name, time.Since(w.Cloud.Created).Round(time.Second))
+	return nil
 }
 
 func (b *burst) take(name string) *burstWorker {
@@ -542,7 +547,9 @@ func gc(ctx context.Context, p *pool.Pool, prov provider, poolID string, yes boo
 					logger.Printf("%s: create never answered, %s ago; kept until it's been out of sight for %s", name, time.Since(c.Created).Round(time.Second), unseenFor)
 					left++
 				}
-				// A server found is in doomed already, under this name.
+				for _, s := range found {
+					doomed[s.ID] = name
+				}
 				continue
 			}
 			if !yes {

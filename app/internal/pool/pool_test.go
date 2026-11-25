@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -209,21 +210,30 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	os.MkdirAll(d+"/releases", 0o755)
 	os.MkdirAll(d+"/incoming", 0o755)
 	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nmkdir -p \"$7/$3\"\n"), 0o755)
-	// GNU mv's -T; the test may run where mv lacks it.
-	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && shift\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
+	// GNU mv's -T, which BSD mv lacks: without it mv moves into the dir a link points to.
+	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && { shift; rm -f \"$2\"; }\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
 	os.WriteFile(bin+"/flock", []byte("#!/bin/sh\n"), 0o755)
-	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\necho \"$2\" >> "+d+"/calls\n"), 0o755)
+	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\necho \"$2\" >> "+d+"/calls\n[ \"$2\" = restart ] && rm "+d+"/fail 2>/dev/null && exit 1\nexit 0\n"), 0o755)
+	// Never the real daemon: housekeeping prunes images.
+	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\necho \"$*\" >> "+d+"/docker\n"), 0o755)
 	os.WriteFile(d+"/incoming/abc.tar.gz", []byte("x"), 0o644)
-	run := func(hash string) {
+	keep := t.TempDir()
+	deploy := func(hash string) ([]byte, error) {
 		cmd := exec.Command(sh, "-s")
-		cmd.Stdin = strings.NewReader(deployScript(d, hash))
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd.Stdin = strings.NewReader(deployScript(d, hash, ""))
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "C="+keep)
+		return cmd.CombinedOutput()
+	}
+	run := func(hash string) {
+		if out, err := deploy(hash); err != nil {
 			t.Fatalf("%v: %s", err, out)
 		}
 	}
 	run("abc")
 	run("abc")
+	if _, err := os.Stat(keep); err != nil {
+		t.Error("removed a C the shell passed in")
+	}
 	calls, _ := os.ReadFile(d + "/calls")
 	if string(calls) != "restart\nstart\n" {
 		t.Errorf("systemctl calls %q", calls)
@@ -236,6 +246,119 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	}
 	if _, err := os.Stat(d + "/releases/abc.tar.gz"); err != nil {
 		t.Error("checked upload not kept as the cached copy")
+	}
+	docker, _ := os.ReadFile(d + "/docker")
+	for _, line := range strings.Split(strings.TrimSpace(string(docker)), "\n") {
+		if !strings.Contains(line, "--filter label=m2test.release") {
+			t.Errorf("housekeeping beyond our own images: docker %s", line)
+		}
+	}
+	if !strings.Contains(string(docker), "image prune -af --filter label=m2test.release --filter label!=m2test.release=abc") {
+		t.Errorf("control: other releases' images not pruned: %q", docker)
+	}
+
+	// A restart that fails leaves the old release running, so the retry restarts too.
+	os.WriteFile(d+"/incoming/def.tar.gz", []byte("x"), 0o644)
+	os.WriteFile(d+"/fail", nil, 0o644)
+	if _, err := deploy("def"); err == nil {
+		t.Fatal("a failed restart deployed")
+	}
+	run("def")
+	calls, _ = os.ReadFile(d + "/calls")
+	if string(calls) != "restart\nstart\nrestart\nrestart\n" {
+		t.Errorf("after a failed restart, systemctl calls %q", calls)
+	}
+
+	// Back to def after ghi failed to restart: current points at ghi, so def restarts.
+	os.WriteFile(d+"/incoming/ghi.tar.gz", []byte("x"), 0o644)
+	os.WriteFile(d+"/fail", nil, 0o644)
+	if _, err := deploy("ghi"); err == nil {
+		t.Fatal("a failed restart deployed")
+	}
+	// Dying before the restart must not leave def's marker for whatever the unit runs.
+	if _, err := os.Stat(d + "/running"); err == nil {
+		t.Error("running kept through a failed restart")
+	}
+	run("def")
+	calls, _ = os.ReadFile(d + "/calls")
+	if string(calls) != "restart\nstart\nrestart\nrestart\nrestart\nrestart\n" {
+		t.Errorf("rolling back after a failed restart, systemctl calls %q", calls)
+	}
+	if l, _ := os.Readlink(d + "/releases/current"); l != "def" {
+		t.Errorf("current -> %q after the rollback", l)
+	}
+}
+
+func TestDeployScriptLendsTheDockerHubTokenOnTmpfsOnly(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip(err)
+	}
+	d, bin, runtime := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, sub := range []string{"/bin", "/releases", "/incoming"} {
+		os.MkdirAll(d+sub, 0o755)
+	}
+	// prepare records the config it was given and where.
+	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nmkdir -p \"$7/$3\"\necho \"$DOCKER_CONFIG\" > "+d+"/seen\ncat \"$DOCKER_CONFIG/config.json\" >> "+d+"/seen\n"), 0o755)
+	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && shift\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
+	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\n[ -z \"$DOCKER_CONFIG\" ] || echo \"$DOCKER_CONFIG\" >> "+d+"/prune-saw\n"), 0o755)
+	for _, stub := range []string{"flock", "systemctl"} {
+		os.WriteFile(bin+"/"+stub, []byte("#!/bin/sh\n"), 0o755)
+	}
+	os.WriteFile(d+"/incoming/abc.tar.gz", []byte("x"), 0o644)
+	auth, err := DockerHubAuth("m2test", "dckr_pat_abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(env ...string) error {
+		cmd := exec.Command(sh, "-s")
+		cmd.Stdin = strings.NewReader(deployScript(d, "abc", auth))
+		cmd.Env = append(os.Environ(), append(env, "PATH="+bin+":"+os.Getenv("PATH"))...)
+		return cmd.Run()
+	}
+	os.Mkdir(runtime+"/m2test-docker.stale", 0o700)
+	if err := run("XDG_RUNTIME_DIR=" + runtime); err != nil {
+		t.Fatal(err)
+	}
+	seen, _ := os.ReadFile(d + "/seen")
+	lines := strings.SplitN(string(seen), "\n", 2)
+	if !strings.HasPrefix(lines[0], runtime+"/m2test-docker.") || !strings.Contains(lines[1], `"auth":"`+auth+`"`) {
+		t.Fatalf("prepare saw %q", seen)
+	}
+	if left, _ := os.ReadDir(runtime); len(left) != 0 {
+		t.Errorf("config left behind: %v", left)
+	}
+	if saw, err := os.ReadFile(d + "/prune-saw"); err == nil {
+		t.Errorf("token still lent during housekeeping: %s", saw)
+	}
+	for _, line := range strings.Split(deployScript(d, "abc", auth), "\n") {
+		if strings.Contains(line, auth) && !strings.HasPrefix(line, `{"auths":`) {
+			t.Errorf("token outside the heredoc, maybe in argv: %s", line)
+		}
+	}
+	if err := run("XDG_RUNTIME_DIR="); err == nil {
+		t.Error("ran with no runtime dir for the token")
+	}
+	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nexit 3\n"), 0o755)
+	if err := run("XDG_RUNTIME_DIR=" + runtime); err == nil {
+		t.Fatal("control: a failed prepare passed")
+	}
+	if left, _ := os.ReadDir(runtime); len(left) != 0 {
+		t.Errorf("config left after a failed prepare: %v", left)
+	}
+}
+
+func TestDockerHubAuth(t *testing.T) {
+	if a, err := DockerHubAuth("", ""); a != "" || err != nil {
+		t.Errorf("neither: %q %v", a, err)
+	}
+	if a, err := DockerHubAuth("m2test", "dckr_pat_x"); err != nil || a != "bTJ0ZXN0OmRja3JfcGF0X3g=" {
+		t.Errorf("both: %q %v", a, err)
+	}
+	for _, bad := range [][2]string{{"m2test", ""}, {"", "tok"}, {"x'; reboot", "tok"}, {"m2test", "a b"}} {
+		if _, err := DockerHubAuth(bad[0], bad[1]); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
 
@@ -555,5 +678,113 @@ func TestIDIsMadeOnceAndKept(t *testing.T) {
 	}
 	if b, _ := (&Pool{Dir: t.TempDir()}).ID(); b == a {
 		t.Fatal("control: another pool got the same ID")
+	}
+}
+
+func TestDeployWithATokenGoesThroughTheTmpfsWrapper(t *testing.T) {
+	p := testPool(t)
+	p.DockerAuth, _ = DockerHubAuth("m2test", "dckr_pat_abc")
+	w := lab()
+	tarball := filepath.Join(t.TempDir(), "abc.tar.gz")
+	os.WriteFile(tarball, []byte("x"), 0o644)
+	var wrappers []string
+	fakeSSH(t, func(args []string) string {
+		wrappers = append(wrappers, args[len(args)-1])
+		return ""
+	})
+	if err := p.Deploy(context.Background(), "lab1", w, "abc", tarball); err != nil {
+		t.Fatal(err)
+	}
+	if last := wrappers[len(wrappers)-1]; last != secretScript {
+		t.Fatalf("deploy with the token ran under %q", last)
+	}
+	p.DockerAuth = ""
+	wrappers = nil
+	if err := p.Deploy(context.Background(), "lab1", w, "abc", tarball); err != nil || wrappers[len(wrappers)-1] != runScript {
+		t.Fatalf("control: plain deploy ran under %q, %v", wrappers, err)
+	}
+}
+
+func TestSecretScriptReadsNothingWithoutATmpfsRuntimeDir(t *testing.T) {
+	bin, runtime := t.TempDir(), t.TempDir()
+	run := func(fstype, xdg string) (string, error) {
+		os.WriteFile(bin+"/findmnt", []byte("#!/bin/sh\necho "+fstype+"\n"), 0o755)
+		cmd := exec.Command("sh", "-c", secretScript)
+		cmd.Stdin = strings.NewReader("echo ran \"$TMPDIR\"\n" + scriptEnd + "\n")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "XDG_RUNTIME_DIR="+xdg, "TMPDIR=/tmp")
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	for _, c := range [][2]string{{"ext4", runtime}, {"tmpfs", ""}} {
+		if out, err := run(c[0], c[1]); err == nil || out != "" {
+			t.Errorf("%v: ran (%q)", c, out)
+		}
+	}
+	if out, err := run("tmpfs", runtime); err != nil || out != "ran "+runtime+"\n" {
+		t.Fatalf("control: %q %v", out, err)
+	}
+	if left, _ := os.ReadDir(runtime); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+}
+
+func TestScriptsFallBackToTmpWhenTheRuntimeDirIsMissing(t *testing.T) {
+	cmd := exec.Command("sh", "-c", runScript)
+	cmd.Stdin = strings.NewReader("echo ran\n" + scriptEnd + "\n")
+	cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+t.TempDir()+"/gone")
+	if out, err := cmd.Output(); err != nil || string(out) != "ran\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+}
+
+func TestTokenDeployBlamesTmpfsOnlyWhenTheWrapperSaysSo(t *testing.T) {
+	p := testPool(t)
+	p.DockerAuth, _ = DockerHubAuth("m2test", "dckr_pat_abc")
+	tarball := filepath.Join(t.TempDir(), "abc.tar.gz")
+	os.WriteFile(tarball, []byte("x"), 0o644)
+	for code, want := range map[string]bool{"exit 97": true, "exit 96": true, "exit 1": false} {
+		fakeSSH(t, func(args []string) string {
+			if args[len(args)-1] == secretScript {
+				return code
+			}
+			return ""
+		})
+		err := p.Deploy(context.Background(), "lab1", lab(), "abc", tarball)
+		if err == nil || strings.Contains(err.Error(), "XDG_RUNTIME_DIR") != want {
+			t.Errorf("%s: %v", code, err)
+		}
+	}
+}
+
+func TestScriptsCleanUpWhenTheSessionIsHungUp(t *testing.T) {
+	runtime := t.TempDir()
+	cmd := exec.Command("sh", "-c", runScript)
+	cmd.Stdin = strings.NewReader("sleep 30\n" + scriptEnd + "\n")
+	cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtime)
+	// sshd hangs up the session's whole process group.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Written, not just created: until mktemp returns the trap has no name to remove.
+	saved := func() bool {
+		left, _ := os.ReadDir(runtime)
+		if len(left) != 1 {
+			return false
+		}
+		info, err := left[0].Info()
+		return err == nil && info.Size() > 0
+	}
+	for deadline := time.Now().Add(5 * time.Second); !saved() && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !saved() {
+		left, _ := os.ReadDir(runtime)
+		t.Fatalf("control: script not saved: %v", left)
+	}
+	syscall.Kill(-cmd.Process.Pid, syscall.SIGHUP)
+	cmd.Wait()
+	if left, _ := os.ReadDir(runtime); len(left) != 0 {
+		t.Errorf("script left behind: %v", left)
 	}
 }

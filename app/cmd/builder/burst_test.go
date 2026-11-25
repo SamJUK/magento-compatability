@@ -320,6 +320,26 @@ func TestGCKeepsAnUnansweredCreateForAWhile(t *testing.T) {
 	}
 }
 
+func TestGCDestroysALateServerFoundOnlyByItsNonce(t *testing.T) {
+	b, _ := testBurst(t, &fakeCloud{}, &fakeHost{})
+	prov := b.prov.(*fakeCloud)
+	tok, _ := pool.NewToken()
+	_, hk, _ := pool.HostKeyPair("t")
+	if err := b.pool.Update(func(inv *pool.Inventory) error {
+		inv.Workers["hz-late"] = &pool.Worker{Port: 22, User: "m2test", Dir: pool.DefaultDir, HostKey: keyOnly(hk), Token: tok, Slots: 5,
+			Cloud: &pool.Cloud{Provider: "hetzner", Nonce: "aaaaaaaa", Created: time.Now().UTC()}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prov.servers[90] = cloud.Server{ID: 90, Name: "hz-late", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
+	// The pool listing misses it; the nonce listing after it doesn't.
+	prov.hideFor = 1
+	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+		t.Fatalf("%d left (%v), %d servers, inventory %v", left, err, prov.count(), inventory(t, b))
+	}
+}
+
 func TestBurstDestroysAServerWhoseActionPollWasRefused(t *testing.T) {
 	prov := &fakeCloud{actionErr: fmt.Errorf("server made, but %w", &cloud.APIError{Status: 429, Code: "rate_limit_exceeded"})}
 	b, ff := testBurst(t, prov, &fakeHost{})

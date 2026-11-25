@@ -61,7 +61,22 @@ type Inventory struct {
 }
 
 type Pool struct {
-	Dir string
+	Dir        string
+	DockerAuth string
+}
+
+var dockerUser = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,63}$`)
+
+// DockerHubAuth checks a Docker Hub user and read-only token, both or
+// neither, and encodes them for a Docker config.
+func DockerHubAuth(user, token string) (string, error) {
+	switch {
+	case user == "" && token == "":
+		return "", nil
+	case !dockerUser.MatchString(user) || token == "" || strings.ContainsAny(token, " \t\r\n"):
+		return "", fmt.Errorf("DOCKERHUB_USERNAME and DOCKERHUB_TOKEN go together, as a Docker Hub user and token")
+	}
+	return base64.StdEncoding.EncodeToString([]byte(user + ":" + token)), nil
 }
 
 func Open() (*Pool, error) {
@@ -397,11 +412,18 @@ var Command = func(ctx context.Context, p *Pool, args ...string) *exec.Cmd {
 // A cut connection ends cat cleanly, so the script must end on scriptEnd.
 const (
 	scriptEnd = "# m2test end"
-	runScript = `f=$(mktemp) && cat > "$f" && [ "$(tail -n 1 "$f")" = "` + scriptEnd + `" ] && sh "$f" </dev/null; r=$?; rm -f "$f"; exit $r`
+	runScript = `d=${XDG_RUNTIME_DIR:-/tmp}; [ -d "$d" ] || d=/tmp; trap 'rm -f "$f"; exit 1' HUP INT TERM; f=$(mktemp -p "$d") && cat > "$f" && [ "$(tail -n 1 "$f")" = "` + scriptEnd + `" ] && sh "$f" </dev/null; r=$?; rm -f "$f"; exit $r`
+	// For a script holding a secret: tmpfs or nothing, checked before
+	// stdin is read. TMPDIR covers shells that spool heredocs.
+	secretScript = `command -v findmnt >/dev/null || exit 96; findmnt -no FSTYPE -T "${XDG_RUNTIME_DIR:?}" | grep -qx tmpfs || exit 97; export TMPDIR="$XDG_RUNTIME_DIR"; ` + runScript
 )
 
 func (p *Pool) Script(ctx context.Context, name, script string) ([]byte, error) {
-	cmd := Command(ctx, p, name, runScript)
+	return p.script(ctx, name, script, runScript)
+}
+
+func (p *Pool) script(ctx context.Context, name, script, wrapper string) ([]byte, error) {
+	cmd := Command(ctx, p, name, wrapper)
 	cmd.Stdin = strings.NewReader(script + "\n" + scriptEnd + "\n")
 	stdout, stderr := &tail{max: 1 << 16}, &tail{max: 1 << 16}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
