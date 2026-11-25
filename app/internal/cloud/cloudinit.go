@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 )
 
 const Provisioned = "provisioned"
@@ -17,6 +18,9 @@ type Host struct {
 	HostPrivateKey string // pinned by the coordinator before the server exists
 	HostPublicKey  string
 	Dir            string
+	// Deadline, if set, powers the server off then and at any boot after
+	// it; for an EC2 instance that is termination.
+	Deadline time.Time
 }
 
 var (
@@ -41,12 +45,26 @@ func UserData(h Host) (string, error) {
 	var b strings.Builder
 	err := userData.Execute(&b, map[string]any{
 		"PoolKey": h.PoolKey, "HostPublic": h.HostPublicKey, "Dir": h.Dir, "Provisioned": Provisioned,
+		"Deadline": h.Deadline.Unix(), "DeadlineAt": h.Deadline.UTC().Format("2006-01-02 15:04:05 UTC"), "HasDeadline": !h.Deadline.IsZero(),
 		"HostPrivate": strings.TrimSpace(strings.ReplaceAll(h.HostPrivateKey, "\n", "\n      ")),
 	})
 	return b.String(), err
 }
 
 var userData = template.Must(template.New("").Parse(`#cloud-config
+{{- if .HasDeadline}}
+# Every boot, earliest. Only systemctl reaches systemd this early: D-Bus is
+# not up, so systemd-run here hangs the boot.
+bootcmd:
+  - - sh
+    - -c
+    - |
+      [ "$(date +%s)" -lt {{.Deadline}} ] || { logger -s -t m2test "past the deadline, powering off"; exec systemctl --no-block poweroff; }
+      printf '[Timer]\nOnCalendar={{.DeadlineAt}}\nAccuracySec=1s\nPersistent=true\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/m2test-deadline.timer
+      printf '[Service]\nType=oneshot\nExecStart=/usr/bin/systemctl --no-block poweroff\n' > /etc/systemd/system/m2test-deadline.service
+      systemctl daemon-reload && systemctl enable m2test-deadline.timer && systemctl start --no-block m2test-deadline.timer ||
+        { logger -s -t m2test "could not arm the deadline, powering off"; exec systemctl --no-block poweroff; }
+{{- end}}
 ssh_deletekeys: true
 ssh_genkeytypes: [ed25519]
 ssh_keys:

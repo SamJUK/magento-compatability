@@ -5,6 +5,7 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -610,13 +611,26 @@ func TestValidateCloudEntries(t *testing.T) {
 		t.Fatalf("a server not yet answered: %v", err)
 	}
 	made := creating()
-	made.Host, made.Cloud.ID = "203.0.113.7", 42
+	made.Host, made.Cloud.ID = "203.0.113.7", "42"
 	if err := made.validate("hz-1"); err != nil {
 		t.Fatalf("a made server: %v", err)
 	}
+	made.Cloud.Provider, made.Cloud.Region, made.Cloud.Account, made.Cloud.ID = "aws", "eu-west-1", "111111111111", "i-0123456789abcdef0"
+	if err := made.validate("aws-1"); err != nil {
+		t.Fatalf("a made instance: %v", err)
+	}
 	for name, edit := range map[string]func(*Worker){
-		"id without address": func(w *Worker) { w.Cloud.ID = 42 },
-		"provider":           func(w *Worker) { w.Cloud.Provider = "aws" },
+		"id without address": func(w *Worker) { w.Cloud.ID = "42" },
+		"provider":           func(w *Worker) { w.Cloud.Provider = "gcp" },
+		"aws without region": func(w *Worker) { w.Cloud.Provider = "aws" },
+		"aws bad region": func(w *Worker) {
+			w.Cloud.Provider, w.Cloud.Region, w.Cloud.Account = "aws", "eu-west-1; x", "111111111111"
+		},
+		"hetzner region":     func(w *Worker) { w.Cloud.Region = "eu-west-1" },
+		"region in provider": func(w *Worker) { w.Cloud.Provider = "aws eu-west-1" },
+		"aws bad account":    func(w *Worker) { w.Cloud.Provider, w.Cloud.Region, w.Cloud.Account = "aws", "eu-west-1", "12345" },
+		"hetzner account":    func(w *Worker) { w.Cloud.Account = "111111111111" },
+		"id":                 func(w *Worker) { w.Host, w.Cloud.ID = "203.0.113.7", "../42" },
 		"nonce":              func(w *Worker) { w.Cloud.Nonce = "x; reboot" },
 		"no host key":        func(w *Worker) { w.HostKey = "" },
 	} {
@@ -786,5 +800,15 @@ func TestScriptsCleanUpWhenTheSessionIsHungUp(t *testing.T) {
 	cmd.Wait()
 	if left, _ := os.ReadDir(runtime); len(left) != 0 {
 		t.Errorf("script left behind: %v", left)
+	}
+}
+
+func TestServerIDsFromOlderInventoriesLoad(t *testing.T) {
+	var c Cloud
+	if err := json.Unmarshal([]byte(`{"provider":"hetzner","id":42,"nonce":"abcdef12"}`), &c); err != nil || c.ID != "42" {
+		t.Fatalf("number: %q %v", c.ID, err)
+	}
+	if err := json.Unmarshal([]byte(`{"provider":"aws","id":"i-0123456789abcdef0","nonce":"abcdef12"}`), &c); err != nil || c.ID != "i-0123456789abcdef0" {
+		t.Fatalf("string: %q %v", c.ID, err)
 	}
 }

@@ -7,6 +7,7 @@ package cloud
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,10 +15,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var hzID = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 
 // Label marks everything a burst made, so gc can find it.
 const Label = "m2test"
@@ -26,7 +30,7 @@ var ErrNotFound = errors.New("not found")
 
 // Server is a cloud server as far as a burst cares.
 type Server struct {
-	ID     int64
+	ID     string // "" until the provider has said
 	Name   string
 	IP     string
 	Status string
@@ -41,19 +45,30 @@ type Spec struct {
 	Image    string
 	UserData string
 	Labels   map[string]string
-	SSHKey   int64
-	Firewall int64
+	SSHKey   string
+	Firewall string
+	// AWS only: the image's root device and its size, and the subnets
+	// tried in turn while a zone has no capacity.
+	RootDevice string
+	DiskGB     int32
+	Subnets    []string
 }
 
 // APIError is an error the provider answered with.
 type APIError struct {
-	Status  int
-	Code    string
-	Message string
+	Provider string // hetzner unless set
+	Status   int    // how to treat it, as an HTTP status
+	Sent     int    // the status as sent, where that differs
+	Code     string
+	Message  string
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("hetzner: %s (%d): %s", e.Code, e.Status, e.Message)
+	p := e.Provider
+	if p == "" {
+		p = "hetzner"
+	}
+	return fmt.Sprintf("%s: %s (%d): %s", p, e.Code, cmp.Or(e.Sent, e.Status), e.Message)
 }
 
 // Refused says the API turned a request down, so it changed nothing. Any
@@ -146,7 +161,7 @@ type hzServer struct {
 }
 
 func (s hzServer) server() Server {
-	return Server{ID: s.ID, Name: s.Name, IP: s.PublicNet.IPv4.IP, Status: s.Status, Labels: s.Labels}
+	return Server{ID: strconv.FormatInt(s.ID, 10), Name: s.Name, IP: s.PublicNet.IPv4.IP, Status: s.Status, Labels: s.Labels}
 }
 
 func (h *Hetzner) Create(ctx context.Context, s Spec) (Server, error) {
@@ -157,8 +172,8 @@ func (h *Hetzner) Create(ctx context.Context, s Spec) (Server, error) {
 		"image":       s.Image,
 		"user_data":   s.UserData,
 		"labels":      s.Labels,
-		"ssh_keys":    []int64{s.SSHKey},
-		"firewalls":   []map[string]int64{{"firewall": s.Firewall}},
+		"ssh_keys":    []json.Number{json.Number(s.SSHKey)},
+		"firewalls":   []map[string]json.Number{{"firewall": json.Number(s.Firewall)}},
 		"public_net":  map[string]bool{"enable_ipv4": true, "enable_ipv6": false},
 	}
 	var out struct {
@@ -176,14 +191,20 @@ func (h *Hetzner) Create(ctx context.Context, s Spec) (Server, error) {
 	return out.Server.server(), nil
 }
 
-func (h *Hetzner) Get(ctx context.Context, id int64) (Server, error) {
+func (h *Hetzner) Get(ctx context.Context, id string) (Server, error) {
+	if !hzID.MatchString(id) {
+		return Server{}, fmt.Errorf("hetzner: bad server id %q", id)
+	}
 	var out struct{ Server hzServer }
-	err := h.do(ctx, "GET", "/servers/"+strconv.FormatInt(id, 10), nil, &out)
+	err := h.do(ctx, "GET", "/servers/"+id, nil, &out)
 	return out.Server.server(), err
 }
 
-func (h *Hetzner) Delete(ctx context.Context, id int64) error {
-	err := h.do(ctx, "DELETE", "/servers/"+strconv.FormatInt(id, 10), nil, nil)
+func (h *Hetzner) Delete(ctx context.Context, id string) error {
+	if !hzID.MatchString(id) {
+		return fmt.Errorf("hetzner: bad server id %q", id)
+	}
+	err := h.do(ctx, "DELETE", "/servers/"+id, nil, nil)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
@@ -287,7 +308,12 @@ func (h *Hetzner) ipv4Price(ctx context.Context, location string) (float64, erro
 
 // SSHKey returns the ID of the pool key's entry, adding it if missing.
 // It goes on root only so Hetzner doesn't email a root password; cloud-init then locks root.
-func (h *Hetzner) SSHKey(ctx context.Context, name, publicKey string) (int64, error) {
+func (h *Hetzner) SSHKey(ctx context.Context, name, publicKey string) (string, error) {
+	id, err := h.sshKey(ctx, name, publicKey)
+	return strconv.FormatInt(id, 10), err
+}
+
+func (h *Hetzner) sshKey(ctx context.Context, name, publicKey string) (int64, error) {
 	var out struct {
 		SSHKeys []struct {
 			ID        int64  `json:"id"`
@@ -317,11 +343,17 @@ func (h *Hetzner) SSHKey(ctx context.Context, name, publicKey string) (int64, er
 	return made.SSHKey.ID, nil
 }
 
-func (h *Hetzner) Firewall(ctx context.Context, name string, sources []string) (int64, error) {
+func (h *Hetzner) Firewall(ctx context.Context, name string, sources []string) (string, error) {
+	id, err := h.firewall(ctx, name, sources)
+	return strconv.FormatInt(id, 10), err
+}
+
+func (h *Hetzner) firewall(ctx context.Context, name string, sources []string) (int64, error) {
 	rules := []map[string]any{{"direction": "in", "protocol": "tcp", "port": "22", "source_ips": sources}}
 	var out struct {
 		Firewalls []struct {
-			ID int64 `json:"id"`
+			ID     int64             `json:"id"`
+			Labels map[string]string `json:"labels"`
 		}
 	}
 	if err := h.do(ctx, "GET", "/firewalls?"+url.Values{"name": {name}}.Encode(), nil, &out); err != nil {
@@ -334,6 +366,9 @@ func (h *Hetzner) Firewall(ctx context.Context, name string, sources []string) (
 		Actions []action
 	}
 	if len(out.Firewalls) == 1 {
+		if out.Firewalls[0].Labels[Label] != "firewall" {
+			return 0, fmt.Errorf("hetzner: firewall %s isn't labelled %s=firewall, so it isn't ours to change", name, Label)
+		}
 		made.Firewall.ID = out.Firewalls[0].ID
 		path := "/firewalls/" + strconv.FormatInt(made.Firewall.ID, 10) + "/actions/set_rules"
 		if err := h.do(ctx, "POST", path, map[string]any{"rules": rules}, &made); err != nil {

@@ -49,9 +49,23 @@ type Worker struct {
 // the provider has answered; the nonce finds the server if it never does.
 type Cloud struct {
 	Provider string    `json:"provider"`
-	ID       int64     `json:"id,omitempty"`
+	Region   string    `json:"region,omitempty"`  // AWS only
+	Account  string    `json:"account,omitempty"` // AWS only
+	ID       ServerID  `json:"id,omitempty"`
 	Nonce    string    `json:"nonce"`
 	Created  time.Time `json:"created"`
+}
+
+type ServerID string
+
+// UnmarshalJSON also takes the numbers inventories held before AWS.
+func (id *ServerID) UnmarshalJSON(b []byte) error {
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*id = ServerID(n)
+		return nil
+	}
+	return json.Unmarshal(b, (*string)(id))
 }
 
 func (w *Worker) Remote() bool { return w.Host != "" || w.Cloud != nil }
@@ -125,6 +139,10 @@ var (
 	validKey   = regexp.MustCompile(`^[a-z0-9@.-]+ [A-Za-z0-9+/]+=*$`)
 	validToken = regexp.MustCompile(`^[A-Za-z0-9]{32,}$`)
 	validNonce = regexp.MustCompile(`^[a-f0-9]{8,32}$`)
+	// Hetzner's numbers or EC2's i-0123abcd; "" while unknown.
+	validServerID = regexp.MustCompile(`^([1-9][0-9]{0,18}|i-[0-9a-f]{8,17})?$`)
+	validRegion   = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
+	validAccount  = regexp.MustCompile(`^[0-9]{12}$`)
 )
 
 func (w *Worker) validate(name string) error {
@@ -135,10 +153,11 @@ func (w *Worker) validate(name string) error {
 		return fmt.Errorf("worker %s has no token", name)
 	case !w.Remote():
 		return nil
-	case w.Cloud != nil && (w.Cloud.Provider != "hetzner" || !validNonce.MatchString(w.Cloud.Nonce) || w.Cloud.ID < 0):
+	case w.Cloud != nil && (!(w.Cloud.Provider == "hetzner" && w.Cloud.Region == "" && w.Cloud.Account == "" ||
+		w.Cloud.Provider == "aws" && ValidRegion(w.Cloud.Region) && (w.Cloud.Account == "" || validAccount.MatchString(w.Cloud.Account))) || !validNonce.MatchString(w.Cloud.Nonce) || !validServerID.MatchString(string(w.Cloud.ID))):
 		return fmt.Errorf("worker %s: bad cloud entry", name)
-	case w.Host == "" && w.Cloud.ID != 0:
-		return fmt.Errorf("worker %s: cloud server %d has no address", name, w.Cloud.ID)
+	case w.Host == "" && w.Cloud.ID != "":
+		return fmt.Errorf("worker %s: cloud server %s has no address", name, w.Cloud.ID)
 	case len(w.Dir+"/worker.sock") > 107: // Linux's sun_path, less its NUL
 		return fmt.Errorf("worker %s: dir %s is too long for a socket path", name, w.Dir)
 	case w.Slots < 1 || w.Slots > MaxSlots:
@@ -174,6 +193,9 @@ func (p *Pool) Load() (*Inventory, error) {
 	}
 	return inv, inv.validate()
 }
+
+// ValidRegion says if s looks like an AWS region name.
+func ValidRegion(s string) bool { return validRegion.MatchString(s) }
 
 // validate also refuses two entries for one token or one worker dir: they
 // would shadow each other on worker.sock, or race on the same host.

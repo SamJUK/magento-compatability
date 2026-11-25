@@ -128,8 +128,27 @@ Each pool gets a random ID (in `pool-id` beside `pool.yml`), so two machines sha
 The pool key also goes on root (as the `m2test-pool-<id>` key in the project) so Hetzner doesn't email root passwords; cloud-init then disables root login.
 A firewall named `m2test-<id>` allows SSH from `ssh_from` only.
 
+`queue -cloud aws:N` does the same on EC2, with the SDK's usual credentials (`AWS_PROFILE`, environment variables, SSO) and an `aws` section in `pool.yml`:
+
+```yaml
+aws: {region: eu-west-1, hourly: 0.42, type: m7a.2xlarge, image: debian-13, slots: 5, disk_gb: 160}
+```
+
+`region` and `hourly` are required.
+`hourly` is the instance's on-demand price plus its public IPv4 address and root disk, in euros like `max_burst_cost`; the queue can't look it up, so check it against the region's price list.
+`image` is `debian-13` (the newest official Debian 13 AMI for the type's architecture) or an AMI ID, which must still be Debian's own.
+Instances go in the region's default VPC (a default subnet in a zone offering the type, moving to the next zone when one has no capacity) with a public address, a gp3 encrypted root disk deleted with them, no key pair, no instance profile, and a metadata service that only answers IMDSv2 tokens one hop away, which bridged containers are past (a host-network container still reaches it).
+A security group named `m2test-<id>` allows SSH from `ssh_from` only, which must be IPv4 here.
+Each one powers itself off an hour past `max_age`, which terminates it, so an instance the queue lost track of stops billing on its own; this also happens at any boot after that time.
+The time comes from this machine's clock, so keep it right.
+Each EC2 worker records the AWS account it was made in, and `worker gc` leaves alone an entry from another account, or with none recorded, unless its instance is listed by label in this one. Run it with the same credentials as the burst; otherwise set the entry's `cloud.account` in `workers.json`, or remove the entry, as its log line says.
+An existing group or (on Hetzner) firewall by that name is only changed if it carries the `m2test=firewall` tag or label.
+The credentials need `ec2:RunInstances`, `TerminateInstances`, `CreateTags`, the `Describe*` calls for instances, images, instance types and their offerings, VPCs, subnets and security groups, and `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress` and `RevokeSecurityGroupIngress`.
+
 If the queue dies without destroying its servers (a second Ctrl+C, a crash), they stay in the inventory and the next burst refuses to start.
-`builder worker gc` lists them and every server labelled `m2test=worker,m2test-pool=<id>` that the inventory doesn't know; `-yes` destroys them.
+`builder worker gc` lists them and every server labelled (tagged, on AWS) `m2test=worker,m2test-pool=<id>` that the inventory doesn't know; `-yes` destroys them.
+It checks Hetzner when `HCLOUD_TOKEN` is set or the inventory has Hetzner workers, and AWS in `pool.yml`'s region and every region the inventory has instances in.
+`ssh_from` entries must be CIDRs with no host bits set (`198.51.100.4/32`, not `198.51.100.4/24`).
 
 ## What gets tested
 

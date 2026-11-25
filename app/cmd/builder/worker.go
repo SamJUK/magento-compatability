@@ -97,7 +97,7 @@ func runWorker(args []string) {
 				continue
 			}
 			if w.Cloud != nil {
-				fmt.Printf("%s\t%s server %d at %s\tup %s\tleft by a burst; builder worker gc destroys it\n",
+				fmt.Printf("%s\t%s server %s at %s\tup %s\tleft by a burst; builder worker gc destroys it\n",
 					name, w.Cloud.Provider, w.Cloud.ID, w.Host, time.Since(w.Cloud.Created).Round(time.Minute))
 				continue
 			}

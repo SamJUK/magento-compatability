@@ -74,11 +74,11 @@ func TestCreateSendsTheSpec(t *testing.T) {
 		"GET /v1/actions/2": write(200, `{"action": {"id": 2, "status": "success"}}`),
 	})
 	s, err := h.Create(context.Background(), Spec{Name: "hz-1", Type: "ccx33", Location: "hel1", Image: "debian-13",
-		UserData: "#cloud-config\n", Labels: map[string]string{"m2test": "worker"}, SSHKey: 7, Firewall: 9})
+		UserData: "#cloud-config\n", Labels: map[string]string{"m2test": "worker"}, SSHKey: "7", Firewall: "9"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.ID != 42 || s.IP != "203.0.113.7" {
+	if s.ID != "42" || s.IP != "203.0.113.7" {
 		t.Fatalf("got %+v", s)
 	}
 	if len(*calls) != 3 {
@@ -105,7 +105,7 @@ func TestCreateReportsAServerWhoseFirewallFailed(t *testing.T) {
 		"GET /v1/actions/2": write(200, `{"action": {"id": 2, "status": "error", "error": {"code": "x", "message": "firewall not applied"}}}`),
 	})
 	s, err := h.Create(context.Background(), Spec{})
-	if err == nil || s.ID != 42 || Refused(err) {
+	if err == nil || s.ID != "42" || Refused(err) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 }
@@ -121,7 +121,7 @@ func TestCreateGivesUpOnAnActionThatNeverEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := h.Create(ctx, Spec{})
-	if err == nil || s.ID != 42 || ctx.Err() != nil {
+	if err == nil || s.ID != "42" || ctx.Err() != nil {
 		t.Fatalf("got %+v, %v (outer ctx %v)", s, err, ctx.Err())
 	}
 }
@@ -140,10 +140,10 @@ func TestAPIErrorsKeepTheirCode(t *testing.T) {
 func TestNotFound(t *testing.T) {
 	notFound := write(404, `{"error": {"code": "not_found", "message": "server with ID '42' not found"}}`)
 	h, _ := fake(t, map[string]func(http.ResponseWriter, call){"GET /v1/servers/42": notFound, "DELETE /v1/servers/42": notFound})
-	if _, err := h.Get(context.Background(), 42); !errors.Is(err, ErrNotFound) {
+	if _, err := h.Get(context.Background(), "42"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get: %v", err)
 	}
-	if err := h.Delete(context.Background(), 42); err != nil {
+	if err := h.Delete(context.Background(), "42"); err != nil {
 		t.Fatalf("deleting a server already gone: %v", err)
 	}
 }
@@ -165,7 +165,7 @@ func TestListFollowsPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 2 {
+	if len(got) != 2 || got[0].ID != "1" || got[1].ID != "2" {
 		t.Fatalf("got %+v", got)
 	}
 	if q := (*calls)[1].query; !strings.Contains(q, "label_selector=m2test%3Dworker") || !strings.Contains(q, "page=2") {
@@ -215,8 +215,8 @@ func TestSSHKeyReplacesAStaleKey(t *testing.T) {
 		"POST /v1/ssh_keys":     write(201, `{"ssh_key": {"id": 4, "name": "m2test-pool", "public_key": "ssh-ed25519 NEW"}}`),
 	})
 	id, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 NEW")
-	if err != nil || id != 4 {
-		t.Fatalf("got %d %v", id, err)
+	if err != nil || id != "4" {
+		t.Fatalf("got %s %v", id, err)
 	}
 	if len(*calls) != 3 || (*calls)[2].body["public_key"] != "ssh-ed25519 NEW" {
 		t.Fatalf("calls %+v", *calls)
@@ -227,8 +227,8 @@ func TestSSHKeyReusesAMatchingKey(t *testing.T) {
 	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
 		"GET /v1/ssh_keys": write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool", "public_key": "ssh-ed25519 SAME"}]}`),
 	})
-	if id, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 SAME"); err != nil || id != 3 || len(*calls) != 1 {
-		t.Fatalf("got %d %v after %d calls", id, err, len(*calls))
+	if id, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 SAME"); err != nil || id != "3" || len(*calls) != 1 {
+		t.Fatalf("got %s %v after %d calls", id, err, len(*calls))
 	}
 }
 
@@ -236,15 +236,15 @@ func TestSSHKeyIgnoresTheComment(t *testing.T) {
 	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
 		"GET /v1/ssh_keys": write(200, `{"ssh_keys": [{"id": 3, "name": "m2test-pool", "public_key": "ssh-ed25519 SAME"}]}`),
 	})
-	if id, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 SAME m2test-pool"); err != nil || id != 3 || len(*calls) != 1 {
-		t.Fatalf("got %d %v after %d calls", id, err, len(*calls))
+	if id, err := h.SSHKey(context.Background(), "m2test-pool", "ssh-ed25519 SAME m2test-pool"); err != nil || id != "3" || len(*calls) != 1 {
+		t.Fatalf("got %s %v after %d calls", id, err, len(*calls))
 	}
 }
 
 func TestFirewallWaitsForItsRules(t *testing.T) {
 	polls := 0
 	h, _ := fake(t, map[string]func(http.ResponseWriter, call){
-		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test"}]}`),
+		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test", "labels": {"m2test": "firewall"}}]}`),
 		"POST /v1/firewalls/9/actions/set_rules": write(201, `{"actions": [{"id": 5, "status": "running"}]}`),
 		"GET /v1/actions/5": func(w http.ResponseWriter, c call) {
 			if polls++; polls < 3 {
@@ -254,12 +254,12 @@ func TestFirewallWaitsForItsRules(t *testing.T) {
 			}
 		},
 	})
-	if id, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"}); err != nil || id != 9 || polls != 3 {
-		t.Fatalf("got %d %v after %d polls", id, err, polls)
+	if id, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"}); err != nil || id != "9" || polls != 3 {
+		t.Fatalf("got %s %v after %d polls", id, err, polls)
 	}
 
 	h, _ = fake(t, map[string]func(http.ResponseWriter, call){
-		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test"}]}`),
+		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test", "labels": {"m2test": "firewall"}}]}`),
 		"POST /v1/firewalls/9/actions/set_rules": write(201, `{"actions": [{"id": 5, "status": "running"}]}`),
 		"GET /v1/actions/5":                      write(200, `{"action": {"id": 5, "status": "error", "error": {"code": "x", "message": "rules not applied"}}}`),
 	})
@@ -268,14 +268,23 @@ func TestFirewallWaitsForItsRules(t *testing.T) {
 	}
 }
 
+func TestFirewallLeavesSomeoneElsesAlone(t *testing.T) {
+	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
+		"GET /v1/firewalls": write(200, `{"firewalls": [{"id": 9, "name": "m2test", "labels": {}}]}`),
+	})
+	if _, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"}); err == nil || len(*calls) != 1 {
+		t.Fatalf("changed: %v, %d calls", err, len(*calls))
+	}
+}
+
 func TestFirewall(t *testing.T) {
 	h, calls := fake(t, map[string]func(http.ResponseWriter, call){
-		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test"}]}`),
+		"GET /v1/firewalls":                      write(200, `{"firewalls": [{"id": 9, "name": "m2test", "labels": {"m2test": "firewall"}}]}`),
 		"POST /v1/firewalls/9/actions/set_rules": write(201, `{"actions": []}`),
 	})
 	id, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"})
-	if err != nil || id != 9 {
-		t.Fatalf("got %d %v", id, err)
+	if err != nil || id != "9" {
+		t.Fatalf("got %s %v", id, err)
 	}
 	rules, _ := json.Marshal((*calls)[1].body["rules"])
 	if string(rules) != `[{"direction":"in","port":"22","protocol":"tcp","source_ips":["198.51.100.4/32"]}]` {
@@ -286,8 +295,8 @@ func TestFirewall(t *testing.T) {
 		"GET /v1/firewalls":  write(200, `{"firewalls": []}`),
 		"POST /v1/firewalls": write(201, `{"firewall": {"id": 10, "name": "m2test"}, "actions": []}`),
 	})
-	if id, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"}); err != nil || id != 10 {
-		t.Fatalf("made %d %v", id, err)
+	if id, err := h.Firewall(context.Background(), "m2test", []string{"198.51.100.4/32"}); err != nil || id != "10" {
+		t.Fatalf("made %s %v", id, err)
 	}
 	if (*calls)[1].body["name"] != "m2test" || (*calls)[1].body["rules"] == nil {
 		t.Fatalf("create body %v", (*calls)[1].body)

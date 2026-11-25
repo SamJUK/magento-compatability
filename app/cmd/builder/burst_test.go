@@ -10,12 +10,18 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"gopkg.in/yaml.v3"
 
 	"github.com/samjuk/magento-compatability/internal/cloud"
@@ -23,9 +29,10 @@ import (
 )
 
 type fakeCloud struct {
-	mu      sync.Mutex
-	next    int64
-	servers map[int64]cloud.Server
+	notFound error // what Get says of an unknown ID, if not ErrNotFound
+	mu       sync.Mutex
+	next     int64
+	servers  map[string]cloud.Server
 	// createErr fails Create; made says whether the server exists anyway.
 	createErr error
 	made      bool
@@ -50,7 +57,7 @@ func (f *fakeCloud) Create(_ context.Context, s cloud.Spec) (cloud.Server, error
 		return cloud.Server{}, f.createErr
 	}
 	f.next++
-	srv := cloud.Server{ID: f.next, Name: s.Name, IP: "203.0.113." + string(rune('0'+f.next)), Labels: s.Labels}
+	srv := cloud.Server{ID: strconv.FormatInt(f.next, 10), Name: s.Name, IP: "203.0.113." + string(rune('0'+f.next)), Labels: s.Labels}
 	f.servers[srv.ID] = srv
 	if f.actionErr != nil {
 		return srv, f.actionErr
@@ -62,10 +69,13 @@ func (f *fakeCloud) Create(_ context.Context, s cloud.Spec) (cloud.Server, error
 	return srv, nil
 }
 
-func (f *fakeCloud) Get(_ context.Context, id int64) (cloud.Server, error) {
+func (f *fakeCloud) Get(_ context.Context, id string) (cloud.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.servers[id]
+	if !ok && f.notFound != nil {
+		return s, f.notFound
+	}
 	if !ok {
 		return s, cloud.ErrNotFound
 	}
@@ -75,7 +85,7 @@ func (f *fakeCloud) Get(_ context.Context, id int64) (cloud.Server, error) {
 	return s, nil
 }
 
-func (f *fakeCloud) Delete(ctx context.Context, id int64) error {
+func (f *fakeCloud) Delete(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ctx.Err() != nil {
@@ -154,11 +164,11 @@ func testBurst(t *testing.T, prov *fakeCloud, host *fakeHost) (*burst, *fakeFlee
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "ssh"), 0o700)
 	if prov.servers == nil {
-		prov.servers = map[int64]cloud.Server{}
+		prov.servers = map[string]cloud.Server{}
 	}
 	ff := &fakeFleet{admitted: map[string]bool{}, busy: map[string]bool{}, drained: map[string]bool{}}
 	b := &burst{
-		pool: &pool.Pool{Dir: dir}, host: host, prov: prov, log: log.New(io.Discard, "", 0),
+		pool: &pool.Pool{Dir: dir}, host: host, prov: prov, provider: "hetzner", slots: 5, log: log.New(io.Discard, "", 0),
 		poolKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPool m2test-pool", poolID: "a1b2c3d4e5f6",
 		connect: func(ctx context.Context, _ string, _ *pool.Worker) { <-ctx.Done() },
 		admit: func(_, name string) {
@@ -220,7 +230,7 @@ func TestBurstRecordsTheWorkerBeforeCreating(t *testing.T) {
 	b, ff := testBurst(t, prov, &fakeHost{notYet: 3})
 	prov.onCreate = func(s cloud.Spec) {
 		w := inventory(t, b)[s.Name]
-		if w == nil || w.Cloud == nil || w.Cloud.Nonce != s.Labels["m2test-nonce"] || w.Cloud.ID != 0 {
+		if w == nil || w.Cloud == nil || w.Cloud.Nonce != s.Labels["m2test-nonce"] || w.Cloud.ID != "" {
 			t.Errorf("%s not recorded with its nonce before create: %+v", s.Name, w)
 		}
 	}
@@ -232,7 +242,7 @@ func TestBurstRecordsTheWorkerBeforeCreating(t *testing.T) {
 		t.Fatalf("inventory %v", inv)
 	}
 	for name, w := range inv {
-		if w.Cloud.ID == 0 || w.Host == "" || !ff.admitted[name] {
+		if w.Cloud.ID == "" || w.Host == "" || !ff.admitted[name] {
 			t.Errorf("%s: %+v admitted %v", name, w, ff.admitted[name])
 		}
 		if !strings.HasPrefix(w.HostKey, "ssh-ed25519 ") || strings.Count(w.HostKey, " ") != 1 {
@@ -250,6 +260,9 @@ func TestBurstRecordsTheWorkerBeforeCreating(t *testing.T) {
 	}
 	if pub := doc["ssh_keys"].(map[string]any)["ed25519_public"].(string); !strings.HasPrefix(pub, inv[spec.Name].HostKey) {
 		t.Fatalf("pinned key %q, user data has %q", inv[spec.Name].HostKey, pub)
+	}
+	if doc["bootcmd"] != nil || strings.Contains(spec.UserData, "m2test-deadline") || !strings.HasPrefix(spec.Name, "hz-") {
+		t.Fatalf("hetzner worker %s has a deadline: %v", spec.Name, doc["bootcmd"])
 	}
 	b.end(context.Background())
 	if prov.count() != 0 || len(inventory(t, b)) != 0 {
@@ -305,7 +318,7 @@ func TestGCKeepsAnUnansweredCreateForAWhile(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 1 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 {
 		t.Fatalf("%d left, %v", left, err)
 	}
 	inv := inventory(t, b)
@@ -313,9 +326,9 @@ func TestGCKeepsAnUnansweredCreateForAWhile(t *testing.T) {
 		t.Fatalf("inventory %v", inv)
 	}
 	prov.mu.Lock()
-	prov.servers[90] = cloud.Server{ID: 90, Name: "hz-recent", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
+	prov.servers["90"] = cloud.Server{ID: "90", Name: "hz-recent", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
 		t.Fatalf("%d left (%v), %d servers, inventory %v", left, err, prov.count(), inventory(t, b))
 	}
 }
@@ -332,10 +345,10 @@ func TestGCDestroysALateServerFoundOnlyByItsNonce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	prov.servers[90] = cloud.Server{ID: 90, Name: "hz-late", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
+	prov.servers["90"] = cloud.Server{ID: "90", Name: "hz-late", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": b.poolID, cloud.Label + "-nonce": "aaaaaaaa"}}
 	// The pool listing misses it; the nonce listing after it doesn't.
 	prov.hideFor = 1
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
 		t.Fatalf("%d left (%v), %d servers, inventory %v", left, err, prov.count(), inventory(t, b))
 	}
 }
@@ -366,7 +379,7 @@ func TestGCLeavesAnotherProjectsServer(t *testing.T) {
 		prov.servers[id] = s
 	}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 	// Control: with this pool's labels back, the same gc destroys it.
@@ -376,7 +389,7 @@ func TestGCLeavesAnotherProjectsServer(t *testing.T) {
 		prov.servers[id] = s
 	}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
 		t.Fatalf("control: %d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -393,7 +406,7 @@ func TestGCLeavesAServerRelabelledSinceItsList(t *testing.T) {
 	prov.mu.Lock()
 	prov.getLabels = map[string]string{"app": "shop"}
 	prov.mu.Unlock()
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 1 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -401,13 +414,13 @@ func TestGCLeavesAServerRelabelledSinceItsList(t *testing.T) {
 func TestBurstMatchesALostCreateInThisPoolOnly(t *testing.T) {
 	prov := &fakeCloud{createErr: errors.New("timeout"), made: true}
 	prov.onCreate = func(s cloud.Spec) {
-		prov.servers[99] = cloud.Server{ID: 99, Name: "theirs", Labels: map[string]string{
+		prov.servers["99"] = cloud.Server{ID: "99", Name: "theirs", Labels: map[string]string{
 			cloud.Label: "worker", cloud.Label + "-pool": "ffffffffffff", cloud.Label + "-nonce": s.Labels[cloud.Label+"-nonce"]}}
 	}
 	b, _ := testBurst(t, prov, &fakeHost{})
 	b.start(context.Background(), 1)
 	b.creating.Wait()
-	if _, ok := prov.servers[99]; !ok || prov.count() != 1 || len(inventory(t, b)) != 0 {
+	if _, ok := prov.servers["99"]; !ok || prov.count() != 1 || len(inventory(t, b)) != 0 {
 		t.Fatalf("servers %v, inventory %v", prov.servers, inventory(t, b))
 	}
 }
@@ -468,7 +481,7 @@ func TestGCGoesByLabelWithoutAnInventory(t *testing.T) {
 	if _, err := b.pool.Load(); err == nil {
 		t.Fatal("control: the inventory still loads")
 	}
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || prov.count() != 0 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
 	}
 }
@@ -493,7 +506,7 @@ func TestBurstKeepsAnUnknownCreateForGC(t *testing.T) {
 		t.Fatalf("inventory %v", inv)
 	}
 	for _, w := range inv {
-		if w.Cloud.ID != 0 {
+		if w.Cloud.ID != "" {
 			t.Fatalf("%+v", w.Cloud)
 		}
 	}
@@ -605,7 +618,7 @@ func TestBurstPlan(t *testing.T) {
 		{asked: 10, runs: 7, n: 2, cost: 2 * 1},                 // no more than the runs can use
 		{asked: 3, runs: 0, n: 0},
 	} {
-		n, cost := burstPlan(c, tc.asked, tc.existing, tc.runs, 1)
+		n, cost := burstPlan(c, c.Hetzner.Slots, tc.asked, tc.existing, tc.runs, 1)
 		if n != tc.n || cost != tc.cost {
 			t.Errorf("%+v: got %d workers for %v", tc, n, cost)
 		}
@@ -613,11 +626,13 @@ func TestBurstPlan(t *testing.T) {
 }
 
 func TestParseCloud(t *testing.T) {
-	if n, err := parseCloud("hetzner:4"); n != 4 || err != nil {
-		t.Fatalf("got %d %v", n, err)
+	for in, want := range map[string]string{"hetzner:4": "hetzner", "aws:3": "aws"} {
+		if p, n, err := parseCloud(in); p != want || n != int(in[len(in)-1]-'0') || err != nil {
+			t.Fatalf("%s: got %s %d %v", in, p, n, err)
+		}
 	}
-	for _, bad := range []string{"hetzner", "aws:3", "hetzner:0", "hetzner:x"} {
-		if _, err := parseCloud(bad); err == nil {
+	for _, bad := range []string{"hetzner", "gcp:3", "hetzner:0", "aws:x"} {
+		if _, _, err := parseCloud(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
@@ -634,11 +649,20 @@ func TestLoadCloudConfig(t *testing.T) {
 	if err != nil || c.MaxAge != 3*time.Hour || c.Hetzner.Type != "ccx33" || c.Hetzner.Slots != 5 {
 		t.Fatalf("got %+v %v", c, err)
 	}
-	for _, bad := range []string{"max_age: 3h\n", "ssh_from: [x]\nmax_workers: 0\n", "ssh_from: [x]\nmax_wrokers: 3\n", "ssh_from: [x]\nhetzner: {slots: 100}\n"} {
+	if c.AWS.Type != "m7a.2xlarge" || c.AWS.DiskGB != 160 || c.AWS.Slots != 5 {
+		t.Fatalf("aws defaults %+v", c.AWS)
+	}
+	ok := "ssh_from: [198.51.100.4/32, 2001:db8::/32]\n"
+	for _, bad := range []string{"max_age: 3h\n", "ssh_from: [x]\n", "ssh_from: [198.51.100.4/24]\n", ok + "max_workers: 0\n", ok + "max_wrokers: 3\n",
+		ok + "max_burst_cost: .nan\n", ok + "aws: {hourly: .inf}\n", ok + "minutes_per_run: .nan\n", ok + "hetzner: {slots: 100}\n", ok + "aws: {slots: 0}\n", ok + "aws: {disk_gb: 20}\n"} {
 		write(bad)
 		if _, err := loadCloudConfig(p); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+	write(ok + "aws: {region: eu-west-1, hourly: 0.4, disk_gb: 30}\n")
+	if c, err := loadCloudConfig(p); err != nil || c.AWS.Region != "eu-west-1" || c.AWS.DiskGB != 30 {
+		t.Fatalf("control: %+v %v", c.AWS, err)
 	}
 }
 
@@ -664,10 +688,10 @@ func TestGC(t *testing.T) {
 		}
 		return l
 	}
-	prov.servers[50] = cloud.Server{ID: 50, Name: "hz-lost", IP: "203.0.113.50", Labels: ours(cloud.Label+"-nonce", "abcdef12")}
-	prov.servers[60] = cloud.Server{ID: 60, Name: "hz-orphan", Labels: ours()}
-	prov.servers[70] = cloud.Server{ID: 70, Name: "someone-elses", Labels: map[string]string{}}
-	prov.servers[80] = cloud.Server{ID: 80, Name: "another-pools", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": "ffffffffffff"}}
+	prov.servers["50"] = cloud.Server{ID: "50", Name: "hz-lost", IP: "203.0.113.50", Labels: ours(cloud.Label+"-nonce", "abcdef12")}
+	prov.servers["60"] = cloud.Server{ID: "60", Name: "hz-orphan", Labels: ours()}
+	prov.servers["70"] = cloud.Server{ID: "70", Name: "someone-elses", Labels: map[string]string{}}
+	prov.servers["80"] = cloud.Server{ID: "80", Name: "another-pools", Labels: map[string]string{cloud.Label: "worker", cloud.Label + "-pool": "ffffffffffff"}}
 	key := inventory(t, b)
 	var anyKey string
 	for _, w := range key {
@@ -683,13 +707,13 @@ func TestGC(t *testing.T) {
 		return nil
 	})
 
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, false, b.log); err != nil || left != 4 || prov.count() != 5 || len(inventory(t, b)) != 3 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, false, b.log); err != nil || left != 4 || prov.count() != 5 || len(inventory(t, b)) != 3 {
 		t.Fatalf("a dry run: %d listed (%v), %d servers, inventory %d", left, err, prov.count(), len(inventory(t, b)))
 	}
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 {
 		t.Fatalf("%d left, %v", left, err)
 	}
-	if prov.count() != 2 || prov.servers[70].Name != "someone-elses" || prov.servers[80].Name != "another-pools" || len(inventory(t, b)) != 0 {
+	if prov.count() != 2 || prov.servers["70"].Name != "someone-elses" || prov.servers["80"].Name != "another-pools" || len(inventory(t, b)) != 0 {
 		t.Fatalf("servers %v, inventory %v", prov.servers, inventory(t, b))
 	}
 }
@@ -734,7 +758,213 @@ func TestGCCountsAnEntryItCouldNotForget(t *testing.T) {
 	dir := b.pool.Dir
 	os.Chmod(dir, 0o555)
 	defer os.Chmod(dir, 0o755)
-	if left, err := gc(context.Background(), b.pool, prov, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 0 {
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 1 || prov.count() != 0 {
 		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
+	}
+}
+
+func TestAWSBurstWorkersPowerOffPastTheirDeadline(t *testing.T) {
+	prov := &fakeCloud{}
+	b, _ := testBurst(t, prov, &fakeHost{})
+	b.provider, b.region, b.account, b.deadline = "aws", "eu-west-1", "111111111111", 3*time.Hour
+	before := time.Now()
+	b.start(context.Background(), 1)
+	b.creating.Wait()
+	waitFor(t, "a ready worker", func() bool { return b.readyCount() == 1 })
+	spec := prov.specs[0]
+	w := inventory(t, b)[spec.Name]
+	if !strings.HasPrefix(spec.Name, "aws-") || w == nil || w.Cloud.Provider != "aws" || w.Cloud.Region != "eu-west-1" || w.Cloud.Account != "111111111111" {
+		t.Fatalf("%s: %+v", spec.Name, w)
+	}
+	var doc struct{ Bootcmd [][]string }
+	if err := yaml.Unmarshal([]byte(spec.UserData), &doc); err != nil || len(doc.Bootcmd) != 1 {
+		t.Fatalf("bootcmd %v %v", doc.Bootcmd, err)
+	}
+	at := w.Cloud.Created.Add(3 * time.Hour)
+	script := doc.Bootcmd[0][2]
+	if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("bootcmd doesn't parse: %v %s", err, out)
+	}
+	if !strings.Contains(script, "-lt "+strconv.FormatInt(at.Unix(), 10)+" ]") || w.Cloud.Created.Before(before.Add(-time.Second)) {
+		t.Fatalf("deadline not created + 3h (%s): %s", at, script)
+	}
+	if !strings.Contains(script, `OnCalendar=`+at.UTC().Format("2006-01-02 15:04:05 UTC")+`\n`) || !strings.Contains(script, "systemctl start --no-block m2test-deadline.timer") || strings.Count(script, `logger -s -t m2test`) != 2 {
+		t.Fatalf("timer not armed at boot: %s", script)
+	}
+	b.end(context.Background())
+}
+
+var euWest = target{"aws", "eu-west-1", "111111111111"}
+
+func TestGCLeavesAnotherProvidersWorkers(t *testing.T) {
+	b, _, prov := readyBurst(t, 1)
+	b.mu.Lock()
+	for _, bw := range b.workers {
+		bw.stop()
+	}
+	b.workers = nil
+	b.mu.Unlock()
+	b.running.Wait()
+	if err := b.pool.Update(func(inv *pool.Inventory) error {
+		for _, w := range inv.Workers {
+			aw := *w
+			aw.Token, aw.Host, aw.User = strings.Repeat("a", 32), "198.51.100.9", "other"
+			aw.Cloud = &pool.Cloud{Provider: "aws", Region: "eu-west-1", Account: "111111111111", ID: "i-0123456789abcdef0", Nonce: "abcdef12", Created: time.Now()}
+			inv.Workers["aws-abcdef12"] = &aw
+			break
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Hetzner has never heard of it, which must not read as "gone".
+	if left, err := gc(context.Background(), b.pool, prov, target{provider: "hetzner"}, b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 {
+		t.Fatalf("%d left (%v), %d servers", left, err, prov.count())
+	}
+	if inv := inventory(t, b); len(inv) != 1 || inv["aws-abcdef12"] == nil {
+		t.Fatalf("inventory %v", inv)
+	}
+	// EC2 not showing a new instance yet is not it being gone.
+	ec2 := &fakeCloud{servers: map[string]cloud.Server{}, notFound: fmt.Errorf("%w: %w", cloud.ErrNotFound, &cloud.APIError{Provider: "aws", Status: 400, Code: "InvalidInstanceID.NotFound"})}
+	if left, err := gc(context.Background(), b.pool, ec2, euWest, b.poolID, true, b.log); err != nil || left != 1 || len(inventory(t, b)) != 1 {
+		t.Fatalf("new instance: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	// Nor is it in another region.
+	if left, err := gc(context.Background(), b.pool, ec2, target{"aws", "us-east-1", "111111111111"}, b.poolID, true, b.log); err != nil || left != 0 || len(inventory(t, b)) != 1 {
+		t.Fatalf("other region: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	// An hour on, EC2 is not just slow.
+	b.pool.Update(func(inv *pool.Inventory) error {
+		inv.Workers["aws-abcdef12"].Cloud.Created = time.Now().Add(-2 * time.Hour)
+		return nil
+	})
+	saved := *inventory(t, b)["aws-abcdef12"]
+	if left, err := gc(context.Background(), b.pool, ec2, euWest, b.poolID, true, b.log); err != nil || left != 0 || len(inventory(t, b)) != 0 {
+		t.Fatalf("old instance: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	saved.Cloud.Created = time.Now()
+	b.pool.Update(func(inv *pool.Inventory) error { inv.Workers["aws-abcdef12"] = &saved; return nil })
+	// Control: seen terminated, it is gone however new.
+	ec2.notFound = nil
+	if left, err := gc(context.Background(), b.pool, ec2, euWest, b.poolID, true, b.log); err != nil || left != 0 || len(inventory(t, b)) != 0 {
+		t.Fatalf("terminated instance: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+}
+
+func TestGCTargetsSurviveABrokenInventory(t *testing.T) {
+	p := &pool.Pool{Dir: t.TempDir()}
+	os.MkdirAll(filepath.Join(p.Dir, "ssh"), 0o700)
+	logger := log.New(io.Discard, "", 0)
+	if _, err := gcTargets(p, false, "", logger); err == nil {
+		t.Fatal("nothing to check, no error")
+	}
+	for _, broken := range []string{`{"workers": {`, `{"workers": {"x": null}}`, `{"workers": {"x": {"cloud": {"provider": "aws", "region": "eu-west-1; x"}}}}`,
+		`{"workers": {"x": {"cloud": {"provider": "hetzner", "region": "fsn1"}}}}`} {
+		os.WriteFile(filepath.Join(p.Dir, "workers.json"), []byte(broken), 0o600)
+		got, err := gcTargets(p, true, "eu-west-1", logger)
+		if err != nil || !slices.Equal(got, []target{{provider: "aws", region: "eu-west-1"}, {provider: "hetzner"}}) {
+			t.Fatalf("broken inventory %s: %v %v", broken, got, err)
+		}
+	}
+	// Control: a readable one adds the regions it has workers in.
+	os.WriteFile(filepath.Join(p.Dir, "workers.json"), []byte(`{"workers": {}}`), 0o600)
+	if err := p.Update(func(inv *pool.Inventory) error {
+		inv.Workers["aws-abcdef12"] = &pool.Worker{Host: "198.51.100.9", Port: 22, User: "m2test", Dir: pool.DefaultDir, Slots: 1,
+			Token: strings.Repeat("a", 32), HostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHost",
+			Cloud: &pool.Cloud{Provider: "aws", Region: "us-east-1", Account: "111111111111", Nonce: "abcdef12", ID: "i-0123456789abcdef0"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := gcTargets(p, false, "eu-west-1", logger)
+	if err != nil || !slices.Equal(got, []target{{provider: "aws", region: "eu-west-1"}, {provider: "aws", region: "us-east-1"}}) {
+		t.Fatalf("readable inventory: %v %v", got, err)
+	}
+}
+
+func TestGCLeavesAnotherAccountsInstances(t *testing.T) {
+	prov := &fakeCloud{}
+	b, _ := testBurst(t, prov, &fakeHost{})
+	b.provider, b.region, b.account = "aws", "eu-west-1", "111111111111"
+	b.start(context.Background(), 1)
+	b.creating.Wait()
+	waitFor(t, "a ready worker", func() bool { return b.readyCount() == 1 })
+	b.mu.Lock()
+	for _, bw := range b.workers {
+		bw.stop()
+	}
+	b.workers = nil
+	b.mu.Unlock()
+	b.running.Wait()
+	// Another account sees none of it, and says so long after the create.
+	b.pool.Update(func(inv *pool.Inventory) error {
+		for _, w := range inv.Workers {
+			w.Cloud.Created = time.Now().Add(-2 * unseenFor)
+		}
+		return nil
+	})
+	elsewhere := &fakeCloud{servers: map[string]cloud.Server{}, notFound: fmt.Errorf("%w: %w", cloud.ErrNotFound, &cloud.APIError{Provider: "aws", Status: 400, Code: "InvalidInstanceID.NotFound"})}
+	other := target{"aws", "eu-west-1", "222222222222"}
+	if left, err := gc(context.Background(), b.pool, elsewhere, other, b.poolID, true, b.log); err != nil || left != 1 || len(inventory(t, b)) != 1 {
+		t.Fatalf("other account: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	for name, w := range inventory(t, b) {
+		if (&burst{pool: b.pool, prov: prov, log: b.log, account: "222222222222"}).delete(context.Background(), name, w) || prov.count() != 1 {
+			t.Fatal("destroyed from another account")
+		}
+	}
+	// Made before accounts were recorded: whose it is is unknown.
+	b.pool.Update(func(inv *pool.Inventory) error {
+		for _, w := range inv.Workers {
+			w.Cloud.Account = ""
+		}
+		return nil
+	})
+	if left, err := gc(context.Background(), b.pool, elsewhere, b.target(), b.poolID, true, b.log); err != nil || left != 1 || len(inventory(t, b)) != 1 {
+		t.Fatalf("no account: %d left (%v), inventory %v", left, err, inventory(t, b))
+	}
+	for name, w := range inventory(t, b) {
+		if b.delete(context.Background(), name, w) || prov.count() != 1 {
+			t.Fatal("destroyed with no account recorded")
+		}
+	}
+	// Listed by its labels here, it is in this account after all.
+	if left, err := gc(context.Background(), b.pool, prov, b.target(), b.poolID, true, b.log); err != nil || left != 0 || prov.count() != 0 || len(inventory(t, b)) != 0 {
+		t.Fatalf("listed here: %d left (%v), %d servers", left, err, prov.count())
+	}
+}
+
+// awsSetup answers what a burst asks EC2 before it makes anything.
+type awsSetup struct{ cloud.EC2 }
+
+func (awsSetup) DescribeInstanceTypes(context.Context, *ec2.DescribeInstanceTypesInput, ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
+	return &ec2.DescribeInstanceTypesOutput{InstanceTypes: []types.InstanceTypeInfo{{ProcessorInfo: &types.ProcessorInfo{SupportedArchitectures: []types.ArchitectureType{"arm64"}}}}}, nil
+}
+
+func (awsSetup) DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	return &ec2.DescribeImagesOutput{Images: []types.Image{{ImageId: aws.String("ami-0123456789abcdef0"), RootDeviceName: aws.String("/dev/xvda"), CreationDate: aws.String("2026-11-01T00:00:00.000Z")}}}, nil
+}
+
+func (awsSetup) DescribeInstanceTypeOfferings(context.Context, *ec2.DescribeInstanceTypeOfferingsInput, ...func(*ec2.Options)) (*ec2.DescribeInstanceTypeOfferingsOutput, error) {
+	return &ec2.DescribeInstanceTypeOfferingsOutput{InstanceTypeOfferings: []types.InstanceTypeOffering{{Location: aws.String("eu-west-1a")}}}, nil
+}
+
+func (awsSetup) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	return &ec2.DescribeSubnetsOutput{Subnets: []types.Subnet{{AvailabilityZone: aws.String("eu-west-1a"), SubnetId: aws.String("subnet-a")}}}, nil
+}
+
+func TestUseAWSSetsTheDeadlineAndAccount(t *testing.T) {
+	b, _ := testBurst(t, &fakeCloud{}, &fakeHost{})
+	b.cfg.AWS.Region, b.cfg.AWS.Type, b.cfg.AWS.Slots, b.cfg.AWS.DiskGB, b.cfg.MaxAge = "eu-west-1", "m7g.2xlarge", 4, 60, 5*time.Hour
+	a := &cloud.AWS{EC2: awsSetup{}, Account: "111111111111"}
+	goarch, err := b.useAWS(context.Background(), a)
+	if err != nil || goarch != "arm64" {
+		t.Fatalf("got %q, %v", goarch, err)
+	}
+	if b.deadline != 6*time.Hour || b.account != "111111111111" || b.region != "eu-west-1" || b.slots != 4 || b.prov != a {
+		t.Errorf("burst: deadline %s, account %q, region %q, slots %d", b.deadline, b.account, b.region, b.slots)
+	}
+	if s := b.spec; s.Type != "m7g.2xlarge" || s.Image != "ami-0123456789abcdef0" || s.RootDevice != "/dev/xvda" || s.DiskGB != 60 || !slices.Equal(s.Subnets, []string{"subnet-a"}) {
+		t.Errorf("spec %+v", s)
 	}
 }

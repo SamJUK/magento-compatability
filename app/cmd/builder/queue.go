@@ -44,8 +44,8 @@ gives any other failure from this sweep one more go.
 With -workers, the named workers pull runs from worker.sock in the state
 directory as well; -slots 0 leaves all the work to them. Each remote one
 gets an SSH tunnel to the socket, the sweep's release and a restart.
--cloud hetzner:N rents up to N servers as workers for the sweep and
-destroys them when it ends (see pool.yml in the README).
+-cloud hetzner:N or aws:N rents up to N servers as workers for the sweep
+and destroys them when it ends (see pool.yml in the README).
 
 A number in the slots file overrides -slots until the file is removed. One
 slot is dropped while free memory is under -min-free-mem, and no run starts
@@ -72,7 +72,7 @@ Flags:`)
 		fresh         = fs.Bool("fresh", false, "Forget this sweep's saved attempt counts")
 		status        = fs.Bool("status", false, "Print the sweep's progress and exit")
 		workerNames   = fs.String("workers", "", "Comma-separated workers from the inventory (builder worker list) to hand runs to")
-		cloudFlag     = fs.String("cloud", "", "Create cloud workers for this sweep and destroy them after: hetzner:N")
+		cloudFlag     = fs.String("cloud", "", "Create cloud workers for this sweep and destroy them after: hetzner:N or aws:N")
 		yes           = fs.Bool("yes", false, "Go ahead with a burst estimated over max_burst_cost")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -102,10 +102,10 @@ Flags:`)
 	}
 
 	var ws *workers
-	burstN := 0
+	burstN, burstProvider := 0, ""
 	if *cloudFlag != "" && !*status {
 		var err error
-		if burstN, err = parseCloud(*cloudFlag); err != nil {
+		if burstProvider, burstN, err = parseCloud(*cloudFlag); err != nil {
 			fatalf("%v", err)
 		}
 	}
@@ -216,7 +216,7 @@ Flags:`)
 		f := serveWorkers(ctx, logger, src, contract, releases, ws, stateDir)
 		stopWorkers = f.wait
 		if *cloudFlag != "" {
-			endBurst := startBurst(ctx, logger, f, src, burstN, *yes)
+			endBurst := startBurst(ctx, logger, f, src, burstProvider, burstN, *yes)
 			stopWorkers = func() { endBurst(); f.wait() }
 		}
 	}
