@@ -29,10 +29,7 @@ import (
 	"github.com/samjuk/magento-compatability/internal/runner"
 )
 
-func runQueue(args []string) {
-	fs := flag.NewFlagSet("queue", flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, `Usage: magento-compatibility-builder queue [flags]
+const queueUsage = `Usage: magento-compatibility-builder queue [flags]
 
 Works through a sweep unattended. Safe to stop with Ctrl+C, SIGTERM or
 SIGHUP and start again: it carries on where it left off.
@@ -56,7 +53,12 @@ Examples:
   builder queue -ids-file deviations.txt -retry-failures
   builder queue -ids-file deviations.txt -status
 
-Flags:`)
+Flags:`
+
+func runQueue(args []string) {
+	fs := flag.NewFlagSet("queue", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, queueUsage)
 		fs.PrintDefaults()
 	}
 
@@ -120,6 +122,15 @@ Flags:`)
 	if (*workerNames != "" || burstN > 0) && !*status {
 		ws = loadWorkers(*workerNames, filepath.Join(stateDir, "worker.sock"), burstN > 0)
 	}
+	// Before anything is saved, so the retry it suggests isn't a changed sweep.
+	slotsFile := filepath.Join(stateDir, "slots")
+	maxSlots := *numSlots
+	if v, ok := slotsOverride(slotsFile); ok {
+		maxSlots = max(maxSlots, v)
+	}
+	if maxSlots == 0 && ws == nil && !*status {
+		fatalf("-slots 0 runs nothing here; give it -workers or -cloud")
+	}
 	lg, err := queue.OpenLedger(stateDir)
 	if err != nil {
 		fatalf("%v", err)
@@ -173,27 +184,15 @@ Flags:`)
 	stacksDir := filepath.Join(stateDir, "stacks")
 	removeLeftoverStacks(ctx, logger, stacksDir)
 
-	slotsFile := filepath.Join(stateDir, "slots")
 	slots := func() int {
 		n := *numSlots
-		if data, err := os.ReadFile(slotsFile); err == nil {
-			if v, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && v >= 0 {
-				n = min(v, pool.MaxSlots)
-			}
+		if v, ok := slotsOverride(slotsFile); ok {
+			n = v
 		}
 		if free, err := queue.MemoryFreePercent(); err == nil && free < *minFreeMem && n > 1 {
 			n--
 		}
 		return n
-	}
-	maxSlots := *numSlots
-	if data, err := os.ReadFile(slotsFile); err == nil {
-		if v, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			maxSlots = max(maxSlots, min(v, pool.MaxSlots))
-		}
-	}
-	if maxSlots == 0 && ws == nil {
-		fatalf("-slots 0 runs nothing here; give it -workers or -cloud")
 	}
 
 	var mem queue.MemorySampler
@@ -201,48 +200,7 @@ Flags:`)
 
 	base := sel.runConfig()
 	base.Force = true
-	// Rechecked before each local claim: a prune mid-sweep would have
-	// compose pull by tag.
-	var imagesMu sync.Mutex
-	readyImages := func(context.Context) error { return nil }
-	if contract.Release != "" {
-		logger.Printf("running release %s", contract.Release)
-		dir := filepath.Join(releases, contract.Release)
-		base.ComposeDir = filepath.Join(dir, "docker", "compose")
-		if maxSlots > 0 {
-			// Local slots run what workers run: pinned images, and
-			// Playwright in the release's image.
-			m, err := images.Load(dir)
-			if err != nil {
-				fatalf("%v", err)
-			}
-			logger.Print("readying the release's images for local slots")
-			var checked time.Time
-			readyImages = func(ctx context.Context) error {
-				imagesMu.Lock()
-				defer imagesMu.Unlock()
-				// Idle slots poll every few seconds; a docker inspect per
-				// image each time is a lot.
-				if time.Since(checked) < 30*time.Second {
-					return nil
-				}
-				err := images.Ready(ctx, dir, contract.Release, m)
-				if err == nil {
-					checked = time.Now()
-				}
-				return err
-			}
-			if err := readyImages(ctx); err != nil {
-				fatalf("%v", err)
-			}
-			// The image also sets the base URL, as on workers, even with
-			// Playwright off.
-			base.PlaywrightImage = m.Playwright
-			if base.PlaywrightDir != "" {
-				base.PlaywrightDir = filepath.Join(dir, images.PlaywrightTests)
-			}
-		}
-	}
+	readyImages := localImages(ctx, logger, sel, &base, contract.Release, releases, combos, maxSlots)
 
 	counts := src.Counts()
 	logger.Printf("started: %d combinations, %d to run; attempts in %s; slots override in %s",
@@ -277,44 +235,8 @@ Flags:`)
 		MaxSlots: maxSlots,
 		Slots:    slots,
 		Wait:     guards(queue.DiskGuard(*diskPath, *minFreeGB), imagesGuard(ctx, readyImages)),
-		Run: func(ctx context.Context, slot int, j queue.Job) queue.Outcome {
-			c := j.Combination
-			cfg := base
-			project := ""
-			cfg.OnProject = func(name string) {
-				project = name
-				if err := os.WriteFile(filepath.Join(stacksDir, name), nil, 0o644); err != nil {
-					logger.Printf("recording stack %s: %v", name, err)
-				}
-			}
-			defer func() {
-				if project == "" || ctx.Err() != nil {
-					return
-				}
-				// Teardown can fail or time out; keep the record until it's gone.
-				if up, err := queue.StackExists(ctx, project); err == nil && !up {
-					os.Remove(filepath.Join(stacksDir, project))
-				}
-			}()
-			logger.Printf("slot %d: start %s (try %d)", slot, c.ID(), j.Tries+1)
-			started, before := time.Now(), queue.ResultMod(sel.resultsDir, c)
-			_, err := runner.Run(ctx, c, cfg)
-			if ctx.Err() != nil {
-				logger.Printf("slot %d: %s stopped", slot, c.ID())
-				return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true}
-			}
-			msg := fmt.Sprintf("slot %d: %s -> %s in %s", slot, c.ID(), queue.Status(sel.resultsDir, c), time.Since(started).Round(time.Second))
-			if peak := mem.Take(project); peak > 0 {
-				msg += fmt.Sprintf(", peak memory %.1fGB", float64(peak)/(1<<30))
-			}
-			if err != nil {
-				msg += ", error: " + err.Error()
-			}
-			logger.Print(msg)
-			after := queue.ResultMod(sel.resultsDir, c)
-			return runOutcome(!after.IsZero() && !after.Equal(before), err)
-		},
-		Log: logger,
+		Run:      localRun(base, sel.resultsDir, stacksDir, &mem, logger),
+		Log:      logger,
 	}
 	engine.Start(ctx)
 	if stopWorkers != nil {
@@ -333,15 +255,120 @@ Flags:`)
 		logger.Print("stopped")
 		return
 	}
-	counts = src.Counts()
+	incomplete = reportSweep(logger, src.Counts(), len(combos))
+}
+
+// reportSweep logs how the sweep ended, and says whether runs are left without a result.
+func reportSweep(logger *log.Logger, counts map[string]int, combos int) (incomplete bool) {
 	logger.Printf("done: pass=%d fail=%d setup_fail=%d todo=%d",
 		counts[queue.StatusPass], counts[queue.StatusFail], counts[queue.StatusSetupFail], counts[queue.StatusTodo])
 	if n := counts["exhausted"]; n > 0 {
 		logger.Printf("%d results stand only because their retries ran out", n)
 	}
 	// Short of every combination when the ledger couldn't be read.
-	incomplete = counts[queue.StatusTodo] > 0 ||
-		counts[queue.StatusPass]+counts[queue.StatusFail]+counts[queue.StatusSetupFail] != len(combos)
+	return counts[queue.StatusTodo] > 0 ||
+		counts[queue.StatusPass]+counts[queue.StatusFail]+counts[queue.StatusSetupFail] != combos
+}
+
+// localImages readies the images local slots run, and returns the check
+// each local claim makes first.
+func localImages(ctx context.Context, logger *log.Logger, sel *selection, base *runner.RunConfig, release, releases string, combos []matrix.Combination, maxSlots int) func(context.Context) error {
+	// Rechecked before each local claim: a prune mid-sweep would have
+	// compose pull by tag.
+	var imagesMu sync.Mutex
+	readyImages := func(context.Context) error { return nil }
+	readyFrom := func(dir string, m images.Manifest) {
+		var checked time.Time
+		readyImages = func(ctx context.Context) error {
+			imagesMu.Lock()
+			defer imagesMu.Unlock()
+			// Idle slots poll every few seconds; a docker inspect per
+			// image each time is a lot.
+			if time.Since(checked) < 30*time.Second {
+				return nil
+			}
+			err := images.Ready(ctx, dir, m)
+			if err == nil {
+				checked = time.Now()
+			}
+			return err
+		}
+		if err := readyImages(ctx); err != nil {
+			fatalf("%v", err)
+		}
+	}
+	if release != "" {
+		logger.Printf("running release %s", release)
+		dir := filepath.Join(releases, release)
+		base.ComposeDir = filepath.Join(dir, "docker", "compose")
+		if maxSlots > 0 {
+			// Local slots run what workers run: pinned images, and
+			// Playwright in the release's image.
+			m, err := images.Load(dir)
+			if err != nil {
+				fatalf("%v", err)
+			}
+			logger.Print("readying the release's images for local slots")
+			readyFrom(dir, m)
+			// The image also sets the base URL, as on workers, even with
+			// Playwright off.
+			base.PlaywrightImage = m.Playwright
+			if base.PlaywrightDir != "" {
+				base.PlaywrightDir = filepath.Join(dir, images.PlaywrightTests)
+			}
+		}
+	} else if maxSlots > 0 {
+		m, ok, err := sel.checkoutImages(combos)
+		if err != nil {
+			fatalf("%v", err)
+		}
+		if ok {
+			logger.Print("readying the harness images")
+			readyFrom(sel.repoRoot, m)
+		}
+	}
+	return readyImages
+}
+
+// localRun runs a job in a local slot.
+func localRun(base runner.RunConfig, resultsDir, stacksDir string, mem *queue.MemorySampler, logger *log.Logger) func(context.Context, int, queue.Job) queue.Outcome {
+	return func(ctx context.Context, slot int, j queue.Job) queue.Outcome {
+		c := j.Combination
+		cfg := base
+		project := ""
+		cfg.OnProject = func(name string) {
+			project = name
+			if err := os.WriteFile(filepath.Join(stacksDir, name), nil, 0o644); err != nil {
+				logger.Printf("recording stack %s: %v", name, err)
+			}
+		}
+		defer func() {
+			if project == "" || ctx.Err() != nil {
+				return
+			}
+			// Teardown can fail or time out; keep the record until it's gone.
+			if up, err := queue.StackExists(ctx, project); err == nil && !up {
+				os.Remove(filepath.Join(stacksDir, project))
+			}
+		}()
+		logger.Printf("slot %d: start %s (try %d)", slot, c.ID(), j.Tries+1)
+		started, before := time.Now(), queue.ResultMod(resultsDir, c)
+		_, err := runner.Run(ctx, c, cfg)
+		if ctx.Err() != nil {
+			logger.Printf("slot %d: %s stopped", slot, c.ID())
+			return queue.Outcome{Kind: queue.OutcomeAborted, Requested: true}
+		}
+		msg := fmt.Sprintf("slot %d: %s -> %s in %s", slot, c.ID(), queue.Status(resultsDir, c), time.Since(started).Round(time.Second))
+		if peak := mem.Take(project); peak > 0 {
+			msg += fmt.Sprintf(", peak memory %.1fGB", float64(peak)/(1<<30))
+		}
+		if err != nil {
+			msg += ", error: " + err.Error()
+		}
+		logger.Print(msg)
+		after := queue.ResultMod(resultsDir, c)
+		return runOutcome(!after.IsZero() && !after.Equal(before), err)
+	}
 }
 
 type workers struct {
@@ -361,8 +388,8 @@ func loadWorkers(names, sock string, burst bool) *workers {
 	// Before the inventory is read, local workers too: a worker remove
 	// finishing first must not leave this sweep accepting its token.
 	locked := map[string]bool{}
-	for name := range strings.SplitSeq(names, ",") {
-		if names == "" || locked[name] {
+	for _, name := range splitNames(names) {
+		if locked[name] {
 			continue
 		}
 		lock, err := p.Lock(name)
@@ -393,10 +420,7 @@ func loadWorkers(names, sock string, burst bool) *workers {
 			fatalf("%v", err)
 		}
 	}
-	for name := range strings.SplitSeq(names, ",") {
-		if names == "" {
-			break
-		}
+	for _, name := range splitNames(names) {
 		w := inv.Workers[name]
 		if w == nil {
 			fatalf("no worker %q in the inventory; builder worker add makes one", name)
@@ -416,6 +440,13 @@ func loadWorkers(names, sock string, burst bool) *workers {
 		}
 	}
 	return ws
+}
+
+func splitNames(names string) []string {
+	if names == "" {
+		return nil
+	}
+	return strings.Split(names, ",")
 }
 
 func cloudEntries(inv *pool.Inventory) []string {
@@ -562,6 +593,19 @@ func keepIDs(combos []matrix.Combination, path string) ([]matrix.Combination, er
 		kept = append(kept, c)
 	}
 	return kept, sc.Err()
+}
+
+// slotsOverride is the number in the slots file, capped at pool.MaxSlots.
+func slotsOverride(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return min(v, pool.MaxSlots), true
 }
 
 func queueStateDir() string {

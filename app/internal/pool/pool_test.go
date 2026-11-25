@@ -247,7 +247,7 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	os.MkdirAll(d+"/bin", 0o755)
 	os.MkdirAll(d+"/releases", 0o755)
 	os.MkdirAll(d+"/incoming", 0o755)
-	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nmkdir -p \"$7/$3\"\n"), 0o755)
+	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\necho \"$*\" >> "+d+"/worker\n[ \"$1\" = prune ] || mkdir -p \"$7/$3\"\n"), 0o755)
 	// GNU mv's -T, which BSD mv lacks: without it mv moves into the dir a link points to.
 	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && { shift; rm -f \"$2\"; }\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
 	os.WriteFile(bin+"/flock", []byte("#!/bin/sh\n"), 0o755)
@@ -288,12 +288,13 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	}
 	docker, _ := os.ReadFile(d + "/docker")
 	for _, line := range strings.Split(strings.TrimSpace(string(docker)), "\n") {
-		if !strings.Contains(line, "--filter label=m2test.release") {
+		if line != "image prune -f --filter label="+images.ContextLabel && line != "image prune -af --filter label=m2test.release" {
 			t.Errorf("housekeeping beyond our own images: docker %s", line)
 		}
 	}
-	if !strings.Contains(string(docker), "image prune -af --filter label=m2test.release --filter label!=m2test.release=abc") {
-		t.Errorf("control: other releases' images not pruned: %q", docker)
+	worker, _ := os.ReadFile(d + "/worker")
+	if !strings.Contains(string(worker), "prune "+d+"/releases/abc\n") {
+		t.Errorf("control: images this release doesn't use not pruned: %q", worker)
 	}
 
 	// A restart that fails leaves the old release running, so the retry restarts too.
@@ -339,7 +340,8 @@ func TestDeployScriptLendsTheDockerHubTokenOnTmpfsOnly(t *testing.T) {
 		os.MkdirAll(d+sub, 0o755)
 	}
 	// prepare records the config it was given and where.
-	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nmkdir -p \"$7/$3\"\necho \"$DOCKER_CONFIG\" > "+d+"/seen\ncat \"$DOCKER_CONFIG/config.json\" >> "+d+"/seen\n"), 0o755)
+	// prune, in housekeeping, must not see it.
+	os.WriteFile(d+"/bin/m2test-worker", []byte("#!/bin/sh\nif [ \"$1\" = prune ]; then [ -z \"$DOCKER_CONFIG\" ] || echo \"$DOCKER_CONFIG\" >> "+d+"/prune-saw; exit; fi\nmkdir -p \"$7/$3\"\necho \"$DOCKER_CONFIG\" > "+d+"/seen\ncat \"$DOCKER_CONFIG/config.json\" >> "+d+"/seen\n"), 0o755)
 	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && shift\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
 	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\n[ -z \"$DOCKER_CONFIG\" ] || echo \"$DOCKER_CONFIG\" >> "+d+"/prune-saw\n"), 0o755)
 	for _, stub := range []string{"flock", "systemctl"} {
@@ -931,6 +933,34 @@ func TestTokenDeployBlamesTmpfsOnlyWhenTheWrapperSaysSo(t *testing.T) {
 	}
 }
 
+func TestDeployGivesUpOnAnUnpublishedImage(t *testing.T) {
+	p := testPool(t)
+	tarball := filepath.Join(t.TempDir(), "abc.tar.gz")
+	os.WriteFile(tarball, []byte("x"), 0o644)
+	for _, auth := range []string{"", "dckr_pat_abc"} {
+		p.DockerAuth = ""
+		if auth != "" {
+			p.DockerAuth, _ = DockerHubAuth("m2test", auth)
+		}
+		for code, want := range map[string]bool{"exit 98": true, "exit 1": false} {
+			scripts := 0
+			fakeSSH(t, func(args []string) string {
+				// The first asks for the tarball's checksum; the deploy is next.
+				if w := args[len(args)-1]; w == runScript || w == secretScript {
+					if scripts++; scripts == 2 {
+						return code
+					}
+				}
+				return ""
+			})
+			err := p.Deploy(context.Background(), "lab1", lab(), "abc", tarball)
+			if err == nil || errors.Is(err, ErrPermanent) != want {
+				t.Errorf("token %v, %s: %v", auth != "", code, err)
+			}
+		}
+	}
+}
+
 func TestScriptsCleanUpWhenTheSessionIsHungUp(t *testing.T) {
 	runtime := t.TempDir()
 	cmd := exec.Command("sh", "-c", runScript)
@@ -995,8 +1025,8 @@ func TestDeployUntilDoneStopsOnAnUnfitHost(t *testing.T) {
 }
 
 func TestDeployPrunesByTheHarnessLabel(t *testing.T) {
-	if !strings.Contains(deployScript("/d", "h", ""), "label!="+images.ReleaseLabel+"=$H") {
-		t.Error("prune filter doesn't match images.ReleaseLabel")
+	if !strings.Contains(deployScript("/d", "h", ""), "--filter label="+images.ContextLabel+"\n") {
+		t.Error("prune filter doesn't match images.ContextLabel")
 	}
 }
 

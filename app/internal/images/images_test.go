@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -36,14 +37,8 @@ func TestPlan_RealComposeTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"mariadb:11.4", "opensearchproject/opensearch:2.19.5", "valkey/valkey:8-alpine", "rabbitmq:4.1-alpine",
-		"php:8.4-fpm-alpine", "php:8.3-fpm-alpine", "composer/composer:2.2.26-bin", "composer/composer:2.9.8-bin",
-		"nginx:1.28-alpine", "httpd:2.4-alpine", "varnish:7.7",
-	} {
-		if !slices.Contains(refs, want) {
-			t.Errorf("refs lack %s: %v", want, refs)
-		}
+	if want := []string{"mariadb:11.4", "opensearchproject/opensearch:2.19.5", "rabbitmq:4.1-alpine", "valkey/valkey:8-alpine"}; !reflect.DeepEqual(refs, want) {
+		t.Errorf("refs %v, want only the services: harness bases come from the lock", refs)
 	}
 	for _, r := range refs {
 		if strings.HasPrefix(r, "m2test/") || r == "composer-lts" || strings.Contains(r, "$") {
@@ -59,12 +54,18 @@ func TestPlan_RealComposeTree(t *testing.T) {
 			t.Errorf("harness lacks %s: %v", want, images)
 		}
 	}
-	if !strings.HasPrefix(pw, "m2test/playwright:1.") || !slices.ContainsFunc(refs, func(r string) bool { return strings.HasPrefix(r, "mcr.microsoft.com/playwright:v1.") }) {
-		t.Errorf("playwright image %q, base missing from %v", pw, refs)
+	if !strings.HasPrefix(pw, "m2test/playwright:1.") {
+		t.Errorf("playwright image %q", pw)
 	}
+	lock, _ := ReadLock(repo)
 	php := harness[slices.IndexFunc(harness, func(h Harness) bool { return h.Image == "m2test/php:8.4" })]
-	if php.Context != "docker/php" || php.File != "docker/php/Dockerfile" || php.Args["PHP_VERSION"] != "8.4" {
+	if php.Context != "docker/php" || php.File != "docker/php/Dockerfile" || php.Args["PHP_VERSION"] != "8.4" ||
+		!validDigest(php.Bases["php:8.4-fpm-alpine"]) || php.Bases["php:8.4-fpm-alpine"] != lock["php:8.4-fpm-alpine"] || len(php.Bases) != 3 {
 		t.Errorf("php harness = %+v", php)
+	}
+	nginx := harness[slices.IndexFunc(harness, func(h Harness) bool { return h.Image == "m2test/webserver-nginx:1.28" })]
+	if d, ok := nginx.Bases["nginx:1.28-alpine"]; !ok || d != "" {
+		t.Errorf("unlocked base = %q %t, want listed with no digest", d, ok)
 	}
 }
 
@@ -185,6 +186,23 @@ func TestResolve_HeadWithToken(t *testing.T) {
 	}
 }
 
+func TestUnpublishedAsksTheRegistry(t *testing.T) {
+	srv, _, _ := fakeRegistry(t, true)
+	scheme = "http"
+	defer func() { scheme = "https" }()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if unpublished(context.Background(), host+"/library/mariadb:11.4") {
+		t.Error("a published tag counted as unpublished")
+	}
+	if !unpublished(context.Background(), host+"/library/mariadb:missing") {
+		t.Error("a missing tag counted as published")
+	}
+	srv.Close()
+	if unpublished(context.Background(), host+"/library/mariadb:missing") {
+		t.Error("an unreachable registry counted as unpublished")
+	}
+}
+
 func TestResolve_FallsBackToHashingTheBody(t *testing.T) {
 	srv, want, _ := fakeRegistry(t, false)
 	scheme = "http"
@@ -208,10 +226,18 @@ type fakeDocker struct {
 	calls   [][]string
 	images  map[string]string // ref -> RepoDigests JSON
 	pullErr error
+	list    string            // image ls output
+	pullAs  map[string]string // ref -> what inspect shows once pulled
 }
 
 func (f *fakeDocker) run(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, args)
+	if args[0] == "image" && args[1] == "ls" {
+		return []byte(f.list), nil
+	}
+	if args[0] == "image" && args[1] == "rm" {
+		return nil, nil
+	}
 	if args[0] == "image" {
 		ref := args[len(args)-1]
 		d, ok := f.images[ref]
@@ -221,7 +247,20 @@ func (f *fakeDocker) run(_ context.Context, args ...string) ([]byte, error) {
 		return []byte(d), nil
 	}
 	if args[0] == "pull" {
+		if f.pullErr == nil && f.pullAs[args[2]] != "" {
+			f.images[args[2]] = f.pullAs[args[2]]
+		}
 		return nil, f.pullErr
+	}
+	if args[0] == "build" && f.images != nil {
+		// Labelled as the build asked.
+		label := args[slices.Index(args, "--label")+1]
+		f.images[args[slices.Index(args, "-t")+1]] = strings.TrimPrefix(label, ContextLabel+"=") + "\n"
+	}
+	if args[0] == "tag" && f.images != nil {
+		if d, ok := f.images[args[1]]; ok {
+			f.images[args[2]] = d
+		}
 	}
 	return nil, nil
 }
@@ -232,23 +271,16 @@ func useDocker(t *testing.T, f *fakeDocker) {
 	t.Cleanup(func() { docker = old })
 }
 
-func TestPullAndBuild(t *testing.T) {
+func TestPull(t *testing.T) {
 	f := &fakeDocker{}
 	useDocker(t, f)
-	m := Manifest{
-		Pinned:  map[string]string{"mariadb:11.4": "sha256:aa", "docker.elastic.co/es/es:7": "sha256:bb"},
-		Harness: []Harness{{Image: "m2test/php:8.4", Context: "docker/php", File: "docker/php/Dockerfile", Args: map[string]string{"PHP_VERSION": "8.4"}}},
-	}
+	m := Manifest{Pinned: map[string]string{"mariadb:11.4": "sha256:aa", "docker.elastic.co/es/es:7": "sha256:bb"}}
 	if err := Pull(context.Background(), m); err != nil {
-		t.Fatal(err)
-	}
-	if err := Build(context.Background(), "/rel", "h1", m); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"image", "inspect", "--format", "{{.Id}}", "docker.elastic.co/es/es@sha256:bb"}, {"pull", "--quiet", "docker.elastic.co/es/es@sha256:bb"}, {"tag", "docker.elastic.co/es/es@sha256:bb", "docker.elastic.co/es/es:7"},
 		{"image", "inspect", "--format", "{{.Id}}", "mariadb@sha256:aa"}, {"pull", "--quiet", "mariadb@sha256:aa"}, {"tag", "mariadb@sha256:aa", "mariadb:11.4"},
-		{"build", "--pull=false", "--quiet", "--label", "m2test.release=h1", "-t", "m2test/php:8.4", "-f", "/rel/docker/php/Dockerfile", "--build-arg", "PHP_VERSION=8.4", "/rel/docker/php"},
 	}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls:\n%v\nwant:\n%v", f.calls, want)
@@ -288,21 +320,328 @@ func TestPullFailsWhenInspectFailsForAnotherReason(t *testing.T) {
 	}
 }
 
+func phpRelease(t *testing.T) (string, Harness) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "docker/php/conf"), 0o755)
+	os.WriteFile(filepath.Join(dir, "docker/php/Dockerfile"), []byte("ARG PHP_VERSION\nFROM php:${PHP_VERSION}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "docker/php/custom.ini"), []byte("memory_limit=2G\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "docker/php/conf/a.conf"), []byte("a\n"), 0o644)
+	return dir, Harness{Image: "m2test/php:8.4", Context: "docker/php", File: "docker/php/Dockerfile", Args: map[string]string{"PHP_VERSION": "8.4"},
+		Bases: map[string]string{"php:8.4": "sha256:" + strings.Repeat("a", 64)}}
+}
+
+func mustHash(t *testing.T, dir string, h Harness) string {
+	t.Helper()
+	hash, err := ContextHash(dir, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
+}
+
+func TestContextHash_StableAcrossCopiesAndTimes(t *testing.T) {
+	dir, h := phpRelease(t)
+	want := mustHash(t, dir, h)
+	// Another checkout: files written in another order, other mtimes, and
+	// what a release leaves out.
+	other := t.TempDir()
+	for _, f := range []string{"docker/php/conf/a.conf", "docker/php/custom.ini", "docker/php/Dockerfile"} {
+		data, _ := os.ReadFile(filepath.Join(dir, f))
+		os.MkdirAll(filepath.Dir(filepath.Join(other, f)), 0o755)
+		os.WriteFile(filepath.Join(other, f), data, 0o644)
+		os.Chtimes(filepath.Join(other, f), time.Unix(1, 0), time.Unix(1, 0))
+	}
+	os.WriteFile(filepath.Join(other, "docker/php/.DS_Store"), []byte("x"), 0o644)
+	os.MkdirAll(filepath.Join(other, "docker/php/node_modules/x"), 0o755)
+	os.WriteFile(filepath.Join(other, "docker/php/node_modules/x/y"), []byte("x"), 0o644)
+	if got := mustHash(t, other, h); got != want {
+		t.Errorf("hash %s in another copy, want %s", got, want)
+	}
+	if len(want) != 16 {
+		t.Errorf("hash %q isn't 16 hex characters", want)
+	}
+}
+
+func TestContextHash_ChangesWithEveryInput(t *testing.T) {
+	base, h := phpRelease(t)
+	want := mustHash(t, base, h)
+	for name, change := range map[string]func(dir string, h *Harness){
+		"context file": func(dir string, _ *Harness) {
+			os.WriteFile(filepath.Join(dir, "docker/php/custom.ini"), []byte("memory_limit=4G\n"), 0o644)
+		},
+		"nested file": func(dir string, _ *Harness) {
+			os.WriteFile(filepath.Join(dir, "docker/php/conf/a.conf"), []byte("b\n"), 0o644)
+		},
+		"new file": func(dir string, _ *Harness) { os.WriteFile(filepath.Join(dir, "docker/php/new"), nil, 0o644) },
+		"renamed file": func(dir string, _ *Harness) {
+			os.Rename(filepath.Join(dir, "docker/php/conf/a.conf"), filepath.Join(dir, "docker/php/conf/b.conf"))
+		},
+		"exec bit": func(dir string, _ *Harness) { os.Chmod(filepath.Join(dir, "docker/php/custom.ini"), 0o755) },
+		"dockerfile": func(dir string, _ *Harness) {
+			os.WriteFile(filepath.Join(dir, "docker/php/Dockerfile"), []byte("FROM php\n"), 0o644)
+		},
+		"arg value": func(_ string, h *Harness) { h.Args = map[string]string{"PHP_VERSION": "8.3"} },
+		"arg added": func(_ string, h *Harness) { h.Args = map[string]string{"PHP_VERSION": "8.4", "X": ""} },
+		"base digest": func(_ string, h *Harness) {
+			h.Bases = map[string]string{"php:8.4": "sha256:" + strings.Repeat("b", 64)}
+		},
+		"base added": func(_ string, h *Harness) { h.Bases["alpine:3"] = "sha256:" + strings.Repeat("c", 64) },
+	} {
+		dir, h := phpRelease(t)
+		change(dir, &h)
+		if got := mustHash(t, dir, h); got == want {
+			t.Errorf("%s: hash unchanged", name)
+		}
+	}
+}
+
+func TestContextHash_RefusesAnUnlockedBase(t *testing.T) {
+	dir, h := phpRelease(t)
+	h.Bases["alpine:3"] = ""
+	if _, err := ContextHash(dir, h); err == nil || !strings.Contains(err.Error(), "alpine:3") || !strings.Contains(err.Error(), "images -lock") {
+		t.Errorf("ContextHash = %v, want the base and the fix", err)
+	}
+}
+
+func TestContextHash_CoversADockerfileOutsideTheContext(t *testing.T) {
+	dir, h := phpRelease(t)
+	os.MkdirAll(filepath.Join(dir, "docker/pw"), 0o755)
+	os.WriteFile(filepath.Join(dir, "docker/pw/Dockerfile"), []byte("FROM a\n"), 0o644)
+	h.File = "docker/pw/Dockerfile"
+	want := mustHash(t, dir, h)
+	os.WriteFile(filepath.Join(dir, "docker/pw/Dockerfile"), []byte("FROM b\n"), 0o644)
+	if mustHash(t, dir, h) == want {
+		t.Error("hash ignores a Dockerfile outside the context")
+	}
+}
+
+func TestRemoteRef(t *testing.T) {
+	for image, want := range map[string]string{
+		"m2test/php:8.4":               Registry + "php:8.4-abc",
+		"m2test/webserver-nginx:1.30":  Registry + "webserver-nginx:1.30-abc",
+		"m2test/playwright:1.60-0f0f0": Registry + "playwright:1.60-0f0f0-abc",
+		"php:8.4":                      "",
+		"m2test/php":                   "",
+		"m2test/a/b:1":                 "",
+		"ghcr.io/m2test/php:8.4":       "",
+	} {
+		got, err := RemoteRef(Harness{Image: image}, "abc")
+		if got != want || (err == nil) != (want != "") {
+			t.Errorf("RemoteRef(%s) = %q, %v; want %q", image, got, err, want)
+		}
+	}
+}
+
+func TestHarnesses_PullsAndTagsByDefault(t *testing.T) {
+	dir, h := phpRelease(t)
+	remote, _ := RemoteRef(h, mustHash(t, dir, h))
+	f := &fakeDocker{}
+	useDocker(t, f)
+	if err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"image", "inspect", "--format", labelFormat, remote}, {"pull", "--quiet", remote}, {"tag", remote, "m2test/php:8.4"}}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("calls:\n%v\nwant:\n%v", f.calls, want)
+	}
+}
+
+func TestHarnesses_MissingWithoutTheFlagNamesIt(t *testing.T) {
+	dir, h := phpRelease(t)
+	f := &fakeDocker{pullErr: errors.New(`failed to resolve reference "ghcr.io/x": not found`)}
+	useDocker(t, f)
+	missing := true
+	old := unpublished
+	unpublished = func(context.Context, string) bool { return missing }
+	t.Cleanup(func() { unpublished = old })
+	err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}})
+	if err == nil || !strings.Contains(err.Error(), "m2test/php:8.4") || !strings.Contains(err.Error(), "-build-images") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Harnesses = %v, want the image, the cause and the flag", err)
+	}
+	if !errors.Is(err, ErrUnpublished) {
+		t.Errorf("%v isn't ErrUnpublished", err)
+	}
+	missing = false
+	f.pullErr = errors.New("failed to register layer: permission denied")
+	if err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}}); err == nil || errors.Is(err, ErrUnpublished) {
+		t.Errorf("control: a pull failing with the tag published gave %v", err)
+	}
+	for _, c := range f.calls {
+		if c[0] == "build" || c[0] == "tag" {
+			t.Errorf("ran %v after the pull failed", c)
+		}
+	}
+}
+
+func TestHarnesses_BuildsWithTheFlag(t *testing.T) {
+	dir, h := phpRelease(t)
+	hash := mustHash(t, dir, h)
+	remote, _ := RemoteRef(h, hash)
+	f := &fakeDocker{}
+	useDocker(t, f)
+	if err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}, Build: true}); err != nil {
+		t.Fatal(err)
+	}
+	base := "php@sha256:" + strings.Repeat("a", 64)
+	want := [][]string{
+		{"image", "inspect", "--format", labelFormat, remote},
+		{"image", "inspect", "--format", "{{.Id}}", base}, {"pull", "--quiet", base}, {"tag", base, "php:8.4"},
+		{"build", "--pull=false", "--quiet", "--label", ContextLabel + "=" + hash, "--label", "org.opencontainers.image.source=" + Source, "-t", remote, "-f", filepath.Join(dir, "docker/php/Dockerfile"), "--build-arg", "PHP_VERSION=8.4", filepath.Join(dir, "docker/php")},
+		{"tag", remote, "m2test/php:8.4"},
+	}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("calls:\n%v\nwant:\n%v", f.calls, want)
+	}
+}
+
+func TestHarnesses_UsesTheTagAlreadyHere(t *testing.T) {
+	dir, h := phpRelease(t)
+	remote, _ := RemoteRef(h, mustHash(t, dir, h))
+	for _, build := range []bool{false, true} {
+		f := &fakeDocker{images: map[string]string{remote: mustHash(t, dir, h) + "\n"}, pullErr: errors.New("must not pull")}
+		useDocker(t, f)
+		if err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}, Build: build}); err != nil {
+			t.Fatal(err)
+		}
+		want := [][]string{{"image", "inspect", "--format", labelFormat, remote}, {"tag", remote, "m2test/php:8.4"}}
+		if !reflect.DeepEqual(f.calls, want) {
+			t.Errorf("build %t: calls %v, want %v", build, f.calls, want)
+		}
+	}
+}
+
+const labelFormat = `{{index .Config.Labels "` + ContextLabel + `"}}`
+
+func TestHarnesses_ReplacesACachedTagWithTheWrongLabel(t *testing.T) {
+	dir, h := phpRelease(t)
+	hash := mustHash(t, dir, h)
+	remote, _ := RemoteRef(h, hash)
+	for _, build := range []bool{false, true} {
+		f := &fakeDocker{images: map[string]string{remote: "0123456789abcdef\n"}, pullAs: map[string]string{remote: hash + "\n"}}
+		useDocker(t, f)
+		if err := Ready(context.Background(), dir, Manifest{Harness: []Harness{h}, Build: build}); err != nil {
+			t.Errorf("build %t: %v", build, err)
+		}
+		want := map[bool]string{false: "pull", true: "build"}[build]
+		i := slices.IndexFunc(f.calls, func(c []string) bool { return c[0] == want })
+		j := slices.IndexFunc(f.calls, func(c []string) bool { return c[0] == "tag" && c[1] == remote })
+		if i < 0 || j < i {
+			t.Errorf("build %t: cached wrong label not replaced by %s then tagged: %v", build, want, f.calls)
+		}
+	}
+}
+
+func TestHarnesses_InspectErrorIsFatal(t *testing.T) {
+	dir, h := phpRelease(t)
+	useDocker(t, &fakeDocker{})
+	docker = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "image" {
+			return nil, errors.New("Cannot connect to the Docker daemon")
+		}
+		t.Errorf("ran docker %v after inspect failed", args)
+		return nil, nil
+	}
+	if err := Harnesses(context.Background(), dir, Manifest{Harness: []Harness{h}, Build: true}); err == nil {
+		t.Error("Harnesses ignored an inspect error")
+	}
+}
+
 func TestMissing(t *testing.T) {
+	dir, h := phpRelease(t)
+	hash := mustHash(t, dir, h)
+	varnish, old := h, h
+	varnish.Image, old.Image = "m2test/varnish:7.7", "m2test/old:1"
 	m := Manifest{
 		Pinned:  map[string]string{"mariadb:11.4": "sha256:aa", "redis:7": "sha256:cc", "nginx:1": "sha256:dd"},
-		Harness: []Harness{{Image: "m2test/php:8.4"}, {Image: "m2test/varnish:7.7"}, {Image: "m2test/old:1"}},
+		Harness: []Harness{h, varnish, old},
 	}
 	useDocker(t, &fakeDocker{images: map[string]string{
 		"mariadb:11.4":   `["mariadb@sha256:aa"]`,
 		"redis:7":        `["redis@sha256:zz"]`,
-		"m2test/php:8.4": "h1\n",
-		"m2test/old:1":   "h0\n",
+		"m2test/php:8.4": hash + "\n",
+		"m2test/old:1":   "0123456789abcdef\n",
 	}})
-	got, err := Missing(context.Background(), "h1", m)
-	want := []string{"nginx:1", "redis:7 (other digest)", "m2test/varnish:7.7", "m2test/old:1 (other release)"}
+	got, err := Missing(context.Background(), dir, m)
+	want := []string{"nginx:1", "redis:7 (other digest)", "m2test/varnish:7.7", "m2test/old:1 (other build)"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("Missing = %v %v, want %v", got, err, want)
+	}
+}
+
+func TestReady_OnlyWorksWhenSomethingIsMissing(t *testing.T) {
+	dir, h := phpRelease(t)
+	hash := mustHash(t, dir, h)
+	remote, _ := RemoteRef(h, hash)
+	m := Manifest{Pinned: map[string]string{"mariadb:11.4": "sha256:aa"}, Harness: []Harness{h}}
+	f := &fakeDocker{images: map[string]string{"mariadb:11.4": `["mariadb@sha256:aa"]`, "m2test/php:8.4": hash + "\n"}}
+	useDocker(t, f)
+	if err := Ready(context.Background(), dir, m); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if c[0] != "image" {
+			t.Errorf("all present, but ran %v", c)
+		}
+	}
+	// Built from other files: the tag now names another image.
+	f = &fakeDocker{images: map[string]string{"mariadb:11.4": `["mariadb@sha256:aa"]`, "m2test/php:8.4": "0123456789abcdef\n"}, pullAs: map[string]string{remote: hash + "\n"}}
+	useDocker(t, f)
+	if err := Ready(context.Background(), dir, m); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(f.calls, func(c []string) bool { return c[0] == "pull" && c[2] == remote }) {
+		t.Errorf("an image from other build files wasn't replaced: %v", f.calls)
+	}
+}
+
+func TestReady_DistrustsAPulledImageWithTheWrongLabel(t *testing.T) {
+	dir, h := phpRelease(t)
+	remote, _ := RemoteRef(h, mustHash(t, dir, h))
+	for label, ok := range map[string]bool{mustHash(t, dir, h) + "\n": true, "0123456789abcdef\n": false, "\n": false} {
+		useDocker(t, &fakeDocker{images: map[string]string{}, pullAs: map[string]string{remote: label}})
+		err := Ready(context.Background(), dir, Manifest{Harness: []Harness{h}})
+		if (err == nil) != ok {
+			t.Errorf("pulled label %q: Ready = %v", label, err)
+		}
+	}
+}
+
+func TestFreeze_KeepsToTheImagesASweepStartedWith(t *testing.T) {
+	dir, h := phpRelease(t)
+	hash := mustHash(t, dir, h)
+	m, err := Freeze(dir, Manifest{Harness: []Harness{h}})
+	if err != nil || m.Harness[0].Hash != hash {
+		t.Fatalf("Freeze = %+v %v", m, err)
+	}
+	os.WriteFile(filepath.Join(dir, "docker/php/custom.ini"), []byte("changed\n"), 0o644)
+	remote, _ := RemoteRef(h, hash)
+	useDocker(t, &fakeDocker{images: map[string]string{}, pullAs: map[string]string{remote: hash + "\n"}})
+	if err := Ready(context.Background(), dir, m); err != nil {
+		t.Errorf("pulling the image the sweep started with: %v", err)
+	}
+	m.Build = true
+	useDocker(t, &fakeDocker{})
+	if err := Harnesses(context.Background(), dir, m); err == nil || !strings.Contains(err.Error(), "changed since the sweep started") {
+		t.Errorf("built changed files under the old hash: %v", err)
+	}
+}
+
+func TestPrune_KeepsOnlyWhatTheReleaseUses(t *testing.T) {
+	dir, h := phpRelease(t)
+	remote, _ := RemoteRef(h, mustHash(t, dir, h))
+	f := &fakeDocker{list: strings.Join([]string{"m2test/php:8.4", remote, Registry + "php:8.4-0123456789abcdef", "m2test/php:8.3", "<none>:<none>", "mine/php:dev"}, "\n")}
+	useDocker(t, f)
+	if err := Prune(context.Background(), dir, Manifest{Harness: []Harness{h}}); err != nil {
+		t.Fatal(err)
+	}
+	var removed []string
+	for _, c := range f.calls {
+		if c[0] == "image" && c[1] == "rm" {
+			removed = append(removed, c[2])
+		}
+	}
+	if want := []string{Registry + "php:8.4-0123456789abcdef", "m2test/php:8.3"}; !reflect.DeepEqual(removed, want) {
+		t.Errorf("removed %v, want %v", removed, want)
 	}
 }
 
@@ -335,6 +674,8 @@ func TestLoad_RefusesUnsafeManifests(t *testing.T) {
 		"option image":  `{"harness":[{"image":"-q","context":"docker/php","file":"docker/php/Dockerfile"}]}`,
 		"option arg":    `{"harness":[{"image":"m2test/php:8.4","context":"docker/php","file":"docker/php/Dockerfile","args":{"X=1 --network":"host"}}]}`,
 		"stray pw":      `{"playwright":"--privileged","harness":[` + h + `]}`,
+		"bad base":      `{"harness":[{"image":"m2test/php:8.4","context":"docker/php","file":"docker/php/Dockerfile","bases":{"--x":"` + d + `"}}]}`,
+		"bad base hash": `{"harness":[{"image":"m2test/php:8.4","context":"docker/php","file":"docker/php/Dockerfile","bases":{"php:8.4":"sha256:zz"}}]}`,
 		"control":       `{"pinned":{"mariadb:11.4":"` + d + `"},"harness":[` + h + `],"playwright":"m2test/php:8.4"}`,
 	} {
 		dir := t.TempDir()
@@ -343,28 +684,5 @@ func TestLoad_RefusesUnsafeManifests(t *testing.T) {
 		if (err == nil) != (name == "control") {
 			t.Errorf("%s: Load = %v", name, err)
 		}
-	}
-}
-
-func TestReady_OnlyWorksWhenSomethingIsMissing(t *testing.T) {
-	m := Manifest{Pinned: map[string]string{"mariadb:11.4": "sha256:aa"}, Harness: []Harness{{Image: "m2test/php:8.4", Context: "c", File: "c/Dockerfile"}}}
-	present := map[string]string{"mariadb:11.4": `["mariadb@sha256:aa"]`, "m2test/php:8.4": "h1\n"}
-	f := &fakeDocker{images: present}
-	useDocker(t, f)
-	if err := Ready(context.Background(), "/rel", "h1", m); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range f.calls {
-		if c[0] == "pull" || c[0] == "build" {
-			t.Errorf("all present, but ran %v", c)
-		}
-	}
-	f = &fakeDocker{images: map[string]string{"mariadb:11.4": `["mariadb@sha256:aa"]`, "m2test/php:8.4": "h0\n"}}
-	useDocker(t, f)
-	if err := Ready(context.Background(), "/rel", "h1", m); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(f.calls, func(c []string) bool { return c[0] == "build" }) {
-		t.Errorf("a harness image from another release wasn't rebuilt: %v", f.calls)
 	}
 }

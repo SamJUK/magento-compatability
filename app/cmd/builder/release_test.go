@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func releaseRig(t *testing.T) (*queue.Ledger, *selection, []matrix.Combination, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lg.Close() })
-	c := matrix.Combination{Product: "magento", Version: "2.4.8", PHP: "8.4", WebserverType: "nginx", WebserverVersion: "1.28",
+	c := matrix.Combination{Product: "magento", Version: "2.4.8", PHP: "8.4", WebserverType: "nginx", WebserverVersion: "1.30",
 		DBType: "mariadb", DBVersion: "11.4", SearchType: "opensearch", SearchVersion: "2.19.5",
 		CacheType: "valkey", CacheVersion: "8", QueueType: "rabbitmq", QueueVersion: "4.1", Varnish: "none"}
 	return lg, sel, []matrix.Combination{c}, t.TempDir()
@@ -211,5 +212,120 @@ func TestSweepRelease_AMatrixChangeTheReleaseDidntPinNeedsFresh(t *testing.T) {
 	}
 	if again, err := sweepRelease(lg, sel, combos, false, true, dir); err != nil || again != first {
 		t.Errorf("control: %q %v", again, err)
+	}
+}
+
+func TestSweepRelease_CarriesBuildImagesToWorkers(t *testing.T) {
+	lg, sel, combos, dir := releaseRig(t)
+	pulls, _ := sweepRelease(lg, sel, combos, false, true, dir)
+	start(t, lg, sel, combos, pulls)
+	sel.buildImages = true
+	if _, err := sweepRelease(lg, sel, combos, false, true, dir); err == nil || !strings.Contains(err.Error(), "-fresh") {
+		t.Errorf("resumed a pulling release with -build-images: %v", err)
+	}
+	builds, err := sweepRelease(lg, sel, combos, true, true, dir)
+	if err != nil || builds == pulls {
+		t.Fatalf("fresh = %q %v, want a new release", builds, err)
+	}
+	if m, _ := images.Load(filepath.Join(dir, builds)); !m.Build {
+		t.Error("release doesn't tell workers to build")
+	}
+	if m, _ := images.Load(filepath.Join(dir, pulls)); m.Build {
+		t.Error("control: release without the flag builds")
+	}
+}
+
+// CI tags images from the checkout; workers look for them from a release.
+func TestGhcrImages_NameWhatAReleaseLooksFor(t *testing.T) {
+	lg, sel, _, dir := releaseRig(t)
+	mx, err := matrix.Load(filepath.Join(sel.repoRoot, "matrix.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	combos := matrix.BuildCombinations(mx, matrix.Filter{})
+	h, err := sweepRelease(lg, sel, combos, false, true, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join(dir, h)
+	m, _ := images.Load(rel)
+	_, list, err := ghcrImages(sel.repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushed := map[string]bool{}
+	for _, g := range list {
+		pushed[g.Remote] = true
+	}
+	if len(m.Harness) < 3 {
+		t.Fatalf("release has %d harness images", len(m.Harness))
+	}
+	for _, hr := range m.Harness {
+		hash, err := images.ContextHash(rel, hr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		remote, _ := images.RemoteRef(hr, hash)
+		if !pushed[remote] {
+			t.Errorf("CI doesn't push %s, which the release needs", remote)
+		}
+	}
+}
+
+func TestCheckoutImages(t *testing.T) {
+	_, sel, combos, _ := releaseRig(t)
+	sel.buildImages = true
+	m, ok, err := sel.checkoutImages(combos)
+	if err != nil || !ok || !m.Build || len(m.Pinned) != 0 || m.Playwright != "" {
+		t.Fatalf("checkoutImages = %+v %t %v", m, ok, err)
+	}
+	var names []string
+	for _, h := range m.Harness {
+		names = append(names, h.Image)
+		if h.Hash == "" {
+			t.Errorf("%s not frozen: a sweep would follow edits to docker/", h.Image)
+		}
+	}
+	if want := []string{"m2test/php:8.4", "m2test/webserver-nginx:1.30"}; strings.Join(names, " ") != strings.Join(want, " ") {
+		t.Errorf("harness %v, want %v", names, want)
+	}
+	sel.composeDir = t.TempDir()
+	if _, ok, err := sel.checkoutImages(combos); ok || err != nil {
+		t.Errorf("readies images for a compose dir of your own: %t %v", ok, err)
+	}
+}
+
+func TestLockBases_PinsOnlyWhatIsMissing(t *testing.T) {
+	_, sel, _, _ := releaseRig(t)
+	root := t.TempDir()
+	os.CopyFS(filepath.Join(root, "docker"), os.DirFS(filepath.Join(sel.repoRoot, "docker")))
+	mx, _ := os.ReadFile(filepath.Join(sel.repoRoot, "matrix.yml"))
+	os.WriteFile(filepath.Join(root, "matrix.yml"), mx, 0o644)
+	lock, _ := images.ReadLock(root)
+	kept := lock["php:8.4-fpm-alpine"]
+	delete(lock, "varnish:7.7")
+	data, _ := json.Marshal(lock)
+	os.WriteFile(filepath.Join(root, images.LockFile), data, 0o644)
+	if _, _, err := ghcrImages(root); err == nil || !strings.Contains(err.Error(), "varnish:7.7") {
+		t.Fatalf("listed images with an unlocked base: %v", err)
+	}
+	n, err := lockBases(context.Background(), root)
+	if err != nil || n != 1 {
+		t.Fatalf("lockBases = %d %v, want only varnish:7.7", n, err)
+	}
+	lock, _ = images.ReadLock(root)
+	if lock["php:8.4-fpm-alpine"] != kept || lock["varnish:7.7"] == "" {
+		t.Errorf("lock after: php %s, varnish %s", lock["php:8.4-fpm-alpine"], lock["varnish:7.7"])
+	}
+	if _, _, err := ghcrImages(root); err != nil {
+		t.Errorf("control: still unlocked: %v", err)
+	}
+}
+
+func TestSweepRelease_RefusesAnUnlockedBaseUpFront(t *testing.T) {
+	lg, sel, combos, dir := releaseRig(t)
+	combos[0].WebserverVersion = "1.28" // not in matrix.yml, so not locked
+	if _, err := sweepRelease(lg, sel, combos, false, true, dir); err == nil || !strings.Contains(err.Error(), "images -lock") {
+		t.Errorf("sweepRelease = %v, want the lock hint before any worker sees it", err)
 	}
 }

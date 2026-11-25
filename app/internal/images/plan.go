@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: OSL-3.0
 
 // Package images pins the upstream images a sweep runs on to digests, and
-// builds the harness images (m2test/*) on top of them.
+// readies the harness images (m2test/*) built on top of them.
 package images
 
 import (
@@ -11,7 +11,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,14 +35,18 @@ type Manifest struct {
 	Pinned     map[string]string `json:"pinned"` // upstream ref -> manifest list digest
 	Harness    []Harness         `json:"harness"`
 	Playwright string            `json:"playwright,omitempty"` // harness image the tests run in
+	Build      bool              `json:"build,omitempty"`      // build harness images here rather than pull them
 }
 
-// Harness is an image built on each worker from a Dockerfile in the release.
+// Harness is an image built from a Dockerfile in the release: by CI, which
+// pushes it to GHCR, or here with -build-images.
 type Harness struct {
 	Image   string            `json:"image"`
 	Context string            `json:"context"` // release-relative
 	File    string            `json:"file"`    // release-relative
 	Args    map[string]string `json:"args,omitempty"`
+	Bases   map[string]string `json:"bases,omitempty"` // FROM ref -> digest, from LockFile
+	Hash    string            `json:"-"`               // set by Freeze
 }
 
 // Load reads a release's manifest, refusing refs that could pass as docker
@@ -54,9 +60,11 @@ func Load(releaseDir string) (Manifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return m, err
 	}
-	for ref, d := range m.Pinned {
-		if _, err := ParseRef(ref); err != nil || strings.HasPrefix(ref, "-") || !validDigest(d) {
-			return m, fmt.Errorf("%s: bad pin %q -> %q", File, ref, d)
+	for _, pins := range append([]map[string]string{m.Pinned}, basesOf(m)...) {
+		for ref, d := range pins {
+			if _, err := ParseRef(ref); err != nil || strings.HasPrefix(ref, "-") || !validDigest(d) {
+				return m, fmt.Errorf("%s: bad pin %q -> %q", File, ref, d)
+			}
 		}
 	}
 	if m.Playwright != "" && !slices.ContainsFunc(m.Harness, func(h Harness) bool { return h.Image == m.Playwright }) {
@@ -76,6 +84,33 @@ func Load(releaseDir string) (Manifest, error) {
 	return m, nil
 }
 
+func basesOf(m Manifest) []map[string]string {
+	var out []map[string]string
+	for _, h := range m.Harness {
+		out = append(out, h.Bases)
+	}
+	return out
+}
+
+// LockFile pins each harness image's FROM bases to a digest, so its hash names one image wherever built.
+// `builder images -lock` adds missing entries.
+const LockFile = "docker/bases.lock.json"
+
+func ReadLock(dir string) (map[string]string, error) {
+	lock := map[string]string{}
+	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(LockFile)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return lock, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &lock)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", LockFile, err)
+	}
+	return lock, nil
+}
+
 type composeFile struct {
 	Services map[string]struct {
 		Image string `yaml:"image"`
@@ -87,8 +122,7 @@ type composeFile struct {
 	} `yaml:"services"`
 }
 
-// Plan lists the upstream refs to pin and the harness images to build for
-// combos, reading the compose files and Dockerfiles under releaseDir.
+// Plan lists the upstream refs to pin and the harness images to build for combos under releaseDir.
 func Plan(releaseDir string, combos []matrix.Combination, playwright bool) (refs []string, harness []Harness, pw string, err error) {
 	composeDir := filepath.Join(releaseDir, "docker", "compose")
 	upstream := map[string]bool{}
@@ -144,13 +178,19 @@ func Plan(releaseDir string, combos []matrix.Combination, playwright bool) (refs
 		}
 		built[h.Image], pw = h, h.Image
 	}
+	lock, err := ReadLock(releaseDir)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	for _, h := range built {
 		bases, err := fromRefs(filepath.Join(releaseDir, h.File), h.Args)
 		if err != nil {
 			return nil, nil, "", err
 		}
+		// Left empty when unlocked: ContextHash says how to fix it.
+		h.Bases = map[string]string{}
 		for _, b := range bases {
-			upstream[b] = true
+			h.Bases[b] = lock[b]
 		}
 		harness = append(harness, h)
 	}

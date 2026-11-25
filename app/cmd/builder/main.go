@@ -12,6 +12,7 @@
 //	test    Run compatibility test combinations
 //	queue   Work through a sweep unattended, resumably
 //	report  Aggregate results into MD / CSV / JSON artefacts
+//	images  List the harness images CI pushes to GHCR, as JSON
 //	help    Show this help
 package main
 
@@ -23,12 +24,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
+	"github.com/samjuk/magento-compatability/internal/images"
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/report"
@@ -51,6 +55,8 @@ func main() {
 		runReport(os.Args[2:])
 	case "worker":
 		runWorker(os.Args[2:])
+	case "images":
+		runImages(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -70,6 +76,7 @@ Subcommands:
   test    Run compatibility test combinations
   queue   Work through a sweep unattended, resumably
   report  Aggregate results into MD / CSV / JSON artefacts
+  images  List the harness images CI pushes to GHCR, as JSON
   help    Show this help
 
 Run 'magento-compatibility-builder test --help' or
@@ -183,6 +190,21 @@ Flags:`)
 	cfg := sel.runConfig()
 	cfg.Force = *flagForce || *flagRetrySetupFailures
 
+	// Only what will run needs images; a rerun with every result in needs none.
+	done := func(c matrix.Combination) bool {
+		_, err := os.Stat(filepath.Join(resultsDir, c.Product, c.ID()+".json"))
+		return !cfg.Force && err == nil
+	}
+	toRun := slices.DeleteFunc(slices.Clone(combos), done)
+	if m, ok, err := sel.checkoutImages(toRun); err != nil {
+		fatalf("%v", err)
+	} else if ok {
+		logStep("Readying the harness images")
+		if err := images.Ready(ctx, sel.repoRoot, m); err != nil {
+			fatalf("%v", err)
+		}
+	}
+
 	// Auto-disable TUI in CI environments.
 	noTUI := *flagNoTUI || os.Getenv("CI") != ""
 
@@ -201,8 +223,15 @@ Flags:`)
 	}
 	defer lg.Close()
 
+	var leased atomic.Int32
 	for _, c := range combos {
 		g.Go(func() error {
+			// Before the lease, which would fence off a queue's run of it.
+			// Not readied, or done since: either way it doesn't run.
+			if !slices.Contains(toRun, c) || done(c) {
+				prog.done(c.ID(), comboSkip, 0, "", nil)
+				return nil
+			}
 			if *flagIgnoreQueue {
 				// A remote worker's run of it is fenced off and aborted.
 				if err := lg.Override(resultsDir, c.ID()); err != nil {
@@ -215,6 +244,7 @@ Flags:`)
 				}
 				if !ok {
 					logWarn(fmt.Sprintf("%s: a queue is running it; skipped (-ignore-queue runs it anyway)", c.ID()))
+					leased.Add(1)
 					prog.done(c.ID(), comboSkip, 0, "", nil)
 					return nil
 				}
@@ -254,9 +284,18 @@ Flags:`)
 	cancelTicker()
 	prog.redraw() // final repaint before any trailing log lines
 
+	allPassed := !sel.baseline || printBaselineSummary(prog.baselines)
+	n := leased.Load()
+	if n > 0 {
+		logError(fmt.Sprintf("%d combinations not run: a queue is running them", n))
+	}
+	// A cancelled run writes no result, so nothing above counts it.
+	interrupted := ctx.Err() != nil
+	if interrupted {
+		logError("Interrupted: runs in progress were abandoned")
+	}
 	if sel.baseline {
-		allPassed := printBaselineSummary(prog.baselines)
-		if !allPassed || waitErr != nil {
+		if !allPassed || waitErr != nil || n > 0 || interrupted {
 			os.Exit(1)
 		}
 		return
@@ -264,6 +303,9 @@ Flags:`)
 
 	if waitErr != nil {
 		logError(fmt.Sprintf("One or more combinations failed: %v", waitErr))
+		os.Exit(1)
+	}
+	if n > 0 || interrupted {
 		os.Exit(1)
 	}
 

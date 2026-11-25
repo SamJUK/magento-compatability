@@ -105,20 +105,25 @@ func (p *Pool) Deploy(ctx context.Context, name string, w *Worker, hash, tarball
 	}
 	if p.DockerAuth == "" {
 		_, err = p.Script(ctx, name, deployScript(w.Dir, hash, ""))
-		return err
+	} else {
+		// The token must never touch the worker's disk.
+		_, err = p.script(ctx, name, deployScript(w.Dir, hash, p.DockerAuth), secretScript)
 	}
-	// The token must never touch the worker's disk.
-	_, err = p.script(ctx, name, deployScript(w.Dir, hash, p.DockerAuth), secretScript)
 	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
 		switch exit.ExitCode() {
 		case 96:
 			return fmt.Errorf("%w: the Docker Hub token needs findmnt to check XDG_RUNTIME_DIR: %w", ErrUnfit, err)
 		case 97:
 			return fmt.Errorf("%w: the Docker Hub token needs a tmpfs XDG_RUNTIME_DIR: %w", ErrUnfit, err)
+		case ExitUnpublished:
+			return fmt.Errorf("%w: GHCR has no harness image for this release; -build-images builds them on each worker: %w", ErrPermanent, err)
 		}
 	}
 	return err
 }
+
+// ExitUnpublished is m2test-worker prepare's exit code when a harness image isn't on GHCR.
+const ExitUnpublished = 98
 
 func deployScript(d, hash, auth string) string {
 	login := ""
@@ -163,10 +168,12 @@ else
   systemctl --user restart m2test-worker 9>&-
   echo "$H" > "$D/running"
 fi
-# Housekeeping, of our own images only: other releases' harness images and
-# superseded builds. Images in use stay.
-{ docker image prune -af --filter label=m2test.release --filter "label!=m2test.release=$H"
-  docker image prune -f --filter label=m2test.release; } >/dev/null 2>&1 || true
+# Housekeeping, of our own images only: harness images this release
+# doesn't use, superseded builds, and those labelled by release before
+# harness images came from GHCR. Images in use stay.
+{ "$D/bin/m2test-worker" prune "$D/releases/$H"
+  docker image prune -f --filter label=m2test.context
+  docker image prune -af --filter label=m2test.release; } >/dev/null 2>&1 || true
 `, d, hash, login)
 }
 

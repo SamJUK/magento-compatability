@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -108,7 +109,7 @@ func digest(ctx context.Context, c *http.Client, r Ref) (string, error) {
 			}
 			continue
 		case resp.StatusCode != http.StatusOK:
-			return "", fmt.Errorf("%s: %s", u, resp.Status)
+			return "", &statusError{u, resp.StatusCode, resp.Status}
 		case method == http.MethodHead:
 			if d := resp.Header.Get("Docker-Content-Digest"); validDigest(d) {
 				return d, nil
@@ -120,6 +121,26 @@ func digest(ctx context.Context, c *http.Client, r Ref) (string, error) {
 		return "sha256:" + hex.EncodeToString(sum[:]), nil
 	}
 	return "", fmt.Errorf("%s: no digest", u)
+}
+
+type statusError struct {
+	url    string
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string { return e.url + ": " + e.status }
+
+// unpublished asks the registry, rather than reading a failed pull's
+// error: no such tag, or a package it won't show anonymously.
+var unpublished = func(ctx context.Context, ref string) bool {
+	r, err := ParseRef(ref)
+	if err != nil {
+		return false
+	}
+	_, err = digest(ctx, &http.Client{Timeout: 30 * time.Second}, r)
+	var se *statusError
+	return errors.As(err, &se) && (se.code == http.StatusUnauthorized || se.code == http.StatusForbidden || se.code == http.StatusNotFound)
 }
 
 func validDigest(d string) bool {
@@ -162,7 +183,7 @@ func anonToken(ctx context.Context, c *http.Client, challenge string) (string, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token: %s", resp.Status)
+		return "", &statusError{"token", resp.StatusCode, resp.Status}
 	}
 	var t struct {
 		Token       string `json:"token"`

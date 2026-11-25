@@ -8,6 +8,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -30,6 +31,10 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "prepare" {
 		prepare(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "prune" {
+		prune(os.Args[2])
 		return
 	}
 	var (
@@ -88,7 +93,7 @@ func main() {
 		// A wedged daemon would otherwise hold every claimed slot.
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		return images.Missing(ctx, hash, manifest)
+		return images.Missing(ctx, dir, manifest)
 	}
 	lastReason := ""
 	checkImages := func() {
@@ -164,10 +169,24 @@ func prepare(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	dir, err := prepareRelease(ctx, *tarball, *releases, *want)
+	if errors.Is(err, images.ErrUnpublished) {
+		log.Print(err)
+		os.Exit(pool.ExitUnpublished)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(dir)
+}
+
+func prune(dir string) {
+	m, err := images.Load(dir)
+	if err == nil {
+		err = images.Prune(context.Background(), dir, m)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func prepareRelease(ctx context.Context, tarball, releases, want string) (string, error) {
@@ -189,7 +208,7 @@ func prepareRelease(ctx context.Context, tarball, releases, want string) (string
 	if err != nil {
 		return "", err
 	}
-	return dir, images.Ready(ctx, dir, hash, m)
+	return dir, images.Ready(ctx, dir, m)
 }
 
 func stateHome() string {

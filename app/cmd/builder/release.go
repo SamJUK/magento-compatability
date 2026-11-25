@@ -38,6 +38,11 @@ func sweepRelease(lg *queue.Ledger, sel *selection, combos []matrix.Combination,
 		if err := coversCombos(filepath.Join(dir, prev.Release), combos); err != nil {
 			return "", err
 		}
+		if m, err := images.Load(filepath.Join(dir, prev.Release)); err != nil {
+			return "", err
+		} else if sel.buildImages && !m.Build {
+			return "", errors.New("this sweep's release pulls its harness images; -fresh makes one that builds them")
+		}
 		if workers {
 			return prev.Release, release.Pack(filepath.Join(dir, prev.Release))
 		}
@@ -58,6 +63,10 @@ func sweepRelease(lg *queue.Ledger, sel *selection, combos []matrix.Combination,
 	defer os.Remove(plainDir + ".tar.gz")
 	defer os.RemoveAll(plainDir)
 	refs, harness, pw, err := images.Plan(plainDir, combos, sel.playwright)
+	if err == nil {
+		// An unlocked base fails here, not on every worker.
+		_, err = images.Freeze(plainDir, images.Manifest{Harness: harness})
+	}
 	if err != nil {
 		return "", err
 	}
@@ -67,7 +76,7 @@ func sweepRelease(lg *queue.Ledger, sel *selection, combos []matrix.Combination,
 	if err != nil {
 		return "", err
 	}
-	data, err := json.MarshalIndent(images.Manifest{Pinned: pinned, Harness: harness, Playwright: pw}, "", "  ")
+	data, err := json.MarshalIndent(images.Manifest{Pinned: pinned, Harness: harness, Playwright: pw, Build: sel.buildImages}, "", "  ")
 	if err != nil {
 		return "", err
 	}

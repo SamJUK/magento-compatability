@@ -1,0 +1,16 @@
+{
+  "composer/composer:2.2.26-bin": "sha256:696cdecaa8cda80a41391f59e69aaace4ba796267bb6fa1f269d4638e3c1973e",
+  "composer/composer:2.9.8-bin": "sha256:2cde59fd0009d0b4f0fa8532a189290352d9fe3d80fbcc3a887ac69b9eeeef27",
+  "httpd:2.4-alpine": "sha256:32bd0639bcc4917ef1fd9363a1d9dd2dd9c498565118b062a10d51e43a5c3a24",
+  "mcr.microsoft.com/playwright:v1.60.0-noble": "sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948",
+  "nginx:1.30-alpine": "sha256:8eb04fe3b385090e9aa02961f77398ad09b6bf33ab07f6669a5bb7acce22c0d3",
+  "php:7.4-fpm-alpine": "sha256:0aeb129a60daff2874c5c70fcd9d88cdf3015b4fb4cc7c3f1a32a21e84631036",
+  "php:8.1-fpm-alpine": "sha256:a84e0422af72d9a60a8f73756b622bcd37c5a8f85609e43e0a6e16c0a1a7820e",
+  "php:8.2-fpm-alpine": "sha256:913fab09564477f2d4fee22e6cdb7d9f88a93c6d201f7d728d347489a70581d6",
+  "php:8.3-fpm-alpine": "sha256:1180fcd9c96923142c08b3bb6b7fac865dbf3c802fc9f42982e5323aedee97a8",
+  "php:8.4-fpm-alpine": "sha256:c0e41e0c856bf97b2e749f40a804031ce938d0d496c4c7d91ad416d993172826",
+  "php:8.5-fpm-alpine": "sha256:51414d5291758fe27f58a64c7e8a078465d32cc7dcef7bda803f5b36019802e0",
+  "varnish:6.0": "sha256:412bf6f34c06301334c194a41a3560c520f8e71604b3cf69bb8db25e8ab232b7",
+  "varnish:7.7": "sha256:3f3df388d03695f4ff1efe75cc69a4311d8c5d44411cd99d2f0707056b056f29",
+  "varnish:8.0": "sha256:d5cb7840d6dcff465031e52276f2113675cc8edbea1cc8d7e6f8e6cfd0f522a3"
+}

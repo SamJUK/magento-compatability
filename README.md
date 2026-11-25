@@ -86,19 +86,19 @@ A remote worker serves one sweep at a time: a second sweep on this machine namin
 `worker remove` stops a worker's unit and forgets it and its host key; `worker list` shows them.
 `-slots 0` leaves every run to the workers.
 
-A sweep with `-workers` runs a release: a snapshot of `matrix.yml` and `docker/` with every upstream image pinned to the digest its tag had at the start, in `releases/` in the state directory.
+A sweep with `-workers` runs a release: a snapshot of `matrix.yml` and `docker/` with every upstream service image pinned to the digest its tag had at the start, in `releases/` in the state directory.
 Resuming the sweep runs the same release, even if the checkout or the upstream tags have moved since; `-fresh` takes a new one. A resume is refused if `matrix.yml` has since changed the settings of any of its combinations; adding or removing combinations makes it a different sweep.
 Local slots run the release too, on its pinned images and with Playwright in its container, so `-compose-dir` can't be used with `-workers` or when resuming a sweep that has a release.
 Readying those images retags this machine's upstream tags (`mariadb:11.4` and so on) to the pinned digests.
 
-Each worker unpacks the release tarball, refusing it unless it holds the release the queue asked for, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
+Each worker unpacks the release tarball, refusing it unless it holds the release the queue asked for, and readies its images: it pulls each pinned image by digest and the harness images from GHCR (see [Harness images](#harness-images)).
 The queue does this through `m2test-worker prepare -hash <hash> -tarball <file> -releases <dir>`, which works by hand too.
 With `DOCKERHUB_USERNAME` and a read-only `DOCKERHUB_TOKEN` set, the queue lends them to each worker's pulls, since anonymous Docker Hub limits are per IP.
 They go in a Docker config under the worker's `XDG_RUNTIME_DIR`, which must be tmpfs, and are removed when the deploy ends. A killed deploy leaves them there until a later deploy with the token (the config at once, the copy of the script after an hour) or a reboot.
 That config replaces `~/.docker` for the pull, so buildx must be installed system-wide (as `docker-buildx-plugin` is), not under `~/.docker/cli-plugins`, and the worker must use the default Docker socket rather than a context.
-After each deploy a worker removes its unused harness images from other releases; nothing else it holds is touched.
+After each deploy a worker removes the harness images its release doesn't use; nothing else it holds is touched.
 
-The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run. A worker also takes none while its disk is under 15GB free (`-min-free-gb`), and reports that to the queue as unhealthy.
+The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built from other files, takes none until `prepare` has run. A worker also takes none while its disk is under 15GB free (`-min-free-gb`), and reports that to the queue as unhealthy.
 A worker that reports three host failures in a row gets no work for 15 minutes.
 Workers run Playwright in a container on the stack's own network, against `http://varnish` or `http://webserver`, so they need no Node.
 A sweep started without `-workers` runs the checkout, so it can't take workers later without `-fresh`.
@@ -107,6 +107,22 @@ A worker keeps each finished run in its spool until the queue has answered for i
 A worker that goes quiet for five minutes (ten after the coordinator restarts) loses its runs to the next claim; its late uploads are refused.
 The queue checks every uploaded result against the combination it handed out and keeps any it refuses in `rejected/`.
 `test -ignore-queue` aborts a worker's run of the same combination and refuses its upload.
+
+### Harness images
+
+The images the stacks build from `docker/` (`m2test/php`, `m2test/webserver-*`, `m2test/varnish`, `m2test/playwright`) come from GHCR, for amd64 and arm64: `ghcr.io/samjuk/magento-compatability-<image>:<version>-<hash>`, where the hash covers the image's build context, Dockerfile, build args and base images.
+Those bases are pinned by digest in `docker/bases.lock.json`, and CI and `-build-images` both build on them through the same code, so a tag CI publishes names one image, since CI never overwrites one.
+A local `-build-images` copy shares that name, but the packages its Dockerfile installs without pinned versions can differ.
+A new version in `matrix.yml` needs its bases pinned: `cd app && go run ./cmd/builder images -lock -repo ..` adds what is missing, and deleting an entry first refreshes it.
+The `Harness images` workflow builds and pushes any that GHCR lacks when `docker/` or `matrix.yml` changes on master, or by hand; `builder images` lists them.
+Its first push creates the packages as private, so each needs setting to public once on GitHub, since pulls are anonymous.
+
+`test` and `queue` pull them and tag them as the compose files name them, and remote workers do the same.
+One missing from GHCR stops the run with its name; `-build-images` builds it here instead, under the same name, so later runs use that copy until the build files change.
+With `-workers`, the flag goes in the release, so every worker builds too, and a resume of that release builds without it.
+A sweep keeps to the images it started with, even if `docker/` changes under it.
+The hash covers every file in an image's build context, so a stray file under `docker/php` (say) gives a tag CI never pushed: remove it, or use `-build-images`.
+A `-compose-dir` of your own builds its own images as before.
 
 ### Cloud bursts
 

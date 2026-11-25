@@ -26,6 +26,8 @@ var Sources = []string{"matrix.yml", "docker"}
 
 var skipped = map[string]bool{"node_modules": true, "test-results": true, "playwright-report": true, ".DS_Store": true}
 
+func Skipped(name string) bool { return skipped[name] }
+
 // MaxSize caps an extracted release, so a bad tarball can't fill a disk.
 var MaxSize int64 = 64 << 20
 

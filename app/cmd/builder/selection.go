@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/samjuk/magento-compatability/internal/images"
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/runner"
@@ -25,6 +26,7 @@ type selection struct {
 	playwright  bool
 	sampleData  bool
 	noCacheSave bool
+	buildImages bool
 	maxLogBytes int64
 	deadline    time.Duration
 }
@@ -46,6 +48,7 @@ func addSelectionFlags(fs *flag.FlagSet, deadline time.Duration) *selection {
 	fs.StringVar(&s.composeDir, "compose-dir", "", "Path to compose directory (default: <repo-root>/docker/compose)")
 	fs.BoolVar(&s.playwright, "playwright", true, "Run Playwright E2E tests after smoke tests")
 	fs.BoolVar(&s.sampleData, "sample-data", false, "Install Magento sample data before smoke/Playwright validation")
+	fs.BoolVar(&s.buildImages, "build-images", false, "Build the harness images (m2test/*) here rather than pull them from GHCR")
 	fs.BoolVar(&s.noCacheSave, "no-cache-save", false, "Don't grow the shared Composer and vendor caches (saves disk on one-off sweeps)")
 	fs.Int64Var(&s.maxLogBytes, "max-log-bytes", 1<<20, "Maximum bytes to capture per container log (0 = 1MiB, negative = no limit; at most 2MiB with remote workers)")
 	fs.DurationVar(&s.deadline, "deadline", deadline, "Fail a combination that runs longer than this (0 = no limit)")
@@ -77,6 +80,20 @@ func (s *selection) load() []matrix.Combination {
 		return matrix.BuildBaselineCombinations(m, s.filter)
 	}
 	return matrix.BuildCombinations(m, s.filter)
+}
+
+// checkoutImages is the manifest for runs from the checkout; a -compose-dir of your own builds its own images, so has none.
+func (s *selection) checkoutImages(combos []matrix.Combination) (images.Manifest, bool, error) {
+	if len(combos) == 0 || !sameDir(s.composeDir, filepath.Join(s.repoRoot, "docker", "compose")) {
+		return images.Manifest{}, false, nil
+	}
+	// Playwright runs on this host without a release.
+	_, harness, _, err := images.Plan(s.repoRoot, combos, false)
+	if err != nil {
+		return images.Manifest{}, false, err
+	}
+	m, err := images.Freeze(s.repoRoot, images.Manifest{Harness: harness, Build: s.buildImages})
+	return m, err == nil, err
 }
 
 func (s *selection) contract() queue.Contract {
