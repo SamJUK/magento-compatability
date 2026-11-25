@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 )
 
@@ -41,7 +42,19 @@ type Worker struct {
 	HostKey string `json:"host_key,omitempty"` // "<type> <base64>", pinned at add
 	Token   string `json:"token"`
 	Slots   int    `json:"slots,omitempty"`
+	Cloud   *Cloud `json:"cloud,omitempty"`
 }
+
+// Cloud marks a worker a burst made, to be destroyed with it. ID is 0 until
+// the provider has answered; the nonce finds the server if it never does.
+type Cloud struct {
+	Provider string    `json:"provider"`
+	ID       int64     `json:"id,omitempty"`
+	Nonce    string    `json:"nonce"`
+	Created  time.Time `json:"created"`
+}
+
+func (w *Worker) Remote() bool { return w.Host != "" || w.Cloud != nil }
 
 type Inventory struct {
 	Workers map[string]*Worker `json:"workers"`
@@ -96,6 +109,7 @@ var (
 	validDir   = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 	validKey   = regexp.MustCompile(`^[a-z0-9@.-]+ [A-Za-z0-9+/]+=*$`)
 	validToken = regexp.MustCompile(`^[A-Za-z0-9]{32,}$`)
+	validNonce = regexp.MustCompile(`^[a-f0-9]{8,32}$`)
 )
 
 func (w *Worker) validate(name string) error {
@@ -104,13 +118,17 @@ func (w *Worker) validate(name string) error {
 		return fmt.Errorf("worker name %q: use a-z, 0-9 and -", name)
 	case !validToken.MatchString(w.Token):
 		return fmt.Errorf("worker %s has no token", name)
-	case w.Host == "":
+	case !w.Remote():
 		return nil
+	case w.Cloud != nil && (w.Cloud.Provider != "hetzner" || !validNonce.MatchString(w.Cloud.Nonce) || w.Cloud.ID < 0):
+		return fmt.Errorf("worker %s: bad cloud entry", name)
+	case w.Host == "" && w.Cloud.ID != 0:
+		return fmt.Errorf("worker %s: cloud server %d has no address", name, w.Cloud.ID)
 	case len(w.Dir+"/worker.sock") > 107: // Linux's sun_path, less its NUL
 		return fmt.Errorf("worker %s: dir %s is too long for a socket path", name, w.Dir)
 	case w.Slots < 1 || w.Slots > MaxSlots:
 		return fmt.Errorf("worker %s: slots must be 1 to %d, not %d", name, MaxSlots, w.Slots)
-	case !validHost.MatchString(w.Host):
+	case w.Host != "" && !validHost.MatchString(w.Host):
 		return fmt.Errorf("worker %s: bad host %q", name, w.Host)
 	case !validUser.MatchString(w.User):
 		return fmt.Errorf("worker %s: bad user %q", name, w.User)
@@ -171,6 +189,72 @@ func (inv *Inventory) validate() error {
 		}
 	}
 	return nil
+}
+
+// Update changes the inventory under a lock, so two commands, or a burst's
+// parallel creates, cannot lose each other's changes.
+func (p *Pool) Update(change func(*Inventory) error) error {
+	f, err := os.OpenFile(p.path("workers.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	inv, err := p.Load()
+	if err != nil {
+		return err
+	}
+	if err := change(inv); err != nil {
+		return err
+	}
+	return p.Save(inv)
+}
+
+// ID names this pool's cloud resources, so two machines sharing an
+// account never touch each other's.
+func (p *Pool) ID() (string, error) {
+	data, err := os.ReadFile(p.path("pool-id"))
+	if err == nil {
+		// Never remade: servers labelled with the old one would be lost.
+		if id := strings.TrimSpace(string(data)); validNonce.MatchString(id) {
+			return id, nil
+		}
+		return "", fmt.Errorf("%s is not a pool ID; its cloud servers are labelled m2test-pool=<it>", p.path("pool-id"))
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(b)
+	return id, writeAtomic(p.path("pool-id"), []byte(id+"\n"))
+}
+
+// HostKeyPair makes an ed25519 host key for a server not yet created, so
+// its key is pinned before anything answers at its address.
+func HostKeyPair(comment string) (private, public string, err error) {
+	dir, err := os.MkdirTemp("", "m2test-hostkey")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.RemoveAll(dir)
+	key := filepath.Join(dir, "key")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", key).CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("ssh-keygen: %v: %s", err, out)
+	}
+	priv, err := os.ReadFile(key)
+	if err != nil {
+		return "", "", err
+	}
+	pub, err := os.ReadFile(key + ".pub")
+	if err != nil {
+		return "", "", err
+	}
+	return string(priv), strings.TrimSpace(string(pub)), nil
 }
 
 // Save writes the inventory, then the ssh config and known hosts from it,

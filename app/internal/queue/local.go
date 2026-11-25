@@ -549,7 +549,6 @@ func (l *Local) eligible(s *sweep, c matrix.Combination) bool {
 	return false
 }
 
-// and how many have been tried.
 func (l *Local) Counts() map[string]int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -566,6 +565,9 @@ func (l *Local) Counts() map[string]int {
 			n[r.status]++
 			if l.eligible(s, c) {
 				n["eligible"]++
+				if !l.claimed[c.ID()] {
+					n["queued"]++
+				}
 			}
 			if cs := s.Combos[c.ID()]; cs != nil && (cs.Tries > 0 || cs.HostFailures > 0) {
 				n["tried"]++

@@ -10,9 +10,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,8 +34,8 @@ func runQueue(args []string) {
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Usage: magento-compatibility-builder queue [flags]
 
-Works through a sweep unattended. Safe to stop with Ctrl+C or SIGTERM and
-start again: it carries on where it left off.
+Works through a sweep unattended. Safe to stop with Ctrl+C, SIGTERM or
+SIGHUP and start again: it carries on where it left off.
 
 Takes the same filters as test, or -ids-file for an exact list. Runs each
 combination with no result, retries stack_up failures up to 3 times and
@@ -42,6 +44,8 @@ gives any other failure from this sweep one more go.
 With -workers, the named workers pull runs from worker.sock in the state
 directory as well; -slots 0 leaves all the work to them. Each remote one
 gets an SSH tunnel to the socket, the sweep's release and a restart.
+-cloud hetzner:N rents up to N servers as workers for the sweep and
+destroys them when it ends (see pool.yml in the README).
 
 A number in the slots file overrides -slots until the file is removed. One
 slot is dropped while free memory is under -min-free-mem, and no run starts
@@ -68,6 +72,8 @@ Flags:`)
 		fresh         = fs.Bool("fresh", false, "Forget this sweep's saved attempt counts")
 		status        = fs.Bool("status", false, "Print the sweep's progress and exit")
 		workerNames   = fs.String("workers", "", "Comma-separated workers from the inventory (builder worker list) to hand runs to")
+		cloudFlag     = fs.String("cloud", "", "Create cloud workers for this sweep and destroy them after: hetzner:N")
+		yes           = fs.Bool("yes", false, "Go ahead with a burst estimated over max_burst_cost")
 	)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
@@ -96,8 +102,15 @@ Flags:`)
 	}
 
 	var ws *workers
-	if *workerNames != "" && !*status {
-		ws = loadWorkers(*workerNames, filepath.Join(stateDir, "worker.sock"))
+	burstN := 0
+	if *cloudFlag != "" && !*status {
+		var err error
+		if burstN, err = parseCloud(*cloudFlag); err != nil {
+			fatalf("%v", err)
+		}
+	}
+	if (*workerNames != "" || burstN > 0) && !*status {
+		ws = loadWorkers(*workerNames, filepath.Join(stateDir, "worker.sock"), burstN > 0)
 	}
 	lg, err := queue.OpenLedger(stateDir)
 	if err != nil {
@@ -106,10 +119,10 @@ Flags:`)
 	defer lg.Close()
 	contract := sel.contract()
 	releases := filepath.Join(stateDir, "releases")
-	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, *workerNames != "" && !*status, releases); err != nil && !*status {
+	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, ws != nil, releases); err != nil && !*status {
 		fatalf("%v", err)
 	}
-	if ws != nil && len(ws.remote) > 0 {
+	if ws != nil && (len(ws.remote) > 0 || burstN > 0) {
 		if _, err := os.Stat(filepath.Join(releases, contract.Release) + ".tar.gz"); err != nil {
 			fatalf("remote workers need the release tarball: %v; -fresh snapshots the checkout again", err)
 		}
@@ -128,11 +141,15 @@ Flags:`)
 		fatalf("%v", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// With the terminal gone, a log write mustn't kill teardown.
+	signal.Ignore(syscall.SIGPIPE)
+	signalled, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	// After the first signal, a second one kills the process instead of
 	// waiting out teardown; the next start removes what it left.
-	go func() { <-ctx.Done(); stop() }()
+	go func() { <-signalled.Done(); stop() }()
+	ctx, cancel := context.WithCancel(signalled)
+	defer cancel()
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 
 	stacksDir := filepath.Join(stateDir, "stacks")
@@ -195,8 +212,13 @@ Flags:`)
 	}
 
 	var stopWorkers func()
-	if *workerNames != "" {
-		stopWorkers = serveWorkers(ctx, logger, src, contract, releases, ws, stateDir)
+	if ws != nil {
+		f := serveWorkers(ctx, logger, src, contract, releases, ws, stateDir)
+		stopWorkers = f.wait
+		if *cloudFlag != "" {
+			endBurst := startBurst(ctx, logger, f, src, burstN, *yes)
+			stopWorkers = func() { endBurst(); f.wait() }
+		}
 	}
 
 	engine := &queue.Engine{
@@ -245,7 +267,8 @@ Flags:`)
 	}
 	engine.Start(ctx)
 	if stopWorkers != nil {
-		defer func() { stop(); stopWorkers() }()
+		// Cancelling, not stop(), so a signal during teardown is still the first.
+		defer func() { cancel(); stopWorkers() }()
 		for ctx.Err() == nil && !src.Done() {
 			select {
 			case <-ctx.Done():
@@ -269,7 +292,7 @@ type workers struct {
 	remote map[string]*pool.Worker
 }
 
-func loadWorkers(names, sock string) *workers {
+func loadWorkers(names, sock string, burst bool) *workers {
 	if err := coord.CheckSocketPath(sock); err != nil {
 		fatalf("%v", err)
 	}
@@ -281,17 +304,34 @@ func loadWorkers(names, sock string) *workers {
 	if err != nil {
 		fatalf("%v", err)
 	}
+	if left := cloudEntries(inv); len(left) > 0 {
+		if burst {
+			fatalf("cloud workers from an earlier burst are still in the inventory (%s); builder worker gc destroys them", strings.Join(left, ", "))
+		}
+		logWarn(fmt.Sprintf("cloud workers from an earlier burst are still in the inventory, maybe still billing: %s; builder worker gc destroys them", strings.Join(left, ", ")))
+	}
 	ws := &workers{pool: p, tokens: map[string]string{}, remote: map[string]*pool.Worker{}}
+	if burst {
+		if err := pool.LocalSocket(sock); err != nil {
+			fatalf("%v", err)
+		}
+	}
 	for name := range strings.SplitSeq(names, ",") {
+		if names == "" {
+			break
+		}
 		w := inv.Workers[name]
 		if w == nil {
 			fatalf("no worker %q in the inventory; builder worker add makes one", name)
+		}
+		if w.Cloud != nil {
+			fatalf("%s belongs to a burst; -cloud makes new ones", name)
 		}
 		if _, dup := ws.tokens[w.Token]; dup {
 			continue
 		}
 		ws.tokens[w.Token] = name
-		if w.Host != "" {
+		if w.Remote() {
 			if err := pool.LocalSocket(sock); err != nil {
 				fatalf("%v", err)
 			}
@@ -304,7 +344,23 @@ func loadWorkers(names, sock string) *workers {
 	return ws
 }
 
-func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string) (wait func()) {
+func cloudEntries(inv *pool.Inventory) []string {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(inv.Workers)) {
+		if inv.Workers[name].Cloud != nil {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+type fleet struct {
+	srv     *coord.Server
+	connect func(ctx context.Context, name string, w *pool.Worker)
+	wait    func()
+}
+
+func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string) *fleet {
 	p, tokens, remote := ws.pool, ws.tokens, ws.remote
 	releaseDir := filepath.Join(releases, contract.Release)
 	workarounds, err := coord.LoadWorkarounds(filepath.Join(releaseDir, "docker", "scripts", "workarounds.json"))
@@ -325,18 +381,20 @@ func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, con
 		}
 	}()
 	logger.Printf("serving %d workers on %s", len(tokens), sock)
+	connect := func(ctx context.Context, name string, w *pool.Worker) {
+		var tunnel sync.WaitGroup
+		tunnel.Go(func() { p.Tunnel(ctx, name, w, sock, logger) })
+		logger.Printf("%s: deploying release %.12s", name, contract.Release)
+		if p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger) {
+			logger.Printf("%s: release %.12s ready", name, contract.Release)
+		}
+		tunnel.Wait()
+	}
 	var tunnels sync.WaitGroup
 	for name, w := range remote {
-		tunnels.Go(func() { p.Tunnel(ctx, name, w, sock, logger) })
-		tunnels.Go(func() {
-			logger.Printf("%s: deploying release %.12s", name, contract.Release)
-			if p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger) {
-				logger.Printf("%s: release %.12s ready", name, contract.Release)
-			}
-		})
+		tunnels.Go(func() { connect(ctx, name, w) })
 	}
-
-	return func() { <-served; srv.Wait(); tunnels.Wait() }
+	return &fleet{srv: srv, connect: connect, wait: func() { <-served; srv.Wait(); tunnels.Wait() }}
 }
 
 // runOutcome says how a finished run counts: an error with no result is the

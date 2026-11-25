@@ -374,3 +374,15 @@ func TestLedger_OverrideHoldsTheLease(t *testing.T) {
 		t.Errorf("control: after Unlease, claim got %v", st)
 	}
 }
+
+func TestCounts_QueuedLeavesOutClaimed(t *testing.T) {
+	c := []matrix.Combination{combo("8.2"), combo("8.3")}
+	l := newLocal(t, t.TempDir(), t.TempDir(), c, false)
+	if n := l.Counts(); n["eligible"] != 2 || n["queued"] != 2 {
+		t.Fatalf("before a claim: %v", n)
+	}
+	remoteClaim(t, l)
+	if n := l.Counts(); n["eligible"] != 2 || n["queued"] != 1 {
+		t.Errorf("one claimed: %v; want eligible 2, queued 1", n)
+	}
+}

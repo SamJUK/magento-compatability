@@ -5,6 +5,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -473,5 +474,86 @@ func TestLastLinesCapsEachLine(t *testing.T) {
 	got := lastLines([]byte("short\n"+strings.Repeat("x", 70000)), 5)
 	if len(got) > 600 || !strings.HasPrefix(got, "short | xxx") {
 		t.Fatalf("got %d bytes: %.40q", len(got), got)
+	}
+}
+
+func TestValidateCloudEntries(t *testing.T) {
+	creating := func() *Worker {
+		w := lab()
+		w.Host, w.Cloud = "", &Cloud{Provider: "hetzner", Nonce: "abcdef12"}
+		return w
+	}
+	if err := creating().validate("hz-1"); err != nil {
+		t.Fatalf("a server not yet answered: %v", err)
+	}
+	made := creating()
+	made.Host, made.Cloud.ID = "203.0.113.7", 42
+	if err := made.validate("hz-1"); err != nil {
+		t.Fatalf("a made server: %v", err)
+	}
+	for name, edit := range map[string]func(*Worker){
+		"id without address": func(w *Worker) { w.Cloud.ID = 42 },
+		"provider":           func(w *Worker) { w.Cloud.Provider = "aws" },
+		"nonce":              func(w *Worker) { w.Cloud.Nonce = "x; reboot" },
+		"no host key":        func(w *Worker) { w.HostKey = "" },
+	} {
+		w := creating()
+		edit(w)
+		if err := w.validate("hz-1"); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestUpdateLosesNoConcurrentChange(t *testing.T) {
+	p := &Pool{Dir: t.TempDir()}
+	os.MkdirAll(filepath.Join(p.Dir, "ssh"), 0o700)
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Go(func() {
+			err := p.Update(func(inv *Inventory) error {
+				inv.Workers[fmt.Sprintf("w%d", i)] = &Worker{Token: tok()}
+				return nil
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	inv, err := p.Load()
+	if err != nil || len(inv.Workers) != 20 {
+		t.Fatalf("%d workers, %v", len(inv.Workers), err)
+	}
+}
+
+func TestHostKeyPair(t *testing.T) {
+	priv, pub, err := HostKeyPair("hz-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(priv, "-----BEGIN OPENSSH PRIVATE KEY-----") || !strings.HasPrefix(pub, "ssh-ed25519 ") {
+		t.Fatalf("got %q / %q", priv[:20], pub)
+	}
+	f := strings.Fields(pub)
+	if !validKey.MatchString(f[0] + " " + f[1]) {
+		t.Fatalf("pinned form %q not valid", pub)
+	}
+	if _, pub2, _ := HostKeyPair("hz-1"); pub2 == pub {
+		t.Fatal("two servers got one key")
+	}
+}
+
+func TestIDIsMadeOnceAndKept(t *testing.T) {
+	p := &Pool{Dir: t.TempDir()}
+	a, err := p.ID()
+	if err != nil || len(a) != 12 {
+		t.Fatalf("%q %v", a, err)
+	}
+	if b, _ := p.ID(); b != a {
+		t.Fatalf("second call %q, first %q", b, a)
+	}
+	if b, _ := (&Pool{Dir: t.TempDir()}).ID(); b == a {
+		t.Fatal("control: another pool got the same ID")
 	}
 }

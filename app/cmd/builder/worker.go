@@ -24,6 +24,8 @@ const workerUsage = `Usage: magento-compatibility-builder worker <add|setup|remo
                                           restarts it, stopping any runs it has going
   remove NAME                             stop its unit (and its runs) and forget it
   list
+  gc [-yes]                               destroy cloud workers dead bursts left behind
+                                          (needs HCLOUD_TOKEN; lists them without -yes)
 
 The inventory and the pool's SSH key, config and known hosts live in
 $XDG_CONFIG_HOME/magento-compatibility. A worker host needs Docker, a user
@@ -51,8 +53,8 @@ func runWorker(args []string) {
 		workerAdd(ctx, p, inv, args[1:])
 	case "setup":
 		name, w := namedWorker(inv, args[1:])
-		if w.Host == "" {
-			fatalf("%s runs on this machine; nothing to set up", name)
+		if !w.Remote() || w.Cloud != nil {
+			fatalf("%s runs on this machine or belongs to a burst; nothing to set up", name)
 		}
 		arch, err := p.Arch(ctx, name)
 		if err != nil {
@@ -73,21 +75,30 @@ func runWorker(args []string) {
 		logOK(fmt.Sprintf("%s set up (linux/%s); it starts at the next sweep with -workers %s", name, arch, name))
 	case "remove":
 		name, w := namedWorker(inv, args[1:])
-		if w.Host != "" {
+		if w.Cloud != nil {
+			fatalf("%s belongs to a burst; builder worker gc destroys it", name)
+		}
+		if w.Remote() {
 			if err := p.Stop(ctx, name); err != nil {
 				logWarn(fmt.Sprintf("stopping %s: %v; forgetting it anyway", name, err))
 			}
 		}
-		delete(inv.Workers, name)
-		if err := p.Save(inv); err != nil {
+		if err := p.Update(func(inv *pool.Inventory) error { delete(inv.Workers, name); return nil }); err != nil {
 			fatalf("%v", err)
 		}
 		logOK("removed " + name)
+	case "gc":
+		workerGC(ctx, p, args[1:])
 	case "list":
 		for _, name := range slices.Sorted(maps.Keys(inv.Workers)) {
 			w := inv.Workers[name]
-			if w.Host == "" {
+			if !w.Remote() {
 				fmt.Printf("%s\tlocal\n", name)
+				continue
+			}
+			if w.Cloud != nil {
+				fmt.Printf("%s\t%s server %d at %s\tup %s\tleft by a burst; builder worker gc destroys it\n",
+					name, w.Cloud.Provider, w.Cloud.ID, w.Host, time.Since(w.Cloud.Created).Round(time.Minute))
 				continue
 			}
 			fp, _ := pool.Fingerprint(w.HostKey)
@@ -135,8 +146,13 @@ func workerAdd(ctx context.Context, p *pool.Pool, inv *pool.Inventory, args []st
 			fatalf("%v", err)
 		}
 	}
-	inv.Workers[name] = w
-	if err := p.Save(inv); err != nil {
+	if err := p.Update(func(inv *pool.Inventory) error {
+		if inv.Workers[name] != nil {
+			return fmt.Errorf("%s is already in the inventory; remove it first", name)
+		}
+		inv.Workers[name] = w
+		return nil
+	}); err != nil {
 		fatalf("%v", err)
 	}
 	if w.Host == "" {

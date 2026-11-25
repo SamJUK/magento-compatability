@@ -102,6 +102,31 @@ A worker that goes quiet for two minutes loses its runs to the next claim; its l
 The queue checks every uploaded result against the combination it handed out and keeps any it refuses in `rejected/`.
 `test -ignore-queue` aborts a worker's run of the same combination and refuses its upload.
 
+### Cloud bursts
+
+`queue -cloud hetzner:N` rents up to N Hetzner servers for the sweep, sets each up as a worker as it comes up, and destroys them once they are no longer needed: an idle one as soon as nothing is waiting (keeping one until the sweep ends, for late retries), any past `max_age` once its runs finish, and all of them when the sweep stops, Ctrl+C included.
+It needs `HCLOUD_TOKEN` and `pool.yml` beside the inventory:
+
+```yaml
+ssh_from: [198.51.100.4/32]   # required: who may reach workers over SSH
+hetzner: {type: ccx33, location: hel1, image: debian-13, slots: 5}
+max_workers: 10
+max_burst_cost: 10            # euros; a bigger estimate needs -yes
+max_age: 8h
+minutes_per_run: 4            # for the estimate
+setup_minutes: 10
+```
+
+Everything but `ssh_from` has the default shown.
+Before creating anything the queue prints the estimate: each worker billed in whole hours, at Hetzner's gross price for the server and its IPv4 address, as if every one ran to the end.
+Each server gets a host key made on this machine and pinned before it exists, and cloud-init installs Docker, the `m2test` user with only the pool key, and the sshd settings above, and drops bridged container traffic to the metadata service (a host-network container still reaches it).
+Each pool gets a random ID (in `pool-id` beside `pool.yml`), so two machines sharing a project never touch each other's servers.
+The pool key also goes on root (as the `m2test-pool-<id>` key in the project) so Hetzner doesn't email root passwords; cloud-init then disables root login.
+A firewall named `m2test-<id>` allows SSH from `ssh_from` only.
+
+If the queue dies without destroying its servers (a second Ctrl+C, a crash), they stay in the inventory and the next burst refuses to start.
+`builder worker gc` lists them and every server labelled `m2test=worker,m2test-pool=<id>` that the inventory doesn't know; `-yes` destroys them.
+
 ## What gets tested
 
 `matrix.yml` lists every release and the service versions to try.

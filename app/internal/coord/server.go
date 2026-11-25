@@ -39,7 +39,9 @@ type Server struct {
 	live      map[string]*liveAttempt
 	ready     map[string]bool   // said hello with the sweep's release
 	unhealthy map[string]string // worker to reason
-	settling  map[string]int    // taken out of live by uploads still being answered
+	drained   map[string]bool
+	busy      map[string]int
+	settling  map[string]int // taken out of live by uploads still being answered
 }
 
 type liveAttempt struct {
@@ -51,6 +53,8 @@ func (s *Server) Start(ctx context.Context) error {
 	s.live = map[string]*liveAttempt{}
 	s.ready = map[string]bool{}
 	s.unhealthy = map[string]string{}
+	s.drained = map[string]bool{}
+	s.busy = map[string]int{}
 	s.settling = map[string]int{}
 	s.stopping = ctx
 	jobs, err := s.Src.Resume()
@@ -72,6 +76,44 @@ func (s *Server) Live() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.live)
+}
+
+func (s *Server) AddWorker(token, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Tokens[token] = name
+}
+
+// Drain stops an idle worker getting more work and says whether it did; a busy one is left alone unless always is set.
+func (s *Server) Drain(worker string, always bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idle := s.busy[worker] == 0
+	for _, a := range s.live {
+		if a.job.Worker == worker {
+			idle = false
+		}
+	}
+	if idle || always {
+		s.drained[worker] = true
+	}
+	return idle
+}
+
+// Abandon releases the runs of a worker the queue destroyed; stopping them was asked for, so no try is charged.
+func (s *Server) Abandon(worker string) {
+	var gone []queue.Job
+	s.mu.Lock()
+	for id, a := range s.live {
+		if a.job.Worker == worker {
+			gone = append(gone, a.job)
+			delete(s.live, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, j := range gone {
+		s.release(j, queue.Outcome{Kind: queue.OutcomeAborted, Requested: true})
+	}
 }
 
 func (s *Server) expire(ctx context.Context) {
@@ -165,11 +207,13 @@ func (s *Server) authed(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		worker := ""
+		s.mu.Lock()
 		for token, name := range s.Tokens {
 			if ok && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
 				worker = name
 			}
 		}
+		s.mu.Unlock()
 		if worker == "" {
 			http.Error(w, "unknown token", http.StatusUnauthorized)
 			return
@@ -218,6 +262,21 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request, worker string) {
 	reply(w, rep)
 }
 
+// hold keeps the worker from draining while a job is handed out or settled.
+func (s *Server) hold(worker string) (release func()) {
+	s.mu.Lock()
+	s.busy[worker]++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.busy[worker]--
+		s.mu.Unlock()
+	}
+}
+
+// afterClaim lets tests act between the ledger's claim and the run going live.
+var afterClaim = func() {}
+
 func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 	var req ClaimRequest
 	if !decode(w, r, 1<<16, &req) {
@@ -230,26 +289,49 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 	until := time.Now().Add(ClaimWait)
 	for {
 		s.mu.Lock()
-		ready, healthy := s.ready[worker], s.unhealthy[worker] == ""
+		ready, healthy := s.ready[worker], s.unhealthy[worker] == "" && !s.drained[worker]
+		s.busy[worker]++
 		s.mu.Unlock()
-		switch {
-		case !ready:
-			reply(w, ClaimReply{State: ClaimHello})
-			return
-		case !healthy || s.stopping.Err() != nil:
-			reply(w, ClaimReply{State: ClaimNone})
+		release := func() {
+			s.mu.Lock()
+			s.busy[worker]--
+			s.mu.Unlock()
+		}
+		if !ready || !healthy || s.stopping.Err() != nil {
+			release()
+			if !ready {
+				reply(w, ClaimReply{State: ClaimHello})
+			} else {
+				reply(w, ClaimReply{State: ClaimNone})
+			}
 			return
 		}
+		// Busy from the health check until the job is live, so Drain can't
+		// pass a worker that is being handed one.
 		j, st, err := s.Src.Claim(r.Context(), worker, req.Request)
+		afterClaim()
+		if st == queue.StateJob && err == nil {
+			s.mu.Lock()
+			// Drained while the ledger answered: an Abandon since saw no run to release.
+			fenced := s.drained[worker]
+			if !fenced {
+				s.live[j.Attempt] = &liveAttempt{job: j, expires: time.Now().Add(LeaseFor)}
+			}
+			s.mu.Unlock()
+			if fenced {
+				release()
+				s.release(j, queue.Outcome{Kind: queue.OutcomeAborted, Requested: true})
+				reply(w, ClaimReply{State: ClaimNone})
+				return
+			}
+		}
+		release()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		switch st {
 		case queue.StateJob:
-			s.mu.Lock()
-			s.live[j.Attempt] = &liveAttempt{job: j, expires: time.Now().Add(LeaseFor)}
-			s.mu.Unlock()
 			s.Log.Printf("%s: %s to %s (try %d)", j.Attempt, j.Combination.ID(), worker, j.Tries+1)
 			reply(w, ClaimReply{State: ClaimJob, Attempt: j.Attempt, Combo: j.Combination, Options: s.Contract})
 			return
@@ -313,6 +395,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, worker string
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request, worker string) {
+	defer s.hold(worker)()
 	var up Upload
 	if !decode(w, r, MaxUpload, &up) {
 		return

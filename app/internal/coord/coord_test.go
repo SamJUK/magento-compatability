@@ -347,6 +347,48 @@ func TestLease_ExpiresWithoutHeartbeats(t *testing.T) {
 	}
 }
 
+func TestAbandon_ChargesNoTry(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	for i := range queue.MaxHostFailures {
+		job := r.claim("tok-a", fmt.Sprintf("req%d", i))
+		if job.State != ClaimJob {
+			t.Fatalf("claim %d: %+v; abandoned runs were charged", i, job)
+		}
+		r.srv.Abandon("b")
+		if r.srv.Live() != 1 {
+			t.Fatal("control: abandoned another worker's run")
+		}
+		r.srv.Abandon("a")
+		if r.srv.Live() != 0 || r.src.AttemptState(job.Attempt) != queue.AttemptAborted {
+			t.Fatalf("%d live, attempt %s; want it released as aborted", r.srv.Live(), r.src.AttemptState(job.Attempt))
+		}
+	}
+	if again := r.claim("tok-a", "last"); again.State != ClaimJob {
+		t.Errorf("after %d abandoned runs: %+v, want it still claimable", queue.MaxHostFailures, again)
+	}
+}
+
+func TestAbandon_CatchesAClaimTheLedgerIsStillAnswering(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	claiming, proceed := make(chan struct{}), make(chan struct{})
+	afterClaim = func() { close(claiming); <-proceed }
+	t.Cleanup(func() { afterClaim = func() {} })
+	answered := make(chan ClaimReply, 1)
+	go func() { answered <- r.claim("tok-a", "r1") }()
+	<-claiming
+	afterClaim = func() {}
+	r.srv.Drain("a", true)
+	r.srv.Abandon("a")
+	close(proceed)
+	if rep := <-answered; rep.State == ClaimJob || r.srv.Live() != 0 {
+		t.Fatalf("a destroyed worker got %+v, %d live", rep, r.srv.Live())
+	}
+	if again := r.claim("tok-b", "r2"); again.State != ClaimJob {
+		t.Errorf("the run wasn't released: %+v", again)
+	}
+}
+
 func TestLease_HeartbeatsKeepItAlive(t *testing.T) {
 	old := LeaseFor
 	LeaseFor = 100 * time.Millisecond
@@ -829,6 +871,107 @@ func TestWorker_ConcurrentPreflightsChargeOneHostFailure(t *testing.T) {
 	wg.Wait()
 	if host.Load() != 1 {
 		t.Errorf("%d host failures, want 1", host.Load())
+	}
+}
+
+func TestAddWorker_LetsANewTokenIn(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	var rep HelloReply
+	if err := NewClient(r.sock, "tok-c").call(context.Background(), "POST", "/hello", time.Second, HelloRequest{Schema: Schema, Release: "rel1"}, &rep); err == nil {
+		t.Fatal("an unknown token got in")
+	}
+	r.srv.AddWorker("tok-c", "c")
+	if got := r.claim("tok-c", "r"); got.State != ClaimJob {
+		t.Fatalf("added worker got %+v", got)
+	}
+}
+
+func TestDrain_OnlyAnIdleWorkerUnlessAlways(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2"), combo("8.3")})
+	if got := r.claim("tok-a", "r1"); got.State != ClaimJob {
+		t.Fatalf("claim got %+v", got)
+	}
+	if r.srv.Drain("a", false) {
+		t.Fatal("a worker holding an attempt drained as idle")
+	}
+	if got := r.claim("tok-a", "r2"); got.State != ClaimJob {
+		t.Fatalf("a busy worker left undrained got %+v", got)
+	}
+	if !r.srv.Drain("b", false) {
+		t.Fatal("an idle worker did not drain")
+	}
+	if got := r.claim("tok-b", "r3"); got.State == ClaimJob {
+		t.Fatalf("a drained worker got %+v", got)
+	}
+	r.srv.Drain("a", true)
+	if got := r.claim("tok-a", "r4"); got.State == ClaimJob {
+		t.Fatalf("a worker drained with always got %+v", got)
+	}
+}
+
+func TestDrain_AWorkerWaitingForWorkIsIdle(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	if got := r.claim("tok-b", "r0"); got.State != ClaimJob {
+		t.Fatalf("claim got %+v", got)
+	}
+	// With nothing left to hand out, a's claim long-polls.
+	cl := NewClient(r.sock, "tok-a")
+	cl.call(context.Background(), "POST", "/hello", time.Second, HelloRequest{Schema: Schema, Release: "rel1"}, &HelloReply{})
+	answered := make(chan ClaimReply, 1)
+	go func() {
+		var rep ClaimReply
+		cl.call(context.Background(), "POST", "/claim", time.Minute, ClaimRequest{Schema: Schema, Request: "r1"}, &rep)
+		answered <- rep
+	}()
+	time.Sleep(3 * claimPoll)
+	select {
+	case rep := <-answered:
+		t.Fatalf("control: the claim was answered (%+v) rather than waiting", rep)
+	default:
+	}
+	if r.srv.Drain("b", false) {
+		t.Error("b, holding an attempt, drained as idle")
+	}
+	// Each poll holds it busy for a moment while it looks for work.
+	waitFor(t, func() bool { return r.srv.Drain("a", false) })
+	if rep := <-answered; rep.State == ClaimJob {
+		t.Errorf("the drained worker got %+v", rep)
+	}
+}
+
+func TestDrain_NotWhileAnUploadIsBeingSettled(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	job := r.claim("tok-a", "r0")
+	if job.State != ClaimJob {
+		t.Fatalf("claim got %+v", job)
+	}
+	body, feed := io.Pipe()
+	req, _ := http.NewRequest("PUT", "http://coordinator/result/"+job.Attempt, body)
+	req.Header.Set("Authorization", "Bearer tok-a")
+	done := make(chan struct{})
+	go func() {
+		if resp, err := NewClient(r.sock, "tok-a").HTTP.Do(req); err == nil {
+			resp.Body.Close()
+		}
+		close(done)
+	}()
+	feed.Write([]byte("{"))
+	waitFor(t, func() bool {
+		r.srv.mu.Lock()
+		defer r.srv.mu.Unlock()
+		return r.srv.busy["a"] == 1
+	})
+	// Its attempt may already be out of live; the upload still counts.
+	r.srv.mu.Lock()
+	delete(r.srv.live, job.Attempt)
+	r.srv.mu.Unlock()
+	if r.srv.Drain("a", false) {
+		t.Error("drained while an upload was in progress")
+	}
+	feed.Close()
+	<-done
+	if !r.srv.Drain("a", false) {
+		t.Error("control: not idle once the upload was answered")
 	}
 }
 
