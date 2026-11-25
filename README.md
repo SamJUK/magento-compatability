@@ -64,31 +64,34 @@ One queue runs per machine. Its state lives in `~/.local/state/magento-compatibi
 
 ### Remote workers
 
-With `-workers`, the queue also hands runs to other machines over `worker.sock` in its state directory.
-The file maps each worker's token to a name, `{"<token>": "homelab-1"}`; keep it `0600`.
-`-slots 0` leaves every run to the workers.
+Workers live in an inventory in `~/.config/magento-compatibility/` (`$XDG_CONFIG_HOME`), next to a pool SSH key, ssh config and known hosts the tool writes.
+Every connection to a worker uses that config: the pool key only, no agent, and the host key pinned to the worker's name.
 
 ```bash
-./bin/magento-compatibility-builder queue -ids-file sweep.txt -workers ~/.config/m2test/workers.json -slots 0
+# On the worker host: its key fingerprint, read there rather than trusted on first use
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+# On this machine: pin it, make a token, and print the pool key to authorise for m2test there
+./bin/magento-compatibility-builder worker add lab1 -host 192.0.2.10 -host-key SHA256:...
+# Install m2test-worker (built here for the host's arch), its token and its systemd user unit
+./bin/magento-compatibility-builder worker setup lab1
+./bin/magento-compatibility-builder queue -ids-file sweep.txt -workers lab1 -slots 0
 ```
+
+The host needs Docker with buildx and Compose, an `m2test` user in the docker group whose only key is the pool key, lingering for that user, `/var/lib/m2test` owned by it, and these sshd settings for it: `StreamLocalBindUnlink yes` (a reconnect replaces a stale socket) and `AllowTcpForwarding remote` with `PermitListen none` (OpenSSH refuses a forwarded Unix socket under `AllowTcpForwarding no`).
+
+For each remote worker, `queue -workers` keeps an SSH tunnel open from the worker's `/var/lib/m2test/worker.sock` to `worker.sock` here, reconnecting with backoff, and deploys the sweep's release to it before restarting its unit.
+A remote worker serves one sweep at a time: a second sweep on this machine naming it stops at once.
+`worker add NAME` with no `-host` makes a worker for this machine, which runs `m2test-worker -socket <state dir>/worker.sock` itself.
+`worker remove` stops a worker's unit and forgets it and its host key; `worker list` shows them.
+`-slots 0` leaves every run to the workers.
 
 A sweep with `-workers` runs a release: a snapshot of `matrix.yml` and `docker/` with every upstream image pinned to the digest its tag had at the start, in `releases/` in the state directory.
 Resuming the sweep runs the same release, even if the checkout or the upstream tags have moved since; `-fresh` takes a new one.
 Local slots run the release too, on its pinned images and with Playwright in its container, so `-compose-dir` can't be used with `-workers`.
 Readying those images retags this machine's upstream tags (`mariadb:11.4` and so on) to the pinned digests.
 
-The queue logs the release's hash at start. Each worker unpacks the release tarball, refusing it unless it holds that release, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
-
-```bash
-m2test-worker prepare -hash <hash> -tarball <hash>.tar.gz -releases ~/m2test/releases
-ln -sfn ~/m2test/releases/<hash> ~/m2test/current
-```
-
-Then it runs `m2test-worker` against the queue's socket, forwarded to it over SSH (`ssh -R /run/m2test/worker.sock:<state dir>/worker.sock`):
-
-```bash
-m2test-worker -socket /run/m2test/worker.sock -token-file ~/.config/m2test/token -release ~/m2test/current
-```
+Each worker unpacks the release tarball, refusing it unless it holds the release the queue asked for, and readies its images: it pulls each pinned image by digest and builds the harness images (`m2test/*`) on them.
+The queue does this through `m2test-worker prepare -hash <hash> -tarball <file> -releases <dir>`, which works by hand too.
 
 The queue only hands work to a worker on its release, and a worker missing any of the release's images, or holding harness images built for another release, takes none until `prepare` has run.
 Workers run Playwright in a container on the stack's own network, against `http://varnish` or `http://webserver`, so they need no Node.

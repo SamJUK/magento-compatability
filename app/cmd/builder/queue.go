@@ -6,7 +6,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,12 +15,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/samjuk/magento-compatability/internal/coord"
 	"github.com/samjuk/magento-compatability/internal/images"
 	"github.com/samjuk/magento-compatability/internal/matrix"
+	"github.com/samjuk/magento-compatability/internal/pool"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/runner"
 )
@@ -38,8 +39,9 @@ Takes the same filters as test, or -ids-file for an exact list. Runs each
 combination with no result, retries stack_up failures up to 3 times and
 gives any other failure from this sweep one more go.
 
-With -workers, remote workers pull runs from worker.sock in the state
-directory as well; -slots 0 leaves all the work to them.
+With -workers, the named workers pull runs from worker.sock in the state
+directory as well; -slots 0 leaves all the work to them. Each remote one
+gets an SSH tunnel to the socket, the sweep's release and a restart.
 
 A number in the slots file overrides -slots until the file is removed. One
 slot is dropped while free memory is under -min-free-mem, and no run starts
@@ -65,7 +67,7 @@ Flags:`)
 		retryFailures = fs.Bool("retry-failures", false, "Give failures from earlier sweeps one more go")
 		fresh         = fs.Bool("fresh", false, "Forget this sweep's saved attempt counts")
 		status        = fs.Bool("status", false, "Print the sweep's progress and exit")
-		workersFile   = fs.String("workers", "", "JSON file mapping each worker token to a worker name; serves worker.sock")
+		workerNames   = fs.String("workers", "", "Comma-separated workers from the inventory (builder worker list) to hand runs to")
 	)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
@@ -93,6 +95,10 @@ Flags:`)
 		defer lock.Close()
 	}
 
+	var ws *workers
+	if *workerNames != "" && !*status {
+		ws = loadWorkers(*workerNames, filepath.Join(stateDir, "worker.sock"))
+	}
 	lg, err := queue.OpenLedger(stateDir)
 	if err != nil {
 		fatalf("%v", err)
@@ -100,8 +106,13 @@ Flags:`)
 	defer lg.Close()
 	contract := sel.contract()
 	releases := filepath.Join(stateDir, "releases")
-	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, *workersFile != "" && !*status, releases); err != nil && !*status {
+	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, *workerNames != "" && !*status, releases); err != nil && !*status {
 		fatalf("%v", err)
+	}
+	if ws != nil && len(ws.remote) > 0 {
+		if _, err := os.Stat(filepath.Join(releases, contract.Release) + ".tar.gz"); err != nil {
+			fatalf("remote workers need the release tarball: %v; -fresh snapshots the checkout again", err)
+		}
 	}
 	src, err := queue.NewLocal(lg, sel.resultsDir, combos, contract, *fresh && !*status)
 	if err != nil && !(*status && errors.Is(err, queue.ErrContractChanged)) {
@@ -184,8 +195,8 @@ Flags:`)
 	}
 
 	var stopWorkers func()
-	if *workersFile != "" {
-		stopWorkers = serveWorkers(ctx, logger, src, contract, filepath.Join(releases, contract.Release), *workersFile, stateDir)
+	if *workerNames != "" {
+		stopWorkers = serveWorkers(ctx, logger, src, contract, releases, ws, stateDir)
 	}
 
 	engine := &queue.Engine{
@@ -252,32 +263,60 @@ Flags:`)
 		counts[queue.StatusPass], counts[queue.StatusFail], counts[queue.StatusSetupFail], counts[queue.StatusTodo])
 }
 
-func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releaseDir, path, stateDir string) (wait func()) {
-	data, err := os.ReadFile(path)
+type workers struct {
+	pool   *pool.Pool
+	tokens map[string]string
+	remote map[string]*pool.Worker
+}
+
+func loadWorkers(names, sock string) *workers {
+	if err := coord.CheckSocketPath(sock); err != nil {
+		fatalf("%v", err)
+	}
+	p, err := pool.Open()
 	if err != nil {
 		fatalf("%v", err)
 	}
-	var tokens map[string]string
-	if err := json.Unmarshal(data, &tokens); err != nil {
-		fatalf("%s: %v", path, err)
+	inv, err := p.Load()
+	if err != nil {
+		fatalf("%v", err)
 	}
-	names := map[string]bool{}
-	for token, name := range tokens {
-		if token == "" || name == "" || names[name] {
-			fatalf("%s: every worker needs its own name and a token", path)
+	ws := &workers{pool: p, tokens: map[string]string{}, remote: map[string]*pool.Worker{}}
+	for name := range strings.SplitSeq(names, ",") {
+		w := inv.Workers[name]
+		if w == nil {
+			fatalf("no worker %q in the inventory; builder worker add makes one", name)
 		}
-		names[name] = true
+		if _, dup := ws.tokens[w.Token]; dup {
+			continue
+		}
+		ws.tokens[w.Token] = name
+		if w.Host != "" {
+			if err := pool.LocalSocket(sock); err != nil {
+				fatalf("%v", err)
+			}
+			if _, err := p.Lock(name); err != nil {
+				fatalf("%v", err)
+			}
+			ws.remote[name] = w
+		}
 	}
+	return ws
+}
+
+func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string) (wait func()) {
+	p, tokens, remote := ws.pool, ws.tokens, ws.remote
+	releaseDir := filepath.Join(releases, contract.Release)
 	workarounds, err := coord.LoadWorkarounds(filepath.Join(releaseDir, "docker", "scripts", "workarounds.json"))
 	if err != nil {
 		fatalf("%v", err)
 	}
 	srv := &coord.Server{Src: src, Tokens: tokens, Contract: contract, Release: contract.Release, Workarounds: workarounds,
 		RejectDir: filepath.Join(stateDir, "rejected"), Log: logger}
+	sock := filepath.Join(stateDir, "worker.sock")
 	if err := srv.Start(ctx); err != nil {
 		fatalf("%v", err)
 	}
-	sock := filepath.Join(stateDir, "worker.sock")
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
@@ -286,8 +325,18 @@ func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, con
 		}
 	}()
 	logger.Printf("serving %d workers on %s", len(tokens), sock)
-	// Lets uploads that are installing finish.
-	return func() { <-served; srv.Wait() }
+	var tunnels sync.WaitGroup
+	for name, w := range remote {
+		tunnels.Go(func() { p.Tunnel(ctx, name, w, sock, logger) })
+		tunnels.Go(func() {
+			logger.Printf("%s: deploying release %.12s", name, contract.Release)
+			if p.DeployUntilDone(ctx, name, w, contract.Release, releaseDir+".tar.gz", logger) {
+				logger.Printf("%s: release %.12s ready", name, contract.Release)
+			}
+		})
+	}
+
+	return func() { <-served; srv.Wait(); tunnels.Wait() }
 }
 
 // runOutcome says how a finished run counts: an error with no result is the

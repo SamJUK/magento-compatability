@@ -110,9 +110,17 @@ func (s *Server) expire(ctx context.Context) {
 	}
 }
 
-func (s *Server) Serve(ctx context.Context, path string) error {
-	if len(path) > 103 { // macOS's sun_path, less its NUL
+// CheckSocketPath refuses a path too long for macOS's sun_path, less its NUL.
+func CheckSocketPath(path string) error {
+	if len(path) > 103 {
 		return fmt.Errorf("%s is %d bytes, over the 103 a socket path may have; use a shorter XDG_STATE_HOME", path, len(path))
+	}
+	return nil
+}
+
+func (s *Server) Serve(ctx context.Context, path string) error {
+	if err := CheckSocketPath(path); err != nil {
+		return err
 	}
 	os.Remove(path) // the caller holds the queue lock, so any socket here is stale
 	ln, err := net.Listen("unix", path)

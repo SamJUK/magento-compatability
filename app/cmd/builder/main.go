@@ -49,6 +49,8 @@ func main() {
 		runQueue(os.Args[2:])
 	case "report":
 		runReport(os.Args[2:])
+	case "worker":
+		runWorker(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
