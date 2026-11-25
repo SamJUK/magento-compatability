@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samjuk/magento-compatability/internal/matrix"
+	"github.com/samjuk/magento-compatability/internal/result"
 )
 
 func openLedger(t *testing.T, dir string) *Ledger {
@@ -256,5 +257,120 @@ func TestLocal_SeesResultWrittenBetweenClaims(t *testing.T) {
 	l.Release(j, finished)
 	if j, st := next(t, l); st != StateJob || j.Combination != a {
 		t.Errorf("control: a with no result not retried, got %s (%v)", j.Combination.ID(), st)
+	}
+}
+
+func remoteClaim(t *testing.T, l *Local) Job {
+	t.Helper()
+	j, st, err := l.Claim(context.Background(), "w1", "r1")
+	if err != nil || st != StateJob {
+		t.Fatalf("claim: %v %v", st, err)
+	}
+	return j
+}
+
+func TestLocal_ResumeTakesBackRemoteAttempts(t *testing.T) {
+	state, results := t.TempDir(), t.TempDir()
+	c := []matrix.Combination{combo("8.3")}
+	first := newLocal(t, state, results, c, false)
+	remoteClaim(t, first)
+	first.ledger.Close()
+
+	jobs, err := newLocal(t, state, results, c, false).Resume()
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("control: resumed %d, %v; want 1", len(jobs), err)
+	}
+}
+
+func TestLocal_FreshDropsOldAttempts(t *testing.T) {
+	state, results := t.TempDir(), t.TempDir()
+	c := []matrix.Combination{combo("8.3")}
+	first := newLocal(t, state, results, c, false)
+	j := remoteClaim(t, first)
+	first.ledger.Close()
+
+	l := newLocal(t, state, results, c, true)
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := l.Resume(); len(jobs) != 0 {
+		t.Errorf("resumed %d attempts from before -fresh", len(jobs))
+	}
+	if st := l.AttemptState(j.Attempt); st != AttemptAborted {
+		t.Errorf("old attempt is %s, want aborted", st)
+	}
+}
+
+func TestLocal_ResumeLeavesBuilderTestsLease(t *testing.T) {
+	state, results := t.TempDir(), t.TempDir()
+	c := []matrix.Combination{combo("8.3")}
+	first := newLocal(t, state, results, c, false)
+	remoteClaim(t, first)
+	first.ledger.Close()
+
+	test := openLedger(t, state)
+	if ok, err := test.Lease(results, c[0].ID()); !ok || err != nil {
+		t.Fatalf("builder test lease: %v %v", ok, err)
+	}
+	if jobs, _ := newLocal(t, state, results, c, false).Resume(); len(jobs) != 0 {
+		t.Errorf("resumed an attempt builder test holds the lease for")
+	}
+}
+
+// A dead queue's attempt, resumed after builder test ran its combination,
+// mustn't overwrite that newer result.
+func TestLocal_BuilderTestFencesADeadQueuesAttempt(t *testing.T) {
+	for _, taker := range []string{"builder test", "another sweep", ""} {
+		test := taker != ""
+		state, results := t.TempDir(), t.TempDir()
+		c := []matrix.Combination{combo("8.3")}
+		first := newLocal(t, state, results, c, false)
+		remoteClaim(t, first)
+		first.ledger.Close()
+
+		switch taker {
+		case "builder test":
+			lg := openLedger(t, state)
+			if ok, err := lg.Lease(results, c[0].ID()); !ok || err != nil {
+				t.Fatalf("builder test lease: %v %v", ok, err)
+			}
+			lg.Unlease(results, c[0].ID())
+		case "another sweep":
+			other := newLocal(t, state, results, append(c, combo("8.4")), false)
+			remoteClaim(t, other)
+			other.ledger.Close()
+		}
+		l := newLocal(t, state, results, c, false)
+		jobs, err := l.Resume()
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("resumed %d, %v", len(jobs), err)
+		}
+		r := result.TestResult{ID: c[0].ID(), Product: c[0].Product, Version: c[0].Version, OverallStatus: "pass"}
+		if err := l.Install(jobs[0], r, "h"); errors.Is(err, ErrFenced) != test {
+			t.Errorf("%q took it: install = %v", taker, err)
+		}
+	}
+}
+
+func TestLedger_OverrideHoldsTheLease(t *testing.T) {
+	state, results := t.TempDir(), t.TempDir()
+	c := []matrix.Combination{combo("8.3")}
+	l := newLocal(t, state, results, c, false)
+	j := remoteClaim(t, l)
+
+	test := openLedger(t, state)
+	if err := test.Override(results, c[0].ID()); err != nil {
+		t.Fatal(err)
+	}
+	l.Release(j, Outcome{Kind: OutcomeAborted})
+	if _, st := next(t, l); st == StateJob {
+		t.Error("handed out again while builder test runs it")
+	}
+	if l.Tries(c[0]) != 0 || l.Counts()["tried"] != 0 {
+		t.Error("the override counted against the combination")
+	}
+	test.Unlease(results, c[0].ID())
+	if _, st := next(t, l); st != StateJob {
+		t.Errorf("control: after Unlease, claim got %v", st)
 	}
 }

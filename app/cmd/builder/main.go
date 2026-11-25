@@ -193,18 +193,20 @@ Flags:`)
 	tickerCtx, cancelTicker := context.WithCancel(context.Background())
 	prog.startTicker(tickerCtx)
 
-	var lg *queue.Ledger
-	if !*flagIgnoreQueue {
-		var err error
-		if lg, err = queue.OpenLedger(queueStateDir()); err != nil {
-			fatalf("%v", err)
-		}
-		defer lg.Close()
+	lg, err := queue.OpenLedger(queueStateDir())
+	if err != nil {
+		fatalf("%v", err)
 	}
+	defer lg.Close()
 
 	for _, c := range combos {
 		g.Go(func() error {
-			if lg != nil {
+			if *flagIgnoreQueue {
+				// A remote worker's run of it is fenced off and aborted.
+				if err := lg.Override(resultsDir, c.ID()); err != nil {
+					return err
+				}
+			} else {
 				ok, err := lg.Lease(resultsDir, c.ID())
 				if err != nil {
 					return err
@@ -214,8 +216,8 @@ Flags:`)
 					prog.done(c.ID(), comboSkip, 0, "", nil)
 					return nil
 				}
-				defer lg.Unlease(resultsDir, c.ID())
 			}
+			defer lg.Unlease(resultsDir, c.ID())
 			prog.started(c.ID())
 			comboStart := time.Now()
 			ran, err := runner.Run(ctx, c, cfg)

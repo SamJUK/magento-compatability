@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/samjuk/magento-compatability/internal/matrix"
@@ -192,6 +193,12 @@ func (l *Local) writeSweep(d *ledgerData) *sweep {
 	if l.initial != nil {
 		d.Sweeps[l.key] = l.initial
 		l.initial = nil
+		// Attempts from before -fresh ran under the old contract.
+		for _, a := range d.Attempts {
+			if a.Sweep == l.key && !a.Released {
+				a.State, a.Reason, a.Released = AttemptAborted, "sweep started fresh", true
+			}
+		}
 	}
 	return l.stored(d)
 }
@@ -225,10 +232,18 @@ func (l *Local) Tries(c matrix.Combination) int {
 	return n
 }
 
-// Next claims the first eligible combination not yet tried, then retries, so
+func (l *Local) Next(ctx context.Context) (Job, State, error) {
+	return l.Claim(ctx, "", "")
+}
+
+// Claim takes the first eligible combination not yet tried, then retries, so
 // a retry waits behind fresh work rather than running straight away. One
 // leased by another process is left for later.
-func (l *Local) Next(context.Context) (Job, State, error) {
+//
+// A claim for a remote worker is recorded as an attempt. The same request
+// again returns the same attempt, so a reply lost on the way isn't a lost
+// claim.
+func (l *Local) Claim(_ context.Context, worker, request string) (Job, State, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// Parse results before taking the ledger lock: the first pass reads
@@ -238,33 +253,12 @@ func (l *Local) Next(context.Context) (Job, State, error) {
 	}
 	var j Job
 	state := StateDone
-	err := l.ledger.update(func(d *ledgerData) error {
-		s := l.writeSweep(d)
-		l.ledger.dropDeadLeases(d)
-		if len(l.claimed) > 0 {
-			state = StateNone
+	// Idle workers ask every second; only a claim is worth an fsync.
+	err := l.ledger.locked(syscall.LOCK_EX, func(d *ledgerData) error {
+		if err := l.claimIn(d, worker, request, &j, &state); err != nil || state != StateJob {
+			return err
 		}
-		for _, retries := range []bool{false, true} {
-			for _, c := range l.Combos {
-				id := c.ID()
-				cs := s.Combos[id]
-				tried := cs != nil && cs.Tries > 0
-				if tried != retries || l.claimed[id] {
-					continue
-				}
-				if ls, held := d.Leases[leaseKey(l.ResultsDir, id)]; held && ls.Holder != l.ledger.holder {
-					state = StateNone
-					continue
-				}
-				if !l.eligible(s, c) {
-					continue
-				}
-				l.claim(d, s, c)
-				j, state = Job{Combination: c, Tries: s.state(id).Tries}, StateJob
-				return nil
-			}
-		}
-		return nil
+		return l.ledger.save(d)
 	})
 	if err != nil {
 		return Job{}, StateNone, err
@@ -272,10 +266,94 @@ func (l *Local) Next(context.Context) (Job, State, error) {
 	return j, state, nil
 }
 
+func (l *Local) claimIn(d *ledgerData, worker, request string, j *Job, state *State) error {
+	s := l.writeSweep(d)
+	l.ledger.dropDeadLeases(d)
+	if request != "" {
+		for _, a := range d.Attempts {
+			if a.Worker == worker && a.Request == request && a.Sweep == l.key {
+				if a.State != AttemptRunning {
+					*state = StateNone
+					return nil
+				}
+				*j, *state = l.jobFor(s, a), StateJob
+				return nil
+			}
+		}
+	}
+	if len(l.claimed) > 0 {
+		*state = StateNone
+	}
+	for _, retries := range []bool{false, true} {
+		for _, c := range l.Combos {
+			id := c.ID()
+			cs := s.Combos[id]
+			tried := cs != nil && cs.Tries > 0
+			if tried != retries || l.claimed[id] {
+				continue
+			}
+			if ls, held := d.Leases[leaseKey(l.ResultsDir, id)]; held && ls.Holder != l.ledger.holder {
+				*state = StateNone
+				continue
+			}
+			if !l.eligible(s, c) {
+				continue
+			}
+			l.claim(d, s, c)
+			*j, *state = Job{Combination: c, Tries: s.state(id).Tries}, StateJob
+			if worker != "" {
+				a := &Attempt{ID: newID(), Sweep: l.key, Combo: id, Lease: leaseKey(l.ResultsDir, id),
+					Worker: worker, Request: request, State: AttemptRunning, Claimed: time.Now().UTC()}
+				d.Attempts[a.ID] = a
+				j.Attempt, j.Worker, j.Claimed = a.ID, worker, a.Claimed
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+func (l *Local) jobFor(s *sweep, a *Attempt) Job {
+	j := Job{Attempt: a.ID, Worker: a.Worker, Claimed: a.Claimed}
+	for _, c := range l.Combos {
+		if c.ID() == a.Combo {
+			j.Combination = c
+		}
+	}
+	if cs := s.Combos[a.Combo]; cs != nil {
+		j.Tries = cs.Tries
+	}
+	return j
+}
+
+func (l *Local) Resume() ([]Job, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var jobs []Job
+	err := l.ledger.update(func(d *ledgerData) error {
+		s := l.writeSweep(d)
+		l.ledger.dropDeadLeases(d)
+		for _, a := range d.Attempts {
+			if a.Sweep != l.key || a.Released {
+				continue
+			}
+			if ls, held := d.Leases[a.Lease]; held && ls.Holder != l.ledger.holder {
+				a.State, a.Reason, a.Released = AttemptAborted, "leased by another process", true
+				continue
+			}
+			l.claimed[a.Combo] = true
+			d.Leases[a.Lease] = lease{Holder: l.ledger.holder, At: time.Now().UTC()}
+			jobs = append(jobs, l.jobFor(s, a))
+		}
+		return nil
+	})
+	return jobs, err
+}
+
 func (l *Local) claim(d *ledgerData, s *sweep, c matrix.Combination) {
 	id := c.ID()
 	l.claimed[id] = true
-	d.Leases[leaseKey(l.ResultsDir, id)] = lease{Holder: l.ledger.holder, At: time.Now().UTC()}
+	takeLease(d, leaseKey(l.ResultsDir, id), l.ledger.holder)
 	if r := l.result(c); r.status == StatusPass || (r.status == StatusFail && r.at.Before(s.Started)) {
 		s.state(id).Once = true
 	}
@@ -312,11 +390,33 @@ func resultPath(resultsDir string, c matrix.Combination) string {
 }
 
 func (l *Local) Release(j Job, o Outcome) {
+	if err := l.Settle(j, o); err != nil {
+		// Losing the count only risks an extra retry after a restart.
+		fmt.Fprintf(os.Stderr, "queue: saving attempts: %v\n", err)
+	}
+}
+
+// Settle is Release for a caller that must know the release was saved.
+func (l *Local) Settle(j Job, o Outcome) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	id := j.Combination.ID()
-	delete(l.claimed, id)
 	err := l.ledger.update(func(d *ledgerData) error {
+		if a := d.Attempts[j.Attempt]; a != nil {
+			switch {
+			case a.Released:
+				return nil // the claim may be another attempt's by now
+			case a.State == AttemptOverridden:
+				// builder test took it over; not held against anyone.
+				o = Outcome{Kind: OutcomeAborted, Requested: true}
+			case a.State == AttemptInstalled:
+				// Installed before a crash; the result is on disk.
+				o = Outcome{Kind: OutcomeResult, Wrote: true}
+			case a.live():
+				a.State, a.Reason = attemptState(o), o.Reason
+			}
+			a.Released = true
+		}
 		if d.Leases[leaseKey(l.ResultsDir, id)].Holder == l.ledger.holder {
 			delete(d.Leases, leaseKey(l.ResultsDir, id))
 		}
@@ -329,10 +429,57 @@ func (l *Local) Release(j Job, o Outcome) {
 		}
 		return nil
 	})
-	if err != nil {
-		// Losing the count only risks an extra retry after a restart.
-		fmt.Fprintf(os.Stderr, "queue: saving attempts: %v\n", err)
+	if err == nil {
+		delete(l.claimed, id)
 	}
+	return err
+}
+
+// Install writes a remote attempt's result if it is still current, marking it installing with the upload's hash first, so a re-upload after a crash finishes the job.
+func (l *Local) Install(j Job, r result.TestResult, hash string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ledger.update(func(d *ledgerData) error {
+		a := d.Attempts[j.Attempt]
+		switch {
+		case a == nil, a.Sweep != l.key:
+			return ErrFenced
+		case a.State == AttemptInstalled && a.Hash == hash:
+			return nil
+		case a.Released, !a.live():
+			return ErrFenced
+		}
+		a.State, a.Hash = AttemptInstalling, hash
+		if err := l.ledger.save(d); err != nil {
+			return err
+		}
+		if err := result.Write(resultPath(l.ResultsDir, j.Combination), r); err != nil {
+			return err
+		}
+		a.State = AttemptInstalled
+		return nil
+	})
+}
+
+func (l *Local) AttemptResult(id, worker string) (state, hash string) {
+	l.ledger.view(func(d *ledgerData) error {
+		if a := d.Attempts[id]; a != nil && a.Worker == worker {
+			state, hash = a.State, a.Hash
+		}
+		return nil
+	})
+	return state, hash
+}
+
+func (l *Local) AttemptState(id string) string {
+	st := ""
+	l.ledger.view(func(d *ledgerData) error {
+		if a := d.Attempts[id]; a != nil {
+			st = a.State
+		}
+		return nil
+	})
+	return st
 }
 
 func (l *Local) Done() bool {

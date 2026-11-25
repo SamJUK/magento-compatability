@@ -23,8 +23,9 @@ type Ledger struct {
 }
 
 type ledgerData struct {
-	Sweeps map[string]*sweep `json:"sweeps"`
-	Leases map[string]lease  `json:"leases"`
+	Sweeps   map[string]*sweep   `json:"sweeps"`
+	Leases   map[string]lease    `json:"leases"`
+	Attempts map[string]*Attempt `json:"attempts,omitempty"`
 }
 
 type sweep struct {
@@ -131,6 +132,9 @@ func (l *Ledger) locked(how int, fn func(*ledgerData) error) error {
 	if d.Leases == nil {
 		d.Leases = map[string]lease{}
 	}
+	if d.Attempts == nil {
+		d.Attempts = map[string]*Attempt{}
+	}
 	return fn(d)
 }
 
@@ -148,6 +152,12 @@ func lockFile(path string, how int) (*os.File, error) {
 
 func (l *Ledger) save(d *ledgerData) error {
 	l.dropDeadLeases(d)
+	// Kept a while so a re-upload after a lost reply still hears "installed".
+	for id, a := range d.Attempts {
+		if a.Released && time.Since(a.Claimed) > 7*24*time.Hour {
+			delete(d.Attempts, id)
+		}
+	}
 	data, err := json.Marshal(d)
 	if err != nil {
 		return err
@@ -193,7 +203,7 @@ func (l *Ledger) Lease(resultsDir, id string) (bool, error) {
 		if ls, held := d.Leases[key]; held && ls.Holder != l.holder {
 			return nil
 		}
-		d.Leases[key] = lease{Holder: l.holder, At: time.Now().UTC()}
+		takeLease(d, key, l.holder)
 		ok = true
 		return nil
 	})

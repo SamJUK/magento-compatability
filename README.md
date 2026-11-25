@@ -62,6 +62,27 @@ A second Ctrl+C stops at once without tearing down running stacks; the next `que
 One queue runs per machine. Its state lives in `~/.local/state/magento-compatibility/queue/ledger.json`.
 `test` skips any combination a queue is running at that moment, and the queue skips any `test` is running; `test -ignore-queue` runs it anyway.
 
+### Remote workers
+
+With `-workers`, the queue also hands runs to other machines over `worker.sock` in its state directory.
+The file maps each worker's token to a name, `{"<token>": "homelab-1"}`; keep it `0600`.
+`-slots 0` leaves every run to the workers.
+
+```bash
+./bin/magento-compatibility-builder queue -ids-file sweep.txt -workers ~/.config/m2test/workers.json -slots 0
+```
+
+Each worker runs `m2test-worker` against that socket, forwarded to it over SSH (`ssh -R /run/m2test/worker.sock:<state dir>/worker.sock`):
+
+```bash
+m2test-worker -socket /run/m2test/worker.sock -token-file ~/.config/m2test/token -release ~/m2test/current
+```
+
+A worker keeps each finished run in its spool until the queue has answered for it, so results outlive a dropped tunnel or a restarted queue.
+A worker that goes quiet for two minutes loses its runs to the next claim; its late uploads are refused.
+The queue checks every uploaded result against the combination it handed out and keeps any it refuses in `rejected/`.
+`test -ignore-queue` aborts a worker's run of the same combination and refuses its upload.
+
 ## What gets tested
 
 `matrix.yml` lists every release and the service versions to try.

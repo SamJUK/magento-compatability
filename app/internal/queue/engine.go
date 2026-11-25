@@ -25,6 +25,10 @@ const (
 type Job struct {
 	Combination matrix.Combination
 	Tries       int // finished runs before this one
+
+	Attempt string
+	Worker  string
+	Claimed time.Time
 }
 
 type OutcomeKind int

@@ -1,0 +1,716 @@
+// Copyright (c) 2026 Sam James. Licensed under the Open Software License version 3.0.
+// SPDX-License-Identifier: OSL-3.0
+
+package coord
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/samjuk/magento-compatability/internal/matrix"
+	"github.com/samjuk/magento-compatability/internal/queue"
+	"github.com/samjuk/magento-compatability/internal/result"
+	"github.com/samjuk/magento-compatability/internal/runner"
+)
+
+func init() {
+	ClaimWait, claimPoll, expireEvery, retryEvery = 100*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 20*time.Millisecond
+	HeartbeatEvery = 20 * time.Millisecond
+}
+
+var quiet = log.New(io.Discard, "", 0)
+
+func combo(php string) matrix.Combination {
+	return matrix.Combination{
+		Product: "magento", Version: "2.4.8", PHP: php,
+		WebserverType: "nginx", WebserverVersion: "1.28",
+		DBType: "mariadb", DBVersion: "11.4",
+		SearchType: "opensearch", SearchVersion: "3",
+		CacheType: "valkey", CacheVersion: "8",
+		QueueType: "rabbitmq", QueueVersion: "4.2",
+		Varnish: "none",
+	}
+}
+
+func goodResult(c matrix.Combination, stackUp string) result.TestResult {
+	steps := map[string]result.Step{"stack_up": {Status: stackUp}}
+	if stackUp == result.StatusPass {
+		steps["install"] = result.Step{Status: result.StatusPass}
+		steps["smoke"] = result.Step{Status: result.StatusPass}
+		steps["playwright"] = result.Step{Status: result.StatusSkip}
+	}
+	return result.TestResult{ID: c.ID(), Product: c.Product, Version: c.Version, Services: runner.Services(c),
+		Steps: steps, OverallStatus: result.OverallStatus(steps), Timestamp: result.Now()}
+}
+
+type rig struct {
+	t       *testing.T
+	results string
+	state   string
+	sock    string
+	combos  []matrix.Combination
+	src     *queue.Local
+	lg      *queue.Ledger
+	srv     *Server
+	stop    context.CancelFunc
+}
+
+func newRig(t *testing.T, combos []matrix.Combination) *rig {
+	t.Helper()
+	short, err := os.MkdirTemp("", "co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
+	r := &rig{t: t, results: t.TempDir(), state: t.TempDir(), sock: filepath.Join(short, "w.sock"), combos: combos}
+	r.start()
+	return r
+}
+
+func (r *rig) start() {
+	t := r.t
+	lg, err := queue.OpenLedger(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lg.Close() })
+	r.lg = lg
+	r.src, err = queue.NewLocal(lg, r.results, r.combos, queue.Contract{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.srv = &Server{Src: r.src, Tokens: map[string]string{"tok-a": "a", "tok-b": "b"}, Release: "rel1",
+		RejectDir: filepath.Join(r.state, "rejected"), Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.stop = cancel
+	t.Cleanup(cancel)
+	if err := r.srv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan struct{})
+	go func() { r.srv.Serve(ctx, r.sock); close(served) }()
+	srv := r.srv
+	t.Cleanup(func() { cancel(); <-served; srv.Wait() })
+	// The socket file appears before it listens, and a restart finds the old one.
+	waitFor(t, func() bool {
+		c, err := net.Dial("unix", r.sock)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	})
+}
+
+func (r *rig) restart() {
+	r.down()
+	r.start()
+}
+
+func (r *rig) down() {
+	r.stop()
+	r.srv.Wait()
+	r.lg.Close()
+}
+
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !ok(); {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (r *rig) worker(token string, fn func(context.Context, matrix.Combination, runner.RunConfig) (bool, error)) (*Worker, context.CancelFunc) {
+	return r.workerIn(token, r.t.TempDir(), fn)
+}
+
+func (r *rig) workerIn(token, spool string, fn func(context.Context, matrix.Combination, runner.RunConfig) (bool, error)) (*Worker, context.CancelFunc) {
+	w := &Worker{Client: NewClient(r.sock, token), Spool: spool, Version: "rel1", Slots: 2, Runner: fn, Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	bg, stopBG := context.WithCancel(context.Background())
+	if err := w.Start(bg); err != nil {
+		r.t.Fatal(err)
+	}
+	e := &queue.Engine{Source: w, MaxSlots: 2, Slots: func() int { return 2 }, Wait: func() string { return "" },
+		Run: w.Run, Log: quiet, IdlePoll: 5 * time.Millisecond}
+	done := make(chan struct{})
+	go func() { e.Start(ctx); close(done) }()
+	stop := func() { cancel(); <-done; w.Flush(context.Background()); stopBG(); w.Wait() }
+	r.t.Cleanup(stop)
+	return w, stop
+}
+
+func writes(status func(c matrix.Combination) string) func(context.Context, matrix.Combination, runner.RunConfig) (bool, error) {
+	return func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		return true, result.Write(filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json"), goodResult(c, status(c)))
+	}
+}
+
+func (r *rig) status(c matrix.Combination) string { return queue.Status(r.results, c) }
+
+func TestEndToEnd_TwoWorkersRunTheSweep(t *testing.T) {
+	combos := []matrix.Combination{combo("8.1"), combo("8.2"), combo("8.3"), combo("8.4")}
+	r := newRig(t, combos)
+	var runs atomic.Int32
+	var failedOnce atomic.Bool
+	fn := writes(func(c matrix.Combination) string {
+		runs.Add(1)
+		// 8.2 fails stack_up on its first run and must be retried.
+		if c.PHP == "8.2" && failedOnce.CompareAndSwap(false, true) {
+			return result.StatusFail
+		}
+		return result.StatusPass
+	})
+	_, stopA := r.worker("tok-a", fn)
+	_, stopB := r.worker("tok-b", func(ctx context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		return fn(ctx, c, cfg)
+	})
+	defer stopA()
+	defer stopB()
+
+	waitFor(t, func() bool { return r.src.Done() && r.srv.Live() == 0 })
+	for _, c := range combos {
+		if st := r.status(c); st != queue.StatusPass {
+			t.Errorf("%s: %s, want pass", c.PHP, st)
+		}
+	}
+	if runs.Load() != 5 {
+		t.Errorf("%d runs, want 5 (4 plus the setup retry)", runs.Load())
+	}
+}
+
+func TestEndToEnd_HostFailuresSpendTheirOwnBudget(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	var runs atomic.Int32
+	_, stop := r.worker("tok-a", func(context.Context, matrix.Combination, runner.RunConfig) (bool, error) {
+		runs.Add(1)
+		return true, errors.New("docker: cannot connect")
+	})
+	defer stop()
+	waitFor(t, func() bool { return r.src.Done() && r.srv.Live() == 0 })
+	if runs.Load() != queue.MaxHostFailures {
+		t.Errorf("%d runs, want %d", runs.Load(), queue.MaxHostFailures)
+	}
+	if r.src.Tries(c) != 0 {
+		t.Errorf("host failures used %d of the combination's tries", r.src.Tries(c))
+	}
+}
+
+func (r *rig) claim(token, request string) ClaimReply {
+	r.t.Helper()
+	var rep ClaimReply
+	c := NewClient(r.sock, token)
+	if err := c.call(context.Background(), "POST", "/hello", time.Second, HelloRequest{Schema: Schema, Release: "rel1"}, &HelloReply{}); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := c.call(context.Background(), "POST", "/claim", time.Second, ClaimRequest{Schema: Schema, Request: request}, &rep); err != nil {
+		r.t.Fatal(err)
+	}
+	return rep
+}
+
+func (r *rig) upload(token string, up Upload) (UploadReply, error) {
+	var rep UploadReply
+	err := NewClient(r.sock, token).call(context.Background(), "PUT", "/result/"+up.Attempt, 30*time.Second, up, &rep)
+	return rep, err
+}
+
+func resultUpload(t *testing.T, attempt string, res result.TestResult) Upload {
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return Upload{Schema: Schema, Attempt: attempt, Outcome: OutcomeResult, Result: raw, SHA256: hex.EncodeToString(sum[:])}
+}
+
+func TestClaim_SameRequestSameAttempt(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2")})
+	one, two := r.claim("tok-a", "req1"), r.claim("tok-a", "req1")
+	if one.State != ClaimJob || one.Attempt != two.Attempt {
+		t.Errorf("repeat claim got %+v then %+v", one, two)
+	}
+	if other := r.claim("tok-a", "req2"); other.Attempt == one.Attempt || other.Combo == one.Combo {
+		t.Errorf("a new request got the same claim: %+v", other)
+	}
+}
+
+func TestUpload_FencingAndOwnership(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	up := resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))
+
+	if rep, err := r.upload("tok-b", up); err != nil || rep.Status != "stale" {
+		t.Errorf("another worker's upload: %+v, %v; want stale", rep, err)
+	}
+	if r.status(c) != queue.StatusTodo {
+		t.Fatal("another worker's upload was installed")
+	}
+	if _, err := r.upload("nope", up); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("unknown token: %v, want 401", err)
+	}
+	if rep, err := r.upload("tok-a", up); err != nil || rep.Status != "installed" {
+		t.Fatalf("owner's upload: %+v, %v", rep, err)
+	}
+	if r.status(c) != queue.StatusPass {
+		t.Error("owner's upload not installed")
+	}
+	if rep, _ := r.upload("tok-a", up); rep.Status != "installed" {
+		t.Errorf("re-upload after a lost reply: %s, want installed", rep.Status)
+	}
+	if r.src.Tries(c) != 1 {
+		t.Errorf("tries = %d, want 1", r.src.Tries(c))
+	}
+}
+
+func TestUpload_Rejected(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	bad := goodResult(c, result.StatusPass)
+	bad.OverallStatus = result.StatusFail
+	rep, err := r.upload("tok-a", resultUpload(t, job.Attempt, bad))
+	if err != nil || rep.Status != "rejected" {
+		t.Fatalf("got %+v, %v; want rejected", rep, err)
+	}
+	if r.status(c) != queue.StatusTodo {
+		t.Error("a rejected result was installed")
+	}
+	if _, err := os.Stat(filepath.Join(r.state, "rejected", job.Attempt+".json")); err != nil {
+		t.Errorf("rejected upload not kept: %v", err)
+	}
+	if r.src.Tries(c) != 0 {
+		t.Error("a rejection used a try")
+	}
+
+	// Checksum must match too; and the control: a good one installs.
+	job = r.claim("tok-a", "req2")
+	up := resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))
+	up.SHA256 = strings.Repeat("0", 64)
+	if rep, _ := r.upload("tok-a", up); rep.Status != "rejected" {
+		t.Errorf("bad checksum: %s, want rejected", rep.Status)
+	}
+	job = r.claim("tok-a", "req3")
+	if rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); rep.Status != "installed" {
+		t.Errorf("control: good upload %s", rep.Status)
+	}
+}
+
+func TestUpload_TooBig(t *testing.T) {
+	old := MaxUpload
+	MaxUpload = 1 << 20 // the race detector makes 64MB crawl
+	defer func() { MaxUpload = old }()
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	job := r.claim("tok-a", "req1")
+	up := Upload{Schema: Schema, Attempt: job.Attempt, Outcome: OutcomeHost, Reason: strings.Repeat("x", int(MaxUpload))}
+	if _, err := r.upload("tok-a", up); err == nil || !strings.Contains(err.Error(), "413") {
+		t.Errorf("oversized upload: %v, want 413", err)
+	}
+}
+
+func TestLease_ExpiresWithoutHeartbeats(t *testing.T) {
+	old := LeaseFor
+	LeaseFor = 50 * time.Millisecond
+	defer func() { LeaseFor = old }()
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	waitFor(t, func() bool { return r.srv.Live() == 0 })
+
+	rep, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass)))
+	if rep.Status != "stale" || r.status(c) != queue.StatusTodo {
+		t.Errorf("late upload: %s, result %s; want stale and nothing installed", rep.Status, r.status(c))
+	}
+	if again := r.claim("tok-b", "req2"); again.State != ClaimJob {
+		t.Errorf("expired combination not claimable: %+v", again)
+	}
+}
+
+func TestLease_HeartbeatsKeepItAlive(t *testing.T) {
+	old := LeaseFor
+	LeaseFor = 100 * time.Millisecond
+	defer func() { LeaseFor = old }()
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	job := r.claim("tok-a", "req1")
+	cl := NewClient(r.sock, "tok-a")
+	for range 10 {
+		var rep HeartbeatReply
+		if err := cl.call(context.Background(), "POST", "/heartbeat", time.Second, HeartbeatRequest{Schema: Schema, Running: []string{job.Attempt}}, &rep); err != nil {
+			t.Fatal(err)
+		}
+		if len(rep.Abort) != 0 {
+			t.Fatalf("heartbeat said abort %v", rep.Abort)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if r.srv.Live() != 1 {
+		t.Error("lease expired despite heartbeats")
+	}
+}
+
+func TestRestart_KeepsRemoteAttempts(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	r.restart()
+	if r.srv.Live() != 1 {
+		t.Fatalf("%d live after restart, want 1", r.srv.Live())
+	}
+	if rep, err := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); err != nil || rep.Status != "installed" {
+		t.Errorf("upload after restart: %+v, %v", rep, err)
+	}
+}
+
+func TestOverride_AbortsAndFences(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+
+	lg, err := queue.OpenLedger(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+	if err := lg.Override(r.results, c.ID()); err != nil {
+		t.Fatal(err)
+	}
+	var rep HeartbeatReply
+	NewClient(r.sock, "tok-a").call(context.Background(), "POST", "/heartbeat", time.Second, HeartbeatRequest{Schema: Schema, Running: []string{job.Attempt}}, &rep)
+	if len(rep.Abort) != 1 || rep.Abort[0] != job.Attempt {
+		t.Fatalf("abort = %v, want the overridden attempt", rep.Abort)
+	}
+	if up, _ := r.upload("tok-a", resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))); up.Status != "stale" {
+		t.Errorf("overridden upload: %s, want stale", up.Status)
+	}
+	if r.status(c) != queue.StatusTodo || r.src.Tries(c) != 0 {
+		t.Errorf("override: result %s, tries %d; want nothing installed or counted", r.status(c), r.src.Tries(c))
+	}
+}
+
+func TestWorker_SpoolOutlastsCoordinator(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	release := make(chan struct{})
+	_, stop := r.worker("tok-a", func(ctx context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		<-release
+		return writes(func(matrix.Combination) string { return result.StatusPass })(ctx, c, cfg)
+	})
+	defer stop()
+	waitFor(t, func() bool { return r.srv.Live() == 1 })
+	r.down() // coordinator down while the run finishes
+	close(release)
+	time.Sleep(100 * time.Millisecond)
+	if r.status(c) != queue.StatusTodo {
+		t.Fatal("installed with the coordinator down")
+	}
+	r.start()
+	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+}
+
+func TestWorker_RestartReportsAbandonedRuns(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	spool := t.TempDir()
+	os.MkdirAll(filepath.Join(spool, job.Attempt, "results"), 0o700) // a run cut off by a reboot
+	os.MkdirAll(filepath.Join(spool, "notes"), 0o700)                // not ours
+	os.MkdirAll(filepath.Join(spool, job.Attempt, "results", c.Product), 0o700)
+	os.WriteFile(filepath.Join(spool, job.Attempt, "results", c.Product, c.ID()+".json"), []byte("{"), 0o600) // cut off mid-write
+	w := &Worker{Client: NewClient(r.sock, "tok-a"), Spool: spool, Version: "rel1", Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Wait()
+	defer cancel()
+	waitFor(t, func() bool { _, err := os.Stat(filepath.Join(spool, job.Attempt)); return err != nil })
+	if _, err := os.Stat(filepath.Join(spool, "notes")); err != nil {
+		t.Errorf("a folder that isn't an attempt was touched: %v", err)
+	}
+	if r.srv.Live() != 0 {
+		t.Error("abandoned attempt still live")
+	}
+	if r.src.Tries(c) != 0 {
+		t.Error("an abandoned run used a try")
+	}
+	if st := r.src.AttemptState(job.Attempt); st != queue.AttemptAborted {
+		t.Errorf("a run cut off mid-write ended %q, not aborted", st)
+	}
+}
+
+func TestHello_StaleWorkerGetsNoWork(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	cl := NewClient(r.sock, "tok-a")
+	var hello HelloReply
+	cl.call(context.Background(), "POST", "/hello", time.Second, HelloRequest{Schema: Schema, Release: "old"}, &hello)
+	if hello.Stale == "" {
+		t.Error("an old release wasn't called stale")
+	}
+	var rep ClaimReply
+	cl.call(context.Background(), "POST", "/claim", time.Second, ClaimRequest{Schema: Schema, Request: "r"}, &rep)
+	if rep.State == ClaimJob {
+		t.Errorf("stale worker got %+v", rep)
+	}
+	if got := r.claim("tok-a", "r2"); got.State != ClaimJob {
+		t.Errorf("control: after a good hello, claim got %+v", got)
+	}
+}
+
+func TestHTTP_MethodsAreFixed(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.3")})
+	cl := NewClient(r.sock, "tok-a")
+	req, _ := http.NewRequest("GET", "http://coordinator/claim", nil)
+	req.Header.Set("Authorization", "Bearer tok-a")
+	resp, err := cl.HTTP.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET /claim: %d", resp.StatusCode)
+	}
+}
+
+func TestRestart_WorkerMustSayHelloAgain(t *testing.T) {
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2")})
+	r.claim("tok-a", "req1")
+	r.restart()
+	var rep ClaimReply
+	NewClient(r.sock, "tok-a").call(context.Background(), "POST", "/claim", time.Second, ClaimRequest{Schema: Schema, Request: "req2"}, &rep)
+	if rep.State != ClaimHello {
+		t.Errorf("claim without hello after a restart: %q, want hello", rep.State)
+	}
+	if got := r.claim("tok-a", "req3"); got.State != ClaimJob {
+		t.Errorf("control: after hello, claim got %+v", got)
+	}
+}
+
+func TestWorker_RefusedUploadCountsAgainstTheHost(t *testing.T) {
+	old := MaxUpload
+	MaxUpload = 4 << 10
+	defer func() { MaxUpload = old }()
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	var runs atomic.Int32
+	spool := t.TempDir()
+	_, stop := r.workerIn("tok-a", spool, func(_ context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+		runs.Add(1)
+		res := goodResult(c, result.StatusPass)
+		res.ContainerLogs = map[string]string{"php": strings.Repeat("x", 8<<10)}
+		return true, result.Write(filepath.Join(cfg.ResultsDir, c.Product, c.ID()+".json"), res)
+	})
+	defer stop()
+	waitFor(t, func() bool { return r.src.Done() && r.srv.Live() == 0 })
+	if runs.Load() != queue.MaxHostFailures || r.src.Tries(c) != 0 {
+		t.Errorf("%d runs, %d tries; want %d runs on the host budget", runs.Load(), r.src.Tries(c), queue.MaxHostFailures)
+	}
+	waitFor(t, func() bool { e, _ := os.ReadDir(spool); return len(e) == 0 })
+}
+
+func TestWorker_StoppingIsNotAHostFailure(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	spool := t.TempDir()
+	var started atomic.Int32
+	block := func(ctx context.Context, _ matrix.Combination, _ runner.RunConfig) (bool, error) {
+		started.Add(1)
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	for i := range int32(queue.MaxHostFailures) {
+		_, stop := r.workerIn("tok-a", spool, block)
+		waitFor(t, func() bool { return started.Load() == i+1 })
+		stop()
+		if r.srv.Live() != 0 {
+			t.Fatal("the stop didn't report its abort")
+		}
+	}
+	_, stop := r.workerIn("tok-a", spool, writes(func(matrix.Combination) string { return result.StatusPass }))
+	defer stop()
+	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+}
+
+func TestWorker_RecoversUploadCutOffBeforeRename(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	spool := t.TempDir()
+	up, _ := json.Marshal(resultUpload(t, job.Attempt, goodResult(c, result.StatusPass)))
+	os.MkdirAll(filepath.Join(spool, job.Attempt), 0o700)
+	os.WriteFile(filepath.Join(spool, job.Attempt, "upload.json.tmp"), up, 0o600)
+	w := &Worker{Client: NewClient(r.sock, "tok-a"), Spool: spool, Version: "rel1", Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Wait()
+	defer cancel()
+	waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+}
+
+func TestWorker_LostClaimSurvivesRestart(t *testing.T) {
+	old := newRequestID
+	newRequestID = func() string { return "req1" }
+	defer func() { newRequestID = old }()
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2")})
+	lost := r.claim("tok-a", "req1") // the reply that never reached the worker
+	r.restart()
+
+	w := &Worker{Client: NewClient(r.sock, "tok-a"), Spool: t.TempDir(), Version: "rel1", Log: quiet, running: map[string]*running{}}
+	w.ready = true // it said hello to the coordinator before the restart
+	j, st, err := w.Next(context.Background())
+	if err != nil || st != queue.StateJob || j.Attempt != lost.Attempt {
+		t.Errorf("got %s %v %v, want the lost attempt %s", j.Attempt, st, err, lost.Attempt)
+	}
+}
+
+type failOnce struct {
+	path string
+	done atomic.Bool
+	next http.RoundTripper
+}
+
+func (f *failOnce) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Path == f.path && f.done.CompareAndSwap(false, true) {
+		return nil, errors.New("tunnel down")
+	}
+	return f.next.RoundTrip(r)
+}
+
+func TestWorker_LostClaimSurvivesFailedHello(t *testing.T) {
+	old, oldRetry := newRequestID, retryEvery
+	newRequestID, retryEvery = func() string { return "req1" }, 10*time.Millisecond
+	defer func() { newRequestID, retryEvery = old, oldRetry }()
+	r := newRig(t, []matrix.Combination{combo("8.1"), combo("8.2")})
+	lost := r.claim("tok-a", "req1")
+	r.restart()
+
+	c := NewClient(r.sock, "tok-a")
+	f := &failOnce{path: "/hello", next: c.HTTP.Transport}
+	c.HTTP.Transport = f
+	w := &Worker{Client: c, Spool: t.TempDir(), Version: "rel1", Log: quiet, running: map[string]*running{}}
+	w.ready = true
+	j, st, err := w.Next(context.Background())
+	if !f.done.Load() {
+		t.Fatal("hello never failed")
+	}
+	if err != nil || st != queue.StateJob || j.Attempt != lost.Attempt {
+		t.Errorf("got %s %v %v, want the lost attempt %s", j.Attempt, st, err, lost.Attempt)
+	}
+}
+
+func TestWorker_FlushGivesUpWhenUploadsAreBusy(t *testing.T) {
+	w := &Worker{Spool: t.TempDir(), Log: quiet}
+	w.upOnce.Do(func() { w.uploading = make(chan struct{}, 1) })
+	w.uploading <- struct{}{} // the upload loop is stuck mid-request
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { w.Flush(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Flush ignored its context")
+	}
+}
+
+func TestUpload_AnInstallCutOffBeforeAnotherSweepIsStale(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through 0500")
+	}
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	os.Chmod(r.results, 0o500) // the install fails after the ledger says installing
+	defer os.Chmod(r.results, 0o700)
+	up := resultUpload(t, job.Attempt, goodResult(c, result.StatusPass))
+	if _, err := r.upload("tok-a", up); err == nil {
+		t.Fatal("control: the install didn't fail")
+	}
+	os.Chmod(r.results, 0o700)
+	r.down()
+	r.combos = []matrix.Combination{combo("8.4")}
+	r.start()
+	if rep, err := r.upload("tok-a", up); err != nil || rep.Status != "stale" {
+		t.Errorf("got %+v, %v; want stale", rep, err)
+	}
+}
+
+func TestUpload_ARetryWhileTheFirstIsSettlingWaits(t *testing.T) {
+	c := combo("8.3")
+	r := newRig(t, []matrix.Combination{c})
+	job := r.claim("tok-a", "req1")
+	// Rejecting it blocks on this until it's read.
+	os.MkdirAll(filepath.Join(r.state, "rejected"), 0o755)
+	fifo := filepath.Join(r.state, "rejected", job.Attempt+".json")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad := goodResult(c, result.StatusPass)
+	bad.OverallStatus = result.StatusFail
+	up := resultUpload(t, job.Attempt, bad)
+	first := make(chan string, 1)
+	go func() { rep, _ := r.upload("tok-a", up); first <- rep.Status }()
+	waitFor(t, func() bool { return r.srv.Live() == 0 })
+	var se *StatusError
+	if rep, err := r.upload("tok-a", up); !errors.As(err, &se) || se.Code != http.StatusServiceUnavailable {
+		t.Errorf("a retry while the first settles got %+v, %v; want a 503", rep, err)
+	}
+	f, err := os.Open(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, f)
+	f.Close()
+	if st := <-first; st != "rejected" {
+		t.Errorf("control: first upload %s", st)
+	}
+}
+
+type answer func(*http.Request) int
+
+func (f answer) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: f(r), Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+}
+
+func TestWorker_AnUnwritableResultDoesntHoldUpTheRest(t *testing.T) {
+	a1, a2 := strings.Repeat("a", 24), strings.Repeat("b", 24)
+	c := NewClient("/nonexistent", "tok-a")
+	c.HTTP.Transport = answer(func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/"+a1) {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusOK
+	})
+	w := &Worker{Client: c, Spool: t.TempDir(), Log: quiet}
+	for _, a := range []string{a1, a2} {
+		if err := w.spool(a, Upload{Schema: Schema, Attempt: a, Outcome: OutcomeResult}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.uploadSpool(context.Background())
+	_, kept := os.Stat(filepath.Join(w.Spool, a1))
+	_, sent := os.Stat(filepath.Join(w.Spool, a2))
+	if kept != nil || !os.IsNotExist(sent) {
+		t.Errorf("a1 kept: %v; a2 left: %v", kept, sent)
+	}
+}

@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/samjuk/magento-compatability/internal/coord"
 	"github.com/samjuk/magento-compatability/internal/matrix"
 	"github.com/samjuk/magento-compatability/internal/queue"
 	"github.com/samjuk/magento-compatability/internal/runner"
@@ -34,6 +36,9 @@ start again: it carries on where it left off.
 Takes the same filters as test, or -ids-file for an exact list. Runs each
 combination with no result, retries stack_up failures up to 3 times and
 gives any other failure from this sweep one more go.
+
+With -workers, remote workers pull runs from worker.sock in the state
+directory as well; -slots 0 leaves all the work to them.
 
 A number in the slots file overrides -slots until the file is removed. One
 slot is dropped while free memory is under -min-free-mem, and no run starts
@@ -59,6 +64,7 @@ Flags:`)
 		retryFailures = fs.Bool("retry-failures", false, "Give failures from earlier sweeps one more go")
 		fresh         = fs.Bool("fresh", false, "Forget this sweep's saved attempt counts")
 		status        = fs.Bool("status", false, "Print the sweep's progress and exit")
+		workersFile   = fs.String("workers", "", "JSON file mapping each worker token to a worker name; serves worker.sock")
 	)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
@@ -148,22 +154,16 @@ Flags:`)
 		logger.Print("nothing left to run; -fresh forgets this sweep's attempts, so setup failures and missing results run again")
 	}
 
+	var stopWorkers func()
+	if *workersFile != "" {
+		stopWorkers = serveWorkers(ctx, logger, src, sel, *workersFile, stateDir)
+	}
+
 	engine := &queue.Engine{
 		Source:   src,
 		MaxSlots: maxSlots,
 		Slots:    slots,
-		Wait: func() string {
-			bytes, inodes, hasInodes, err := queue.DiskFree(*diskPath)
-			switch {
-			case err != nil:
-				return fmt.Sprintf("can't read free space on %s: %v", *diskPath, err)
-			case bytes < *minFreeGB<<30:
-				return fmt.Sprintf("under %dGB free on %s", *minFreeGB, *diskPath)
-			case hasInodes && inodes < 100_000:
-				return fmt.Sprintf("under 100k inodes free on %s", *diskPath)
-			}
-			return ""
-		},
+		Wait:     queue.DiskGuard(*diskPath, *minFreeGB),
 		Run: func(ctx context.Context, slot int, j queue.Job) queue.Outcome {
 			c := j.Combination
 			cfg := base
@@ -204,6 +204,15 @@ Flags:`)
 		Log: logger,
 	}
 	engine.Start(ctx)
+	if stopWorkers != nil {
+		defer func() { stop(); stopWorkers() }()
+		for ctx.Err() == nil && !src.Done() {
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
 
 	if ctx.Err() != nil {
 		logger.Print("stopped")
@@ -212,6 +221,44 @@ Flags:`)
 	counts = src.Counts()
 	logger.Printf("done: pass=%d fail=%d setup_fail=%d todo=%d",
 		counts[queue.StatusPass], counts[queue.StatusFail], counts[queue.StatusSetupFail], counts[queue.StatusTodo])
+}
+
+func serveWorkers(ctx context.Context, logger *log.Logger, src *queue.Local, sel *selection, path, stateDir string) (wait func()) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	var tokens map[string]string
+	if err := json.Unmarshal(data, &tokens); err != nil {
+		fatalf("%s: %v", path, err)
+	}
+	names := map[string]bool{}
+	for token, name := range tokens {
+		if token == "" || name == "" || names[name] {
+			fatalf("%s: every worker needs its own name and a token", path)
+		}
+		names[name] = true
+	}
+	workarounds, err := coord.LoadWorkarounds(filepath.Join(sel.composeDir, "..", "scripts", "workarounds.json"))
+	if err != nil {
+		fatalf("%v", err)
+	}
+	srv := &coord.Server{Src: src, Tokens: tokens, Contract: sel.contract(), Workarounds: workarounds,
+		RejectDir: filepath.Join(stateDir, "rejected"), Log: logger}
+	if err := srv.Start(ctx); err != nil {
+		fatalf("%v", err)
+	}
+	sock := filepath.Join(stateDir, "worker.sock")
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		if err := srv.Serve(ctx, sock); err != nil {
+			fatalf("worker socket: %v", err)
+		}
+	}()
+	logger.Printf("serving %d workers on %s", len(tokens), sock)
+	// Lets uploads that are installing finish.
+	return func() { <-served; srv.Wait() }
 }
 
 // runOutcome says how a finished run counts: an error with no result is the
