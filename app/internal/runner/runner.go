@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,6 +54,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 	text := compactWhitespace(strings.ToLower(log))
 
 	switch {
+	case strings.Contains(text, "[error] "+stepName+":"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "check_error",
+			Summary:     "The check could not run, so it says nothing about this release.",
+			LikelyFlaky: true,
+		}
 	case stepName == "install" && isTransientComposerNetworkFailure(text):
 		return &result.Failure{
 			Category:    "infrastructure",
@@ -189,6 +197,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Code:        "disk_space",
 			Summary:     "The run exhausted host or Docker disk space.",
 			LikelyFlaky: true,
+		}
+	case strings.Contains(text, "[fail] "+stepName+": uncaught "):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "check_exception",
+			Summary:     "The check script stopped on an uncaught error.",
+			LikelyFlaky: false,
 		}
 	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
 		return &result.Failure{
@@ -700,7 +715,62 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
+	for _, check := range serviceChecks(c) {
+		t = time.Now()
+		status, log := runServiceCheck(ctx, cp, check)
+		recordStep(check.name, status, time.Since(t).Seconds(), log)
+	}
+
 	return true, writeResult(ctx, resultPath, c, steps, overallStatus, cp, maxLog)
+}
+
+// serviceCheck is a script run in the php-fpm container that proves one service
+// works, not just that Magento connected to it. Each one is its own step, so
+// results recorded before a check existed stay valid.
+type serviceCheck struct {
+	name string
+	argv []string
+}
+
+// skipExitCode is what a check script exits with when the release has nothing
+// to test, for example no bulk operations.
+const skipExitCode = 3
+
+// serviceChecks lists the checks for a combination. They run after Playwright,
+// so the existing steps keep the meaning they had.
+func serviceChecks(c matrix.Combination) []serviceCheck {
+	return nil
+}
+
+// serviceCheckTimeout backstops run-check.sh, which stops the script itself after
+// 870 seconds. Killing the exec client would not stop what runs in the container.
+var serviceCheckTimeout = 15 * time.Minute
+
+func runServiceCheck(parent context.Context, cp *Compose, check serviceCheck) (string, string) {
+	ctx, cancel := context.WithTimeout(parent, serviceCheckTimeout)
+	defer cancel()
+
+	status, log, killed := execServiceCheck(ctx, cp, check)
+	if killed && parent.Err() == nil {
+		return result.StatusFail, log + fmt.Sprintf("\n[ERROR] %s: timed out after %s\n", check.name, serviceCheckTimeout)
+	}
+	return status, log
+}
+
+// execServiceCheck also reports whether the deadline killed the check itself.
+func execServiceCheck(ctx context.Context, cp *Compose, check serviceCheck) (status, log string, killed bool) {
+	args := append([]string{"bash", "/scripts/tests/run-check.sh"}, check.argv...)
+	log, err := cp.Exec(ctx, "php-fpm", args...)
+	killed = ctx.Err() == context.DeadlineExceeded
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return result.StatusPass, log, killed
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == skipExitCode:
+		return result.StatusSkip, log, killed
+	default:
+		return result.StatusFail, log, killed
+	}
 }
 
 // writeResult captures container logs then persists the result file.

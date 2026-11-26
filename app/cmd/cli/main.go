@@ -263,6 +263,7 @@ func printCSV(w io.Writer, data apiResponse) {
 		"db_type", "db_version", "search_type", "search_version",
 		"cache_type", "cache_version", "queue_type", "queue_version",
 		"varnish", "install", "smoke", "playwright", "timestamp",
+		"queue_check", "cron_check", "varnish_check",
 	})
 	for _, r := range data.Results {
 		_ = cw.Write([]string{
@@ -279,6 +280,9 @@ func printCSV(w io.Writer, data apiResponse) {
 			stepStatus(r, "smoke"),
 			stepStatus(r, "playwright"),
 			r.Timestamp,
+			stepStatus(r, "queue"),
+			stepStatus(r, "cron"),
+			stepStatus(r, "varnish"),
 		})
 	}
 	cw.Flush()
