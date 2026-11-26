@@ -198,11 +198,32 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The run exhausted host or Docker disk space.",
 			LikelyFlaky: true,
 		}
+	case stepName == "queue" && strings.Contains(text, "amq229119"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "disk_space",
+			Summary:     "Artemis stopped accepting messages because the host or Docker disk is nearly full.",
+			LikelyFlaky: true,
+		}
 	case strings.Contains(text, "[fail] "+stepName+": uncaught "):
 		return &result.Failure{
 			Category:    "compatibility",
 			Code:        "check_exception",
 			Summary:     "The check script stopped on an uncaught error.",
+			LikelyFlaky: false,
+		}
+	case stepName == "queue" && strings.Contains(text, "schedulebulk returned false"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "queue_publish_failed",
+			Summary:     "Magento could not publish a message to the queue service it connected to at install.",
+			LikelyFlaky: false,
+		}
+	case stepName == "queue" && strings.Contains(text, "[fail] queue:"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "queue_not_consumed",
+			Summary:     "A message was published but the consumer did not deliver it, so the queue connects but does not work.",
 			LikelyFlaky: false,
 		}
 	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
@@ -730,6 +751,9 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 type serviceCheck struct {
 	name string
 	argv []string
+	// service is the container whose log tail is added to a failed check, for
+	// causes the script cannot see, such as a broker refusing messages.
+	service string
 }
 
 // skipExitCode is what a check script exits with when the release has nothing
@@ -739,7 +763,9 @@ const skipExitCode = 3
 // serviceChecks lists the checks for a combination. They run after Playwright,
 // so the existing steps keep the meaning they had.
 func serviceChecks(c matrix.Combination) []serviceCheck {
-	return nil
+	return []serviceCheck{
+		{name: "queue", argv: []string{"php", "/scripts/tests/check-queue.php"}, service: "queue"},
+	}
 }
 
 // serviceCheckTimeout backstops run-check.sh, which stops the script itself after
@@ -750,7 +776,7 @@ func runServiceCheck(parent context.Context, cp *Compose, check serviceCheck) (s
 	ctx, cancel := context.WithTimeout(parent, serviceCheckTimeout)
 	defer cancel()
 
-	status, log, killed := execServiceCheck(ctx, cp, check)
+	status, log, killed := execServiceCheck(parent, ctx, cp, check)
 	if killed && parent.Err() == nil {
 		return result.StatusFail, log + fmt.Sprintf("\n[ERROR] %s: timed out after %s\n", check.name, serviceCheckTimeout)
 	}
@@ -758,7 +784,7 @@ func runServiceCheck(parent context.Context, cp *Compose, check serviceCheck) (s
 }
 
 // execServiceCheck also reports whether the deadline killed the check itself.
-func execServiceCheck(ctx context.Context, cp *Compose, check serviceCheck) (status, log string, killed bool) {
+func execServiceCheck(parent, ctx context.Context, cp *Compose, check serviceCheck) (status, log string, killed bool) {
 	args := append([]string{"bash", "/scripts/tests/run-check.sh"}, check.argv...)
 	log, err := cp.Exec(ctx, "php-fpm", args...)
 	killed = ctx.Err() == context.DeadlineExceeded
@@ -769,6 +795,13 @@ func execServiceCheck(ctx context.Context, cp *Compose, check serviceCheck) (sta
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == skipExitCode:
 		return result.StatusSkip, log, killed
 	default:
+		if check.service != "" {
+			// The check has already failed, so the broker log gets its own short deadline.
+			logCtx, cancel := context.WithTimeout(parent, 30*time.Second)
+			defer cancel()
+			serviceLog, _ := cp.Logs(logCtx, check.service, 8<<10)
+			log += fmt.Sprintf("\n=== %s container log ===\n%s", check.service, serviceLog)
+		}
 		return result.StatusFail, log, killed
 	}
 }

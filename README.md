@@ -108,6 +108,14 @@ MAGENTO_BASE_URL=http://localhost:8080 npx playwright test
 Your install needs the `e2e-checkout-product` that `docker/scripts/tests/seed-checkout-product.php` creates.
 Set `PLAYWRIGHT_ADMIN_USER`, `PLAYWRIGHT_ADMIN_PASSWORD` and `PLAYWRIGHT_ADMIN_PATH` if its admin differs from `admin` / `Admin123!`.
 
+## Service checks
+
+After Playwright, each service gets a check that proves it works rather than just connected.
+Each is its own step in the result, so results recorded before it existed stay valid, and a check exits 3 (recorded as a skip) when the release has nothing to test.
+Run one by hand with `docker compose exec php-fpm bash /scripts/tests/run-check.sh php /scripts/tests/check-queue.php`.
+
+- `queue`: schedules the bulk the admin mass attribute update schedules, runs `product_action_attribute.update` once, and checks the attribute changed and the bulk finished. Works over AMQP and STOMP.
+
 ## Results site
 
 ```bash
