@@ -226,6 +226,20 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "A message was published but the consumer did not deliver it, so the queue connects but does not work.",
 			LikelyFlaky: false,
 		}
+	case stepName == "cron" && strings.Contains(text, "cron job indexer_update_all_views ended as"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "cron_jobs_failed",
+			Summary:     "Cron ran but recorded failed or missed jobs in cron_schedule.",
+			LikelyFlaky: false,
+		}
+	case stepName == "cron" && strings.Contains(text, "[fail] cron:"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "indexer_not_updated",
+			Summary:     "A product change made under update-by-schedule indexing did not reach the indexes after cron ran, or the database triggers never recorded it.",
+			LikelyFlaky: false,
+		}
 	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
 		return &result.Failure{
 			Category:    "harness",
@@ -772,6 +786,7 @@ const skipExitCode = 3
 func serviceChecks(c matrix.Combination) []serviceCheck {
 	return []serviceCheck{
 		{name: "queue", argv: []string{"php", "/scripts/tests/check-queue.php"}, service: "queue"},
+		{name: "cron", argv: []string{"php", "/scripts/tests/check-cron.php"}},
 	}
 }
 
