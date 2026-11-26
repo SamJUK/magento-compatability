@@ -146,6 +146,21 @@ type provider interface {
 	DeletePool(ctx context.Context, firewall, key string) error
 }
 
+// workerFleet is what a burst asks of the coordinator and its tunnels.
+type workerFleet interface {
+	// Connect holds the worker's tunnel and deploys to it until ctx ends or it gives up.
+	Connect(ctx context.Context, name string, w *pool.Worker)
+	AddWorker(token, name string)
+	// Drain stops an idle worker getting work, and says whether it was idle.
+	Drain(name string) bool
+	// Fence stops a worker getting work, busy or not, and says whether it was idle.
+	Fence(name string) bool
+	// Abandon releases what a destroyed worker was running, charging it no try.
+	Abandon(name string)
+	Sick(name string) time.Duration
+	Undeployed(name string) time.Duration
+}
+
 type cloudHost interface {
 	Script(ctx context.Context, name, script string) ([]byte, error)
 	Setup(ctx context.Context, name string, w *pool.Worker, binary string) error
@@ -153,13 +168,11 @@ type cloudHost interface {
 
 // burst creates cloud workers for a sweep and destroys them once it can do without them.
 type burst struct {
-	pool     *pool.Pool
+	destroyer
 	host     cloudHost
-	prov     provider
 	cfg      cloudConfig
 	provider string // hetzner or aws
 	region   string // aws only
-	owner    string // AWS account, or Hetzner pool key ID
 	slots    int
 	spec     cloud.Spec // what every create asks for, less its own parts
 	types    []string   // hetzner: tried in turn while no location has room
@@ -170,18 +183,12 @@ type burst struct {
 	poolKey  string
 	poolID   string
 	binary   string
-	log      *log.Logger
-	n        int // servers the plan makes
+	planned  int // servers the plan makes
 	// budget is max_burst_cost in cents, or no limit once -yes went past it.
 	budget int64
-	// capped is why the budget tripped: it stays tripped for the sweep.
-	capped     string
-	connect    func(ctx context.Context, name string, w *pool.Worker)
-	admit      func(token, name string)
-	drain      func(name string, always bool) bool
-	abandon    func(name string)
-	sick       func(name string) time.Duration
-	undeployed func(name string) time.Duration
+	// capReason is why the budget tripped: it stays tripped for the sweep.
+	capReason string
+	fleet     workerFleet
 	// fail ends the sweep once nothing is left to run it.
 	fail     context.CancelCauseFunc
 	capacity *capacity
@@ -195,6 +202,14 @@ type burst struct {
 
 	// undeleted are servers a delete failed on; trim retries them.
 	undeleted map[string]*pool.Worker
+	// unresolved are creates that went unanswered and couldn't be found by
+	// their nonce; trim looks again.
+	unresolved map[string]unresolvedCreate
+}
+
+type unresolvedCreate struct {
+	w    *pool.Worker
+	bill *bill
 }
 
 // bill is a create billed by the started hour until its server's delete
@@ -291,7 +306,12 @@ func (b *burst) create(ctx context.Context) error {
 	}
 	srv, spec := pl.srv, pl.spec
 	if srv.ID == "" {
-		if srv, err = b.resolve(ctx, name, nonce, pl.err); err != nil {
+		if srv, err = b.findLostCreate(ctx, name, nonce, pl.err); err != nil {
+			if !cloud.Refused(pl.err) {
+				b.mu.Lock()
+				b.unresolved[name] = unresolvedCreate{w, pl.bill}
+				b.mu.Unlock()
+			}
 			return err
 		}
 		b.mu.Lock()
@@ -328,11 +348,11 @@ func (b *burst) serve(ctx, wctx context.Context, name string, bw *burstWorker) {
 	err := b.provision(wctx, name, bw.w)
 	// One lock, so trim sees it ready as soon as it can claim.
 	b.mu.Lock()
-	if err == nil && b.capped != "" {
-		err = errors.New(b.capped)
+	if err == nil && b.capReason != "" {
+		err = errors.New(b.capReason)
 	}
 	if err == nil {
-		b.admit(bw.w.Token, name)
+		b.fleet.AddWorker(bw.w.Token, name)
 		bw.ready = true
 	}
 	b.mu.Unlock()
@@ -343,7 +363,7 @@ func (b *burst) serve(ctx, wctx context.Context, name string, bw *burstWorker) {
 		}
 		return
 	}
-	b.connect(wctx, name, bw.w)
+	b.fleet.Connect(wctx, name, bw.w)
 	// connect only ends early when the tunnel gave up.
 	if wctx.Err() == nil && b.take(name) != nil {
 		b.log.Printf("%s: no tunnel; destroying it", name)
@@ -364,7 +384,7 @@ func (b *burst) place(ctx context.Context, name string, w *pool.Worker, spec clo
 	for try := 0; ; try++ {
 		if try > 0 {
 			if why := b.anotherTry(); why != "" {
-				b.forget(name)
+				b.unrecord(name)
 				return placement{}, fmt.Errorf("%s: no room, and %s", name, why)
 			}
 		}
@@ -374,7 +394,7 @@ func (b *burst) place(ctx context.Context, name string, w *pool.Worker, spec clo
 			return placement{}, err
 		}
 		if ctx.Err() != nil {
-			b.forget(name)
+			b.unrecord(name)
 			return placement{}, ctx.Err()
 		}
 		// Billed from the ask: an unanswered create may still have made one.
@@ -396,7 +416,7 @@ func (b *burst) place(ctx context.Context, name string, w *pool.Worker, spec clo
 		// The next location if one was made and then found full, else the
 		// next type in every location.
 		next := spec
-		if rest := after(spec.Locations, srv.Where); len(rest) > 0 { // Where only once made
+		if rest := locationsAfter(spec.Locations, srv.Where); len(rest) > 0 { // Where only once made
 			next.Locations = rest
 		} else if i := slices.Index(b.types, spec.Type); i >= 0 && i+1 < len(b.types) {
 			next.Type, next.Locations = b.types[i+1], b.spec.Locations
@@ -424,10 +444,10 @@ func (b *burst) place(ctx context.Context, name string, w *pool.Worker, spec clo
 	}
 }
 
-// resolve finds the server a create that went unanswered may have made.
-func (b *burst) resolve(ctx context.Context, name, nonce string, createErr error) (cloud.Server, error) {
+// findLostCreate finds the server a create that went unanswered may have made.
+func (b *burst) findLostCreate(ctx context.Context, name, nonce string, createErr error) (cloud.Server, error) {
 	if cloud.Refused(createErr) {
-		b.forget(name)
+		b.unrecord(name)
 		return cloud.Server{}, fmt.Errorf("%s: create: %v", name, createErr)
 	}
 	// It may exist, and take a moment to show.
@@ -507,54 +527,24 @@ func (b *burst) destroy(ctx context.Context, name string) {
 	}
 }
 
-// ownedBy describes an entry's account: on Hetzner, the ID of the pool
-// key in its project, as IDs are unique across projects.
-func ownedBy(a string) string {
-	if a == "" {
-		return "has no account recorded"
-	}
-	return "is in account " + a
-}
-
 // delete forgets a worker once its server is confirmed gone; otherwise it stays for gc.
 func (b *burst) delete(ctx context.Context, name string, w *pool.Worker) bool {
-	if w.Cloud.Owner != b.owner {
-		b.log.Printf("%s: server %s %s, not %s; not destroying it", name, w.Cloud.ID, ownedBy(w.Cloud.Owner), b.owner)
-		return false
-	}
-	var err error
-	for until := time.Now().Add(deleteWait); ; {
-		if err = b.prov.Delete(ctx, string(w.Cloud.ID)); err == nil {
-			_, err = b.prov.Get(ctx, string(w.Cloud.ID))
-			if errors.Is(err, cloud.ErrNotFound) {
-				b.log.Printf("%s: destroyed", name)
-				b.mu.Lock()
-				for _, s := range b.bills {
-					if s.id == w.Cloud.ID && s.gone.IsZero() {
-						s.gone = time.Now()
-					}
-				}
-				delete(b.undeleted, name)
-				b.mu.Unlock()
-				return b.forget(name) == nil
+	switch b.destroyer.delete(ctx, name, w) {
+	case gone:
+		b.mu.Lock()
+		for _, s := range b.bills {
+			if s.id == w.Cloud.ID && s.gone.IsZero() {
+				s.gone = time.Now()
 			}
 		}
-		// Locked by a running action, rate limited or a blip: try again.
-		if cloud.Refused(err) && !cloud.Locked(err) || ctx.Err() != nil || time.Now().After(until) {
-			break
-		}
-		time.Sleep(provisionPoll / 2)
+		delete(b.undeleted, name)
+		b.mu.Unlock()
+		return b.unrecord(name) == nil
+	case stillThere:
+		b.mu.Lock()
+		b.undeleted[name] = w
+		b.mu.Unlock()
 	}
-	if err == nil {
-		err = fmt.Errorf("still there after %s", deleteWait)
-	}
-	b.log.Printf("%s: destroying server %s: %v; trim and builder worker gc retry", name, w.Cloud.ID, err)
-	b.mu.Lock()
-	if b.undeleted == nil {
-		b.undeleted = map[string]*pool.Worker{}
-	}
-	b.undeleted[name] = w
-	b.mu.Unlock()
 	return false
 }
 
@@ -601,51 +591,54 @@ func (b *burst) overBudget() string {
 
 // unwell says why, if a worker has gone too long without deploying or being healthy.
 func (b *burst) unwell(name string) string {
-	if d := b.undeployed(name); d > deployFor {
+	if d := b.fleet.Undeployed(name); d > deployFor {
 		return fmt.Sprintf("release not deployed after %s", d.Round(time.Second))
 	}
-	if d := b.sick(name); d > sickFor {
+	if d := b.fleet.Sick(name); d > sickFor {
 		return fmt.Sprintf("not healthy for %s", d.Round(time.Second))
 	}
 	return ""
 }
 
-// anotherTry says why not, if the sweep is capped or another server-hour
+// anotherTry says why not, if the sweep is capReason or another server-hour
 // would pass the budget. Workers asking at once can each pass it by up to
 // two hours.
 func (b *burst) anotherTry() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if billed, _ := b.billed(); b.capped == "" && b.cents(billed+1) > b.budget {
+	if billed, _ := b.billed(); b.capReason == "" && b.cents(billed+1) > b.budget {
 		return "another try could pass max_burst_cost"
 	}
-	return b.capped
+	return b.capReason
 }
 
 // hetznerPrice is the dearest type and location, as a create may get any of them.
-// x86 only: db-mysql.yml pins linux/amd64.
-func hetznerPrice(ctx context.Context, hz *cloud.Hetzner, types, locations []string) (hourly float64, goarch string, err error) {
+func hetznerPrice(ctx context.Context, hz *cloud.Hetzner, types, locations []string) (hourly float64, err error) {
 	for _, t := range types {
 		p, arch, err := hz.ServerTypeIn(ctx, t, locations)
 		if err != nil {
-			return 0, "", err
+			return 0, err
 		}
 		if err := requireX86("hetzner", t, arch); err != nil {
-			return 0, "", err
+			return 0, err
 		}
 		hourly = max(hourly, p)
 	}
-	return hourly, "amd64", nil
+	return hourly, nil
 }
 
+// workerArch is the only architecture burst workers run: the images are built
+// for arm64 too, but no worker has been tried on it.
+const workerArch = "amd64"
+
 func requireX86(provider, serverType, arch string) error {
-	if arch != "amd64" {
-		return fmt.Errorf("%s: %s is %s; workers need x86, as some stacks pin linux/amd64 images", provider, serverType, arch)
+	if arch != workerArch {
+		return fmt.Errorf("%s: %s is %s; workers need x86, as burst workers have only been tried on it", provider, serverType, arch)
 	}
 	return nil
 }
 
-func after(locations []string, l string) []string {
+func locationsAfter(locations []string, l string) []string {
 	for i, x := range locations {
 		if x == l {
 			return locations[i+1:]
@@ -654,66 +647,64 @@ func after(locations []string, l string) []string {
 	return nil
 }
 
-func (b *burst) forget(name string) error {
-	err := b.pool.Update(func(inv *pool.Inventory) error {
-		if w := inv.Workers[name]; w != nil && w.Cloud != nil {
-			delete(inv.Workers, name)
-		}
-		return nil
-	})
-	if err != nil {
-		b.log.Printf("%s: removing it from the inventory: %v", name, err)
-	}
-	return err
+// verdict sorts the burst's ready workers for trim.
+type verdict struct {
+	retire  map[string]string // why: budget spent or past max age
+	unwell  map[string]string // why
+	overdue map[string]bool   // past max age and then some
+	healthy []string
 }
 
-// trim destroys workers the sweep can do without, keeping one idle until the sweep is done for late retries.
-// With nothing left to run it, it ends the sweep.
-func (b *burst) trim(ctx context.Context, waiting int, finished func() bool) {
-	done := finished()
+// classify sorts the ready workers, and trips the cap if the budget is spent.
+func (b *burst) classify() verdict {
 	b.mu.Lock()
-	if b.capped == "" {
-		b.capped = b.overBudget()
+	defer b.mu.Unlock()
+	if b.capReason == "" {
+		b.capReason = b.overBudget()
 	}
-	over := b.capped
-	var healthy []string
-	retire, unwell := map[string]string{}, map[string]string{}
-	overdue := map[string]bool{}
+	v := verdict{retire: map[string]string{}, unwell: map[string]string{}, overdue: map[string]bool{}}
 	for name, bw := range b.workers {
 		if !bw.ready {
 			continue
 		}
 		// As long as EC2 gives a run before it powers off: a run with no
 		// deadline may hang for good, and Hetzner has no power-off.
-		overdue[name] = time.Since(bw.w.Cloud.Created) > b.cfg.MaxAge+deadlineGrace
+		v.overdue[name] = time.Since(bw.w.Cloud.Created) > b.cfg.MaxAge+deadlineGrace
 		switch why := b.unwell(name); {
-		case over != "":
-			retire[name] = over
+		case b.capReason != "":
+			v.retire[name] = b.capReason
 		case time.Since(bw.w.Cloud.Created) > b.cfg.MaxAge:
-			retire[name] = fmt.Sprintf("past max age %s", b.cfg.MaxAge)
+			v.retire[name] = fmt.Sprintf("past max age %s", b.cfg.MaxAge)
 		case why != "":
-			unwell[name] = why
+			v.unwell[name] = why
 		default:
-			healthy = append(healthy, name)
+			v.healthy = append(v.healthy, name)
 		}
 	}
-	b.mu.Unlock()
+	return v
+}
+
+// trim destroys workers the sweep can do without, keeping one idle until the sweep is done for late retries.
+// With nothing left to run it, it ends the sweep.
+func (b *burst) trim(ctx context.Context, waiting int, finished func() bool) {
+	done := finished()
+	v := b.classify()
 	var gone []string
 	// Fenced while busy; destroyed once idle.
-	for name, why := range retire {
+	for name, why := range v.retire {
 		switch {
-		case b.drain(name, true):
+		case b.fleet.Fence(name):
 			b.log.Printf("%s: %s", name, why)
 			gone = append(gone, name)
-		case overdue[name]:
+		case v.overdue[name]:
 			b.log.Printf("%s: %s; still busy %s past max age, so stopped mid-run", name, why, deadlineGrace)
-			b.abandon(name)
+			b.fleet.Abandon(name)
 			gone = append(gone, name)
 		}
 	}
 	// Not fenced while busy: it may recover, and can't claim while sick.
-	for name, why := range unwell {
-		if b.unwell(name) != "" && b.drain(name, false) {
+	for name, why := range v.unwell {
+		if b.unwell(name) != "" && b.fleet.Drain(name) {
 			b.log.Printf("%s: %s", name, why)
 			gone = append(gone, name)
 		}
@@ -723,18 +714,27 @@ func (b *burst) trim(ctx context.Context, waiting int, finished func() bool) {
 		if done {
 			keep = 0
 		}
-		drop := len(healthy) - keep
-		for _, name := range healthy {
-			if drop > 0 && b.drain(name, false) {
+		drop := len(v.healthy) - keep
+		for _, name := range v.healthy {
+			if drop > 0 && b.fleet.Drain(name) {
 				gone = append(gone, name)
 				drop--
 			}
 		}
 	}
-	// A delete cut short would leave a server no one tracks but gc. Side by
-	// side, so slow deletes don't hold up teardown one after another.
+	b.destroyAll(ctx, gone)
+	// Asked again: the deletes take a while, and the sweep may have ended.
+	if !b.capacity.left() && !finished() {
+		b.fail(errors.New("no cloud worker left and nothing else to run on; the queue resumes where it stopped"))
+	}
+}
+
+// destroyAll destroys the named workers and retries the deletes that failed
+// before. A delete cut short would leave a server no one tracks but gc. Side
+// by side, so slow deletes don't hold up teardown one after another.
+func (b *burst) destroyAll(ctx context.Context, names []string) {
 	var wg sync.WaitGroup
-	for _, name := range gone {
+	for _, name := range names {
 		wg.Go(func() { b.destroy(context.WithoutCancel(ctx), name) })
 	}
 	// Still billing: the sweep may run on for hours on local slots.
@@ -744,11 +744,32 @@ func (b *burst) trim(ctx context.Context, waiting int, finished func() bool) {
 	for name, w := range retry {
 		wg.Go(func() { b.delete(context.WithoutCancel(ctx), name, w) })
 	}
-	wg.Wait()
-	// Asked again: the deletes take a while, and the sweep may have ended.
-	if !b.capacity.left() && !finished() {
-		b.fail(errors.New("no cloud worker left and nothing else to run on; the queue resumes where it stopped"))
+	b.mu.Lock()
+	lost := maps.Clone(b.unresolved)
+	b.mu.Unlock()
+	for name, u := range lost {
+		wg.Go(func() { b.retryUnresolved(context.WithoutCancel(ctx), name, u) })
 	}
+	wg.Wait()
+}
+
+// retryUnresolved looks again for the server of a create nobody could find
+// by its nonce, and deletes it if it exists. It is billed until then.
+func (b *burst) retryUnresolved(ctx context.Context, name string, u unresolvedCreate) {
+	found, err := b.prov.List(ctx, nonceSelector(b.poolID, u.w.Cloud.Nonce))
+	// Two matches can't be told apart: they stay for gc.
+	if err != nil || len(found) != 1 {
+		return
+	}
+	b.mu.Lock()
+	delete(b.unresolved, name)
+	u.bill.id = pool.ServerID(found[0].ID)
+	b.mu.Unlock()
+	w, cl := *u.w, *u.w.Cloud
+	w.Cloud, w.Host, cl.ID = &cl, found[0].IP, pool.ServerID(found[0].ID)
+	// Keeps its entry until the delete is confirmed.
+	b.record(name, &w)
+	b.delete(ctx, name, &w)
 }
 
 func (b *burst) end(ctx context.Context) {
@@ -768,7 +789,7 @@ func (b *burst) end(ctx context.Context) {
 	for name, bw := range all {
 		// Stopped mid-run by the queue, or left for gc to destroy: either
 		// way not the host's failure, which a resume would charge it as.
-		b.abandon(name)
+		b.fleet.Abandon(name)
 		wg.Go(func() { b.delete(ctx, name, bw.w) })
 	}
 	wg.Wait()
@@ -787,28 +808,29 @@ func keyOnly(public string) string {
 	return f[0] + " " + f[1]
 }
 
-func (b *burst) useAWS(ctx context.Context, a *cloud.AWS) (goarch string, err error) {
+func (b *burst) useAWS(ctx context.Context, a *cloud.AWS) error {
 	c := b.cfg.AWS
 	b.prov, b.region, b.owner, b.slots = a, c.Region, a.Account, c.Slots
 	// Past max age the coordinator destroys it; this is for when the
 	// coordinator is gone, so it leaves a running job time to finish.
 	b.deadline = b.cfg.MaxAge + deadlineGrace
-	if goarch, err = a.InstanceType(ctx, c.Type); err != nil {
-		return "", err
-	}
-	if err := requireX86("aws", c.Type, goarch); err != nil {
-		return "", err
-	}
-	image, root, err := a.Image(ctx, c.Image, goarch)
+	arch, err := a.InstanceType(ctx, c.Type)
 	if err != nil {
-		return "", err
+		return err
+	}
+	if err := requireX86("aws", c.Type, arch); err != nil {
+		return err
+	}
+	image, root, err := a.Image(ctx, c.Image, workerArch)
+	if err != nil {
+		return err
 	}
 	subnets, err := a.Subnets(ctx, c.Type)
 	if err != nil {
-		return "", err
+		return err
 	}
 	b.spec = cloud.Spec{Type: c.Type, Image: image, RootDevice: root, DiskGB: c.DiskGB, Subnets: subnets}
-	return goarch, nil
+	return nil
 }
 
 // prepareBurst checks and readies what a burst needs before the sweep
@@ -835,10 +857,10 @@ func prepareBurst(ctx context.Context, logger *log.Logger, src *queue.Local, pro
 	if err != nil {
 		return nil, err
 	}
-	b := &burst{pool: p, host: p, cfg: cfg, provider: provider, poolKey: poolKey, poolID: poolID, log: logger}
+	b := &burst{destroyer: destroyer{pool: p, log: logger}, host: p, cfg: cfg, provider: provider, poolKey: poolKey, poolID: poolID, undeleted: map[string]*pool.Worker{}, unresolved: map[string]unresolvedCreate{}}
 	// Checked before anything is made: those cost nothing.
 	var hourly float64
-	var goarch, where string
+	var where string
 	switch provider {
 	case "hetzner":
 		hz, err := newHetzner()
@@ -848,7 +870,7 @@ func prepareBurst(ctx context.Context, logger *log.Logger, src *queue.Local, pro
 		b.prov, b.slots, b.types = hz, cfg.Hetzner.Slots, cfg.Hetzner.Type
 		where = strings.Join(b.types, " or ") + " in " + strings.Join(cfg.Hetzner.Location, " or ")
 		b.spec = cloud.Spec{Type: b.types[0], Locations: cfg.Hetzner.Location, Image: cfg.Hetzner.Image}
-		if hourly, goarch, err = hetznerPrice(ctx, hz, b.types, cfg.Hetzner.Location); err != nil {
+		if hourly, err = hetznerPrice(ctx, hz, b.types, cfg.Hetzner.Location); err != nil {
 			return nil, err
 		}
 	case "aws":
@@ -859,12 +881,12 @@ func prepareBurst(ctx context.Context, logger *log.Logger, src *queue.Local, pro
 		if err != nil {
 			return nil, err
 		}
-		if goarch, err = b.useAWS(ctx, a); err != nil {
+		if err = b.useAWS(ctx, a); err != nil {
 			return nil, err
 		}
 		hourly, where = cfg.AWS.Hourly, cfg.AWS.Type+" in "+cfg.AWS.Region
 	}
-	if err := b.plan(ctx, asked, src.Counts()["eligible"], hourly, where, yes); err != nil || b.n == 0 {
+	if err := b.plan(ctx, asked, src.Counts()["eligible"], hourly, where, yes); err != nil || b.planned == 0 {
 		return nil, err
 	}
 	switch c := b.prov.(type) {
@@ -880,20 +902,20 @@ func prepareBurst(ctx context.Context, logger *log.Logger, src *queue.Local, pro
 	if err != nil {
 		return nil, err
 	}
-	if err := b.buildWorker(ctx, goarch); err != nil {
+	if err := b.buildWorker(ctx); err != nil {
 		return nil, err
 	}
 	keepAwake()
 	return b, nil
 }
 
-func (b *burst) buildWorker(ctx context.Context, goarch string) error {
+func (b *burst) buildWorker(ctx context.Context) error {
 	tmp, err := os.MkdirTemp("", "m2test-burst")
 	if err != nil {
 		return err
 	}
 	b.binary = filepath.Join(tmp, "m2test-worker")
-	if err := pool.BuildWorker(ctx, filepath.Join(findRepoRoot(), "app"), goarch, b.binary); err != nil {
+	if err := pool.BuildWorker(ctx, filepath.Join(findRepoRoot(), "app"), workerArch, b.binary); err != nil {
 		os.RemoveAll(tmp)
 		return err
 	}
@@ -935,7 +957,7 @@ func (b *burst) plan(ctx context.Context, asked, runs int, hourly float64, where
 		// Past it by choice: max_age is the limit.
 		b.budget = math.MaxInt64
 	}
-	b.n = n
+	b.planned = n
 	return nil
 }
 
@@ -947,8 +969,8 @@ const (
 
 // run makes the burst's servers for the fleet, and returns what destroys them.
 func (b *burst) run(ctx context.Context, f *fleet, src *queue.Local, fail context.CancelCauseFunc) (end func()) {
-	b.connect, b.admit, b.drain, b.abandon, b.sick, b.undeployed, b.fail = f.connect, f.srv.AddWorker, f.srv.Drain, f.srv.Abandon, f.srv.Sick, f.srv.Undeployed, fail
-	b.start(ctx, b.n)
+	b.fleet, b.fail = f, fail
+	b.start(ctx, b.planned)
 	trimmed := make(chan struct{})
 	go func() {
 		defer close(trimmed)
@@ -1125,10 +1147,10 @@ func gc(ctx context.Context, p *pool.Pool, prov provider, t target, poolID strin
 		}
 		return kept + len(doomed), nil
 	}
-	b := &burst{pool: p, prov: prov, log: logger, provider: t.provider, region: t.region, owner: t.owner}
+	d := destroyer{pool: p, prov: prov, owner: t.owner, log: logger}
 	failed := 0
 	for _, id := range slices.Sorted(maps.Keys(doomed)) {
-		if !b.delete(ctx, doomed[id], &pool.Worker{Cloud: &pool.Cloud{ID: pool.ServerID(id), Owner: t.owner}}) {
+		if !d.remove(ctx, doomed[id], &pool.Worker{Cloud: &pool.Cloud{ID: pool.ServerID(id), Owner: t.owner}}) {
 			failed++
 		}
 	}

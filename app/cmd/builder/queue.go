@@ -102,24 +102,25 @@ func runQueue(args []string) {
 	}
 
 	stateDir := queueStateDir()
-	lockPath := filepath.Join(stateDir, "queue.lock")
-	if !*status {
-		lock, err := takeQueueLock(lockPath)
-		if err != nil {
-			fatalf("%v", err)
-		}
-		defer lock.Close()
+	releases := filepath.Join(stateDir, "releases")
+	if *status {
+		queueStatus(sel, combos, stateDir, releases, *force, *retryFailures)
+		return
 	}
+	lock, err := takeQueueLock(filepath.Join(stateDir, "queue.lock"))
+	if err != nil {
+		fatalf("%v", err)
+	}
+	defer lock.Close()
 
 	var ws *workers
 	burstN, burstProvider := 0, ""
-	if *cloudFlag != "" && !*status {
-		var err error
+	if *cloudFlag != "" {
 		if burstProvider, burstN, err = parseCloud(*cloudFlag); err != nil {
 			fatalf("%v", err)
 		}
 	}
-	if (*workerNames != "" || burstN > 0) && !*status {
+	if *workerNames != "" || burstN > 0 {
 		ws = loadWorkers(*workerNames, filepath.Join(stateDir, "worker.sock"), burstN > 0)
 	}
 	// Before anything is saved, so the retry it suggests isn't a changed sweep.
@@ -128,37 +129,11 @@ func runQueue(args []string) {
 	if v, ok := slotsOverride(slotsFile); ok {
 		maxSlots = max(maxSlots, v)
 	}
-	if maxSlots == 0 && ws == nil && !*status {
+	if maxSlots == 0 && ws == nil {
 		fatalf("-slots 0 runs nothing here; give it -workers or -cloud")
 	}
-	lg, err := queue.OpenLedger(stateDir)
-	if err != nil {
-		fatalf("%v", err)
-	}
+	lg, src, contract := openSweep(sel, combos, stateDir, releases, ws, burstN, *fresh, *force, *retryFailures)
 	defer lg.Close()
-	contract := sel.contract()
-	releases := filepath.Join(stateDir, "releases")
-	if contract.Release, err = sweepRelease(lg, sel, combos, *fresh && !*status, ws != nil, releases); err != nil && !*status {
-		fatalf("%v", err)
-	}
-	if ws != nil && (len(ws.remote) > 0 || burstN > 0) {
-		if _, err := os.Stat(filepath.Join(releases, contract.Release) + ".tar.gz"); err != nil {
-			fatalf("remote workers need the release tarball: %v; -fresh snapshots the checkout again", err)
-		}
-	}
-	src, err := queue.NewLocal(lg, sel.resultsDir, combos, contract, *fresh && !*status)
-	if err != nil && !(*status && errors.Is(err, queue.ErrContractChanged)) {
-		fatalf("%v", err)
-	}
-	src.Force = *force
-	src.RetryFailures = *retryFailures
-	if *status {
-		printQueueStatus(src, lockPath)
-		return
-	}
-	if err := src.Save(); err != nil {
-		fatalf("%v", err)
-	}
 
 	// With the terminal gone, a log write mustn't kill teardown.
 	signal.Ignore(syscall.SIGPIPE)
@@ -168,21 +143,26 @@ func runQueue(args []string) {
 	go func() { <-signalled.Done(); stop() }()
 	ctx, cancel := context.WithCancelCause(signalled)
 	defer cancel(nil)
+	// A lost ledger ends the sweep: nothing claims again, so the rest would sit idle.
+	src.OnLost = cancel
 	incomplete := false
 	// Deferred first so it runs last, after a burst's teardown.
 	defer func() {
 		if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			fatalf("%v", err)
 		}
-		// Stopped, or runs left without a result of their own: a caller mustn't publish what's there.
-		if signalled.Err() != nil || incomplete {
+		// Stopped before the sweep was done, or runs left without a result of their own: a caller mustn't publish what's there.
+		if incomplete {
 			os.Exit(1)
 		}
 	}()
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 
-	stacksDir := filepath.Join(stateDir, "stacks")
-	removeLeftoverStacks(ctx, logger, stacksDir)
+	stacks := queue.Stacks{Dir: filepath.Join(stateDir, "stacks"), Log: logger}
+	if err := os.MkdirAll(stacks.Dir, 0o755); err != nil {
+		fatalf("%v", err)
+	}
+	stacks.RemoveLeftovers(ctx, func(_ string, err error) { logger.Print(err) })
 
 	slots := func() int {
 		n := *numSlots
@@ -211,23 +191,7 @@ func runQueue(args []string) {
 
 	var stopWorkers func()
 	if ws != nil {
-		c := &capacity{local: maxSlots > 0 || len(ws.tokens) > len(ws.remote)}
-		var b *burst
-		if burstN > 0 {
-			// Before any worker starts, so a refusal has nothing to tear down.
-			if b, err = prepareBurst(ctx, logger, src, burstProvider, burstN, *yes); err != nil {
-				fatalf("%v", err)
-			}
-			if b != nil {
-				c.burst, b.capacity = b, c
-			}
-		}
-		f := serveWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, c)
-		stopWorkers = f.wait
-		if b != nil {
-			endBurst := b.run(ctx, f, src, cancel)
-			stopWorkers = func() { endBurst(); f.wait() }
-		}
+		stopWorkers = startWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, burstProvider, burstN, maxSlots, *yes)
 	}
 
 	engine := &queue.Engine{
@@ -235,7 +199,7 @@ func runQueue(args []string) {
 		MaxSlots: maxSlots,
 		Slots:    slots,
 		Wait:     guards(queue.DiskGuard(*diskPath, *minFreeGB), imagesGuard(ctx, readyImages)),
-		Run:      localRun(base, sel.resultsDir, stacksDir, &mem, logger),
+		Run:      localRun(base, sel.resultsDir, stacks, &mem, logger),
 		Log:      logger,
 	}
 	engine.Start(ctx)
@@ -251,11 +215,86 @@ func runQueue(args []string) {
 		}
 	}
 
-	if ctx.Err() != nil {
-		logger.Print("stopped")
-		return
+	incomplete = sweepIncomplete(ctx, logger, src, len(combos))
+}
+
+// queueStatus prints a sweep's progress without taking the queue lock or changing anything.
+func queueStatus(sel *selection, combos []matrix.Combination, stateDir, releases string, force, retryFailures bool) {
+	lg, err := queue.OpenLedger(stateDir)
+	if err != nil {
+		fatalf("%v", err)
 	}
-	incomplete = reportSweep(logger, src.Counts(), len(combos))
+	defer lg.Close()
+	contract := sel.contract()
+	contract.Release, _ = sweepRelease(lg, sel, combos, false, false, releases)
+	src, err := queue.NewLocal(lg, sel.resultsDir, combos, contract, false)
+	if err != nil && !errors.Is(err, queue.ErrContractChanged) {
+		fatalf("%v", err)
+	}
+	src.Force, src.RetryFailures = force, retryFailures
+	printQueueStatus(src, filepath.Join(stateDir, "queue.lock"))
+}
+
+// openSweep opens the ledger and finds this sweep in it, checking what its workers need, and saves it.
+func openSweep(sel *selection, combos []matrix.Combination, stateDir, releases string, ws *workers, burstN int, fresh, force, retryFailures bool) (*queue.Ledger, *queue.Local, queue.Contract) {
+	lg, err := queue.OpenLedger(stateDir)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	contract := sel.contract()
+	if contract.Release, err = sweepRelease(lg, sel, combos, fresh, ws != nil, releases); err != nil {
+		fatalf("%v", err)
+	}
+	if ws != nil && (len(ws.remote) > 0 || burstN > 0) {
+		if _, err := os.Stat(filepath.Join(releases, contract.Release) + ".tar.gz"); err != nil {
+			fatalf("remote workers need the release tarball: %v; -fresh snapshots the checkout again", err)
+		}
+	}
+	src, err := queue.NewLocal(lg, sel.resultsDir, combos, contract, fresh)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	src.Force, src.RetryFailures = force, retryFailures
+	if err := src.Save(); err != nil {
+		fatalf("%v", err)
+	}
+	return lg, src, contract
+}
+
+// startWorkers serves the sweep to its workers and starts the burst, if any, and returns what stops them.
+func startWorkers(ctx context.Context, cancel context.CancelCauseFunc, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir, burstProvider string, burstN, maxSlots int, yes bool) (stop func()) {
+	c := &capacity{local: maxSlots > 0 || len(ws.tokens) > len(ws.remote)}
+	var b *burst
+	if burstN > 0 {
+		// Before any worker starts, so a refusal has nothing to tear down.
+		var err error
+		if b, err = prepareBurst(ctx, logger, src, burstProvider, burstN, yes); err != nil {
+			fatalf("%v", err)
+		}
+		if b != nil {
+			c.burst, b.capacity = b, c
+		}
+	}
+	f := serveWorkers(ctx, cancel, logger, src, contract, releases, ws, stateDir, c)
+	stop = f.wait
+	if b != nil {
+		endBurst := b.run(ctx, f, src, cancel)
+		stop = func() { endBurst(); f.wait() }
+	}
+	return stop
+}
+
+// sweepIncomplete says whether the sweep ended short of done. A signal after
+// the last run settled, such as during a burst's teardown, doesn't count.
+func sweepIncomplete(ctx context.Context, logger *log.Logger, src interface {
+	Done() bool
+	Counts() map[string]int
+}, combos int) bool {
+	if ctx.Err() != nil && !src.Done() {
+		logger.Print("stopped")
+		return true
+	}
+	return reportSweep(logger, src.Counts(), combos)
 }
 
 // reportSweep logs how the sweep ended, and says whether runs are left without a result.
@@ -331,24 +370,18 @@ func localImages(ctx context.Context, logger *log.Logger, sel *selection, base *
 }
 
 // localRun runs a job in a local slot.
-func localRun(base runner.RunConfig, resultsDir, stacksDir string, mem *queue.MemorySampler, logger *log.Logger) func(context.Context, int, queue.Job) queue.Outcome {
+func localRun(base runner.RunConfig, resultsDir string, stacks queue.Stacks, mem *queue.MemorySampler, logger *log.Logger) func(context.Context, int, queue.Job) queue.Outcome {
 	return func(ctx context.Context, slot int, j queue.Job) queue.Outcome {
 		c := j.Combination
 		cfg := base
 		project := ""
 		cfg.OnProject = func(name string) {
 			project = name
-			if err := os.WriteFile(filepath.Join(stacksDir, name), nil, 0o644); err != nil {
-				logger.Printf("recording stack %s: %v", name, err)
-			}
+			stacks.Record(name)
 		}
 		defer func() {
-			if project == "" || ctx.Err() != nil {
-				return
-			}
-			// Teardown can fail or time out; keep the record until it's gone.
-			if up, err := queue.StackExists(ctx, project); err == nil && !up {
-				os.Remove(filepath.Join(stacksDir, project))
+			if project != "" {
+				stacks.ForgetIfGone(ctx, project)
 			}
 		}()
 		logger.Printf("slot %d: start %s (try %d)", slot, c.ID(), j.Tries+1)
@@ -367,8 +400,18 @@ func localRun(base runner.RunConfig, resultsDir, stacksDir string, mem *queue.Me
 		}
 		logger.Print(msg)
 		after := queue.ResultMod(resultsDir, c)
-		return runOutcome(!after.IsZero() && !after.Equal(before), err)
+		return localOutcome(resultsDir, c, !after.IsZero() && !after.Equal(before), err)
 	}
+}
+
+// localOutcome is runOutcome, plus a host failure inside a written result, as on a remote worker.
+func localOutcome(resultsDir string, c matrix.Combination, wrote bool, err error) queue.Outcome {
+	if wrote {
+		if code := queue.HostFailure(queue.ResultPath(resultsDir, c)); code != "" {
+			return queue.Outcome{Kind: queue.OutcomeHost, Reason: code}
+		}
+	}
+	return runOutcome(wrote, err)
 }
 
 type workers struct {
@@ -460,10 +503,12 @@ func cloudEntries(inv *pool.Inventory) []string {
 }
 
 type fleet struct {
-	srv     *coord.Server
+	*coord.Server
 	connect func(ctx context.Context, name string, w *pool.Worker)
 	wait    func()
 }
+
+func (f *fleet) Connect(ctx context.Context, name string, w *pool.Worker) { f.connect(ctx, name, w) }
 
 func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log.Logger, src *queue.Local, contract queue.Contract, releases string, ws *workers, stateDir string, c *capacity) *fleet {
 	p, tokens, remote := ws.pool, ws.tokens, ws.remote
@@ -514,7 +559,7 @@ func serveWorkers(ctx context.Context, fail context.CancelCauseFunc, logger *log
 		tunnel.Wait()
 	}
 	tunnels := connectAll(ctx, remote, connect, fail, c)
-	return &fleet{srv: srv, connect: connect, wait: func() { <-served; srv.Wait(); tunnels.Wait() }}
+	return &fleet{Server: srv, connect: connect, wait: func() { <-served; srv.Wait(); tunnels.Wait() }}
 }
 
 // connectAll connects each named worker; the last to give up ends the sweep when nothing else can run it.
@@ -595,7 +640,7 @@ func keepIDs(combos []matrix.Combination, path string) ([]matrix.Combination, er
 	return kept, sc.Err()
 }
 
-// slotsOverride is the number in the slots file, capped at pool.MaxSlots.
+// slotsOverride is the number in the slots file, capReason at pool.MaxSlots.
 func slotsOverride(path string) (int, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -652,21 +697,4 @@ func printQueueStatus(src *queue.Local, lockPath string) {
 	n := src.Counts()
 	fmt.Printf("%s\npass=%d fail=%d setup_fail=%d todo=%d, %d still to run\n",
 		running, n[queue.StatusPass], n[queue.StatusFail], n[queue.StatusSetupFail], n[queue.StatusTodo], n["eligible"])
-}
-
-// removeLeftoverStacks tears down stacks a killed queue left behind, only those this queue recorded.
-func removeLeftoverStacks(ctx context.Context, logger *log.Logger, stacksDir string) {
-	if err := os.MkdirAll(stacksDir, 0o755); err != nil {
-		fatalf("%v", err)
-	}
-	entries, _ := os.ReadDir(stacksDir)
-	for _, e := range entries {
-		name := e.Name()
-		logger.Printf("removing leftover stack %s", name)
-		if err := queue.RemoveStack(ctx, name); err != nil {
-			logger.Print(err)
-			continue
-		}
-		os.Remove(filepath.Join(stacksDir, name))
-	}
 }

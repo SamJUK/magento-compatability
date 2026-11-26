@@ -109,6 +109,63 @@ func TestRunOutcome(t *testing.T) {
 	}
 }
 
+func TestLocalOutcomeClassifiesHostFailuresLikeAWorker(t *testing.T) {
+	c := matrix.Combination{Product: "magento", Version: "2.4.8", PHP: "8.3", WebserverType: "nginx", WebserverVersion: "1.26"}
+	for _, tc := range []struct {
+		code string
+		want queue.OutcomeKind
+	}{
+		{"disk_space", queue.OutcomeHost},
+		{"docker_name_conflict", queue.OutcomeHost},
+		{"docker_cleanup_race", queue.OutcomeHost},
+		{"php_fatal", queue.OutcomeResult}, // the combination's own failure
+	} {
+		dir := t.TempDir()
+		path := queue.ResultPath(dir, c)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"overall_status":"fail","steps":{"stack_up":{"status":"fail","failure":{"code":"` + tc.code + `"}}}}`
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := localOutcome(dir, c, true, nil); got.Kind != tc.want {
+			t.Errorf("%s: kind %v, want %v", tc.code, got.Kind, tc.want)
+		}
+	}
+}
+
+type fakeSweep struct {
+	done   bool
+	counts map[string]int
+}
+
+func (f fakeSweep) Done() bool             { return f.done }
+func (f fakeSweep) Counts() map[string]int { return f.counts }
+
+func TestSweepIncompleteIgnoresASignalAfterTheLastRun(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	finished := fakeSweep{true, map[string]int{queue.StatusPass: 3}}
+	unfinished := fakeSweep{false, map[string]int{queue.StatusPass: 2, queue.StatusTodo: 1}}
+	live, cancelled := context.Background(), func() context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		return ctx
+	}()
+	if sweepIncomplete(cancelled, logger, finished, 3) {
+		t.Error("a signal during teardown after a finished sweep made it incomplete")
+	}
+	if sweepIncomplete(live, logger, finished, 3) {
+		t.Error("control: a finished sweep was incomplete")
+	}
+	if !sweepIncomplete(cancelled, logger, unfinished, 3) {
+		t.Error("control: a sweep stopped by a signal with runs left was complete")
+	}
+	if !sweepIncomplete(live, logger, unfinished, 3) {
+		t.Error("control: a sweep with runs left was complete")
+	}
+}
+
 func TestASweepHoldsItsWorkersLocks(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "m2l")
 	if err != nil {
@@ -180,7 +237,7 @@ func TestLeftoverStackRecordOutlivesANetworkStillInUse(t *testing.T) {
 		t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 		stacks := t.TempDir()
 		os.WriteFile(filepath.Join(stacks, "m2test-x"), nil, 0o644)
-		removeLeftoverStacks(context.Background(), log.New(io.Discard, "", 0), stacks)
+		queue.Stacks{Dir: stacks, Log: log.New(io.Discard, "", 0)}.RemoveLeftovers(context.Background(), func(string, error) {})
 		if _, err := os.Stat(filepath.Join(stacks, "m2test-x")); (err == nil) != held {
 			t.Errorf("network held %v: record kept %v", held, err == nil)
 		}

@@ -258,6 +258,22 @@ func TestAWSCreateAsksForASafeInstanceAndWaitsForItsAddress(t *testing.T) {
 	}
 }
 
+func TestAWSCreateKeepsBurstableTypesOnStandardCredits(t *testing.T) {
+	fastPoll(t)
+	for typ, want := range map[string]bool{"t3.2xlarge": true, "t4g.large": true, "m7a.2xlarge": false, "trn1.2xlarge": false} {
+		f := &fakeEC2{states: []string{"running"}}
+		s := awsSpec()
+		s.Type = typ
+		if _, err := (&AWS{EC2: f, RunningWait: time.Second}).Create(context.Background(), s); err != nil {
+			t.Fatal(err)
+		}
+		cs := f.run.CreditSpecification
+		if got := cs != nil && aws.ToString(cs.CpuCredits) == "standard"; got != want || !want && cs != nil {
+			t.Errorf("%s: credit specification %+v, want standard credits %v", typ, cs, want)
+		}
+	}
+}
+
 func TestAWSCreateReportsAnInstanceThatNeverRuns(t *testing.T) {
 	fastPoll(t)
 	// Gone at once (capacity, a bad image): its ID still comes back.

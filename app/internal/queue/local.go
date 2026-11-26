@@ -72,6 +72,9 @@ type cachedResult struct {
 	size   int64
 	status string
 	at     time.Time
+	host   bool // the failure is the host's, not the combination's
+	// skipsPlaywright is a result that skipped Playwright, which a sweep that runs it can't use.
+	skipsPlaywright bool
 }
 
 // NewLocal finds this sweep (results directory and combination list) in the ledger.
@@ -388,7 +391,8 @@ func (l *Local) claim(d *ledgerData, s *sweep, c matrix.Combination) {
 	id := c.ID()
 	l.claimed[id] = true
 	takeLease(d, leaseKey(l.ResultsDir, id), l.ledger.holder)
-	if r := l.result(c); r.status == StatusPass || (r.status == StatusFail && r.at.Before(s.Started)) {
+	// A pass that skipped Playwright in a sweep that runs it is a todo, not a pass to run once more.
+	if r := l.result(c); r.status == StatusPass && !(r.skipsPlaywright && s.Contract.Playwright) || (r.status == StatusFail && r.at.Before(s.Started)) {
 		s.state(id).Once = true
 	}
 }
@@ -405,6 +409,9 @@ func (l *Local) result(c matrix.Combination) cachedResult {
 	if !ok || !r.mod.Equal(mod) || r.size != size {
 		r = cachedResult{mod: mod, size: size}
 		r.status, r.at = readResult(l.ResultsDir, c)
+		if res, ok := loadResult(ResultPath(l.ResultsDir, c)); ok {
+			r.host, r.skipsPlaywright = hostFailureOf(res) != "", PlaywrightSkipped(res)
+		}
 		l.results[c.ID()] = r
 	}
 	return r
@@ -571,6 +578,9 @@ func (l *Local) runnable(s *sweep, cs comboState, r cachedResult) bool {
 	if l.Force && cs.Tries == 0 {
 		return true
 	}
+	if r.skipsPlaywright && s.Contract.Playwright {
+		return true
+	}
 	switch r.status {
 	case StatusTodo, StatusSetupFail:
 		return true
@@ -585,12 +595,13 @@ func (l *Local) runnable(s *sweep, cs comboState, r cachedResult) bool {
 
 // settled is a combination's status at sweep end: todo while it's still runnable
 // with budget left, or was due a run and has no result of its own. Exhausted is
-// a result of its own that the options would still rerun.
+// a result of its own that the options would still rerun. A host failure is
+// never a result: it stays todo, so a spent budget leaves the sweep incomplete.
 func (l *Local) settled(s *sweep, c matrix.Combination) (status string, exhausted bool) {
 	cs, r := s.of(c), l.result(c)
 	own := !r.at.Before(s.Started)
 	switch {
-	case r.status == StatusTodo, !own && l.runnable(s, comboState{}, r):
+	case r.status == StatusTodo, r.host, r.skipsPlaywright && s.Contract.Playwright, !own && l.runnable(s, comboState{}, r):
 		return StatusTodo, false
 	case l.runnable(s, cs, r):
 		if !cs.spent() {

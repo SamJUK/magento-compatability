@@ -379,7 +379,7 @@ func TestAbandon_CatchesAClaimTheLedgerIsStillAnswering(t *testing.T) {
 	go func() { answered <- r.claim("tok-a", "r1") }()
 	<-claiming
 	afterClaim = func() {}
-	r.srv.Drain("a", true)
+	r.srv.Fence("a")
 	r.srv.Abandon("a")
 	close(proceed)
 	if rep := <-answered; rep.State == ClaimJob || r.srv.Live() != 0 {
@@ -1027,19 +1027,19 @@ func TestDrain_OnlyAnIdleWorkerUnlessAlways(t *testing.T) {
 	if got := r.claim("tok-a", "r1"); got.State != ClaimJob {
 		t.Fatalf("claim got %+v", got)
 	}
-	if r.srv.Drain("a", false) {
+	if r.srv.Drain("a") {
 		t.Fatal("a worker holding an attempt drained as idle")
 	}
 	if got := r.claim("tok-a", "r2"); got.State != ClaimJob {
 		t.Fatalf("a busy worker left undrained got %+v", got)
 	}
-	if !r.srv.Drain("b", false) {
+	if !r.srv.Drain("b") {
 		t.Fatal("an idle worker did not drain")
 	}
 	if got := r.claim("tok-b", "r3"); got.State == ClaimJob {
 		t.Fatalf("a drained worker got %+v", got)
 	}
-	r.srv.Drain("a", true)
+	r.srv.Fence("a")
 	if got := r.claim("tok-a", "r4"); got.State == ClaimJob {
 		t.Fatalf("a worker drained with always got %+v", got)
 	}
@@ -1065,11 +1065,11 @@ func TestDrain_AWorkerWaitingForWorkIsIdle(t *testing.T) {
 		t.Fatalf("control: the claim was answered (%+v) rather than waiting", rep)
 	default:
 	}
-	if r.srv.Drain("b", false) {
+	if r.srv.Drain("b") {
 		t.Error("b, holding an attempt, drained as idle")
 	}
 	// Each poll holds it busy for a moment while it looks for work.
-	waitFor(t, func() bool { return r.srv.Drain("a", false) })
+	waitFor(t, func() bool { return r.srv.Drain("a") })
 	if rep := <-answered; rep.State == ClaimJob {
 		t.Errorf("the drained worker got %+v", rep)
 	}
@@ -1095,18 +1095,18 @@ func TestDrain_NotWhileAnUploadIsBeingSettled(t *testing.T) {
 	waitFor(t, func() bool {
 		r.srv.mu.Lock()
 		defer r.srv.mu.Unlock()
-		return r.srv.busy["a"] == 1
+		return r.srv.workers["a"] != nil && r.srv.workers["a"].busy == 1
 	})
 	// Its attempt may already be out of live; the upload still counts.
 	r.srv.mu.Lock()
 	delete(r.srv.live, job.Attempt)
 	r.srv.mu.Unlock()
-	if r.srv.Drain("a", false) {
+	if r.srv.Drain("a") {
 		t.Error("drained while an upload was in progress")
 	}
 	feed.Close()
 	<-done
-	if !r.srv.Drain("a", false) {
+	if !r.srv.Drain("a") {
 		t.Error("control: not idle once the upload was answered")
 	}
 }
@@ -1252,6 +1252,34 @@ func TestUndeployedCountsFromAddUntilDeployed(t *testing.T) {
 	r.srv.Deployed("c")
 	if r.srv.Undeployed("c") != 0 {
 		t.Error("still counted once deployed")
+	}
+}
+
+func TestWorker_ARunKeepsItsStackRecordWhileTheStackIsStillThere(t *testing.T) {
+	const project = "m2test-0123456789abcdef-01234567"
+	for _, up := range []bool{true, false} {
+		bin := t.TempDir()
+		// Teardown reports no error; docker ps lists a container while up.
+		script := "#!/bin/sh\n[ \"$1\" = ps ] && [ -e '" + bin + "/up' ] && echo abc\nexit 0\n"
+		os.WriteFile(bin+"/docker", []byte(script), 0o755)
+		if up {
+			os.WriteFile(bin+"/up", nil, 0o600)
+		}
+		t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+		c := combo("8.3")
+		r := newRig(t, []matrix.Combination{c})
+		spool := t.TempDir()
+		_, stop := r.workerIn("tok-a", spool, func(ctx context.Context, c matrix.Combination, cfg runner.RunConfig) (bool, error) {
+			cfg.OnProject(project)
+			return writes(func(matrix.Combination) string { return result.StatusPass })(ctx, c, cfg)
+		})
+		waitFor(t, func() bool { return r.status(c) == queue.StatusPass })
+		waitFor(t, func() bool { entries, _ := os.ReadDir(spool); return len(entries) == 0 })
+		stop()
+		_, err := os.Stat(filepath.Join(spool+"-stacks", project))
+		if (err == nil) != up {
+			t.Errorf("stack up %v: record kept %v", up, err == nil)
+		}
 	}
 }
 

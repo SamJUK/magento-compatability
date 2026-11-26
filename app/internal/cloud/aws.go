@@ -345,7 +345,7 @@ func (a *AWS) run(ctx context.Context, s Spec, subnet, token string) (*ec2.RunIn
 	if subnet != "" {
 		nic.SubnetId = aws.String(subnet)
 	}
-	out, err := a.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
+	in := &ec2.RunInstancesInput{
 		ImageId: aws.String(s.Image), InstanceType: types.InstanceType(s.Type),
 		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
 		ClientToken:                       aws.String(token),
@@ -360,8 +360,18 @@ func (a *AWS) run(ctx context.Context, s Spec, subnet, token string) (*ec2.RunIn
 			VolumeSize: aws.Int32(s.DiskGB), VolumeType: types.VolumeTypeGp3, DeleteOnTermination: aws.Bool(true), Encrypted: aws.Bool(true),
 		}}},
 		TagSpecifications: []types.TagSpecification{{ResourceType: types.ResourceTypeInstance, Tags: t}, {ResourceType: types.ResourceTypeVolume, Tags: t}},
-	})
+	}
+	if burstable(s.Type) {
+		// T3 and later default to unlimited credits, which bill surplus vCPU time the burst's budget never counts.
+		in.CreditSpecification = &types.CreditSpecificationRequest{CpuCredits: aws.String("standard")}
+	}
+	out, err := a.EC2.RunInstances(ctx, in)
 	return out, awsErr(err)
+}
+
+// burstable says whether an instance type is in a t family (t3, t3a, t4g).
+func burstable(instanceType string) bool {
+	return len(instanceType) > 1 && instanceType[0] == 't' && instanceType[1] >= '0' && instanceType[1] <= '9'
 }
 
 func (a *AWS) wait(ctx context.Context, srv Server) (Server, error) {

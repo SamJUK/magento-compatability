@@ -43,6 +43,16 @@ func writeResult(t *testing.T, dir string, c matrix.Combination, stackUp, overal
 	}
 }
 
+func writeHostFailure(t *testing.T, dir string, c matrix.Combination, code string, at time.Time) {
+	t.Helper()
+	r := result.TestResult{ID: c.ID(), Product: c.Product, Version: c.Version, OverallStatus: "fail",
+		Steps:     map[string]result.Step{"stack_up": {Status: "fail", Failure: &result.Failure{Code: code}}},
+		Timestamp: at.UTC().Format(time.RFC3339)}
+	if err := result.Write(filepath.Join(dir, c.Product, c.ID()+".json"), r); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newLocal(t *testing.T, state, results string, combos []matrix.Combination, fresh bool) *Local {
 	t.Helper()
 	lg, err := OpenLedger(state)
@@ -141,8 +151,9 @@ func TestLocal_Settled(t *testing.T) {
 	c := combo("8.3")
 	started := time.Now()
 	old, own := started.Add(-time.Hour), started.Add(time.Minute)
-	type res struct{ stackUp, overall string }
-	pass, fail, setup := res{"pass", "pass"}, res{"pass", "fail"}, res{"fail", "fail"}
+	type res struct{ stackUp, overall, hostCode string }
+	pass, fail, setup := res{"pass", "pass", ""}, res{"pass", "fail", ""}, res{"fail", "fail", ""}
+	hostFail := res{"fail", "fail", "disk_space"}
 	hostDown := comboState{Tries: 1, HostFailures: MaxHostFailures}
 	for _, tc := range []struct {
 		name         string
@@ -166,10 +177,15 @@ func TestLocal_Settled(t *testing.T) {
 		{"old setup failure only", false, false, &setup, old, hostDown, StatusTodo, false},
 		{"own setup failure with tries left", false, false, &setup, own, comboState{Tries: 1}, StatusTodo, false},
 		{"own setup failure, out of tries", false, false, &setup, own, comboState{Tries: MaxTries}, StatusSetupFail, true},
+		{"own host failure, budget left", false, false, &hostFail, own, comboState{HostFailures: 1}, StatusTodo, false},
+		{"own host failure, budget spent", false, false, &hostFail, own, hostDown, StatusTodo, false},
 	} {
 		results := t.TempDir()
 		if tc.result != nil {
 			writeResult(t, results, c, tc.result.stackUp, tc.result.overall, tc.at)
+			if tc.result.hostCode != "" {
+				writeHostFailure(t, results, c, tc.result.hostCode, tc.at)
+			}
 		}
 		l := newLocal(t, t.TempDir(), results, []matrix.Combination{c}, false)
 		l.Force, l.RetryFailures = tc.force, tc.retry
@@ -177,6 +193,75 @@ func TestLocal_Settled(t *testing.T) {
 		s := &sweep{Started: started, Combos: map[string]*comboState{c.ID(): &cs}}
 		if status, exhausted := l.settled(s, c); status != tc.status || exhausted != tc.exhausted {
 			t.Errorf("%s: %s exhausted %v, want %s %v", tc.name, status, exhausted, tc.status, tc.exhausted)
+		}
+	}
+}
+
+func TestLocal_AStandingPassThatSkippedPlaywrightIsNotDoneInASweepThatRunsIt(t *testing.T) {
+	c := combo("8.3")
+	for name, tc := range map[string]struct {
+		playwright     bool
+		playwrightStep string
+		eligible       int
+		status         string
+	}{
+		"skipped, sweep runs it": {true, result.StatusSkip, 1, StatusTodo},
+		"skipped, sweep doesn't": {false, result.StatusSkip, 0, StatusPass},
+		"ran, sweep runs it":     {true, result.StatusPass, 0, StatusPass},
+	} {
+		results := t.TempDir()
+		r := result.TestResult{ID: c.ID(), Product: c.Product, Version: c.Version, OverallStatus: result.StatusPass,
+			Steps: map[string]result.Step{"stack_up": {Status: result.StatusPass}, "smoke": {Status: result.StatusPass},
+				"playwright": {Status: tc.playwrightStep}},
+			Timestamp: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)}
+		if err := result.Write(filepath.Join(results, c.Product, c.ID()+".json"), r); err != nil {
+			t.Fatal(err)
+		}
+		lg, err := OpenLedger(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { lg.Close() })
+		l, err := NewLocal(lg, results, []matrix.Combination{c}, Contract{Playwright: tc.playwright}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := l.Counts()
+		if n["eligible"] != tc.eligible || n[tc.status] != 1 {
+			t.Errorf("%s: counts %v, want %d eligible and %s", name, n, tc.eligible, tc.status)
+		}
+	}
+}
+
+func TestLocal_APassThatSkippedPlaywrightGetsItsRetriesInASweepThatRunsIt(t *testing.T) {
+	c := combo("8.3")
+	for _, playwright := range []bool{true, false} {
+		results := t.TempDir()
+		r := result.TestResult{ID: c.ID(), Product: c.Product, Version: c.Version, OverallStatus: result.StatusPass,
+			Steps: map[string]result.Step{"stack_up": {Status: result.StatusPass}, "smoke": {Status: result.StatusPass},
+				"playwright": {Status: result.StatusSkip}},
+			Timestamp: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)}
+		if err := result.Write(filepath.Join(results, c.Product, c.ID()+".json"), r); err != nil {
+			t.Fatal(err)
+		}
+		lg, err := OpenLedger(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { lg.Close() })
+		l, err := NewLocal(lg, results, []matrix.Combination{c}, Contract{Playwright: playwright}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Force = true // the pass is old; Force is what makes the control run at all
+		// Every run now fails to bring the stack up.
+		runs := len(drain(t, l, func(c matrix.Combination) { writeResult(t, results, c, "fail", "fail", time.Now()) }))
+		want := MaxTries
+		if !playwright {
+			want = 1
+		}
+		if runs != want {
+			t.Errorf("playwright %v: ran %d times, want %d", playwright, runs, want)
 		}
 	}
 }

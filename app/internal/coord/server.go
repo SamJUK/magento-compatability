@@ -33,19 +33,33 @@ type Server struct {
 	RejectDir   string // rejected uploads are kept here for a look
 	Log         *log.Logger
 
-	bg        sync.WaitGroup
-	stopping  context.Context
-	mu        sync.Mutex
-	live      map[string]*liveAttempt
-	ready     map[string]bool
-	unhealthy map[string]string
-	sickSince map[string]time.Time // deployed and not yet healthy, or unhealthy
-	added     map[string]time.Time // added and not yet deployed
-	drained   map[string]bool
-	busy      map[string]int
-	settling  map[string]int // taken out of live by uploads still being answered
-	failing   map[string]int // host failures in a row it reported
-	benched   map[string]time.Time
+	bg       sync.WaitGroup
+	stopping context.Context
+	mu       sync.Mutex
+	live     map[string]*liveAttempt
+	workers  map[string]*workerState
+	settling map[string]int // taken out of live by uploads still being answered
+}
+
+type workerState struct {
+	ready     bool
+	unhealthy string
+	sickSince time.Time // deployed and not yet healthy, or unhealthy
+	addedAt   time.Time // added and not yet deployed
+	drained   bool
+	busy      int
+	failing   int // host failures in a row it reported
+	benched   time.Time
+}
+
+// worker is name's state, made on first use. s.mu held.
+func (s *Server) worker(name string) *workerState {
+	ws := s.workers[name]
+	if ws == nil {
+		ws = &workerState{}
+		s.workers[name] = ws
+	}
+	return ws
 }
 
 // FailingAfter host failures in a row, a worker gets no work for BenchFor:
@@ -62,15 +76,8 @@ type liveAttempt struct {
 
 func (s *Server) Start(ctx context.Context) error {
 	s.live = map[string]*liveAttempt{}
-	s.ready = map[string]bool{}
-	s.unhealthy = map[string]string{}
-	s.sickSince = map[string]time.Time{}
-	s.added = map[string]time.Time{}
-	s.drained = map[string]bool{}
-	s.busy = map[string]int{}
+	s.workers = map[string]*workerState{}
 	s.settling = map[string]int{}
-	s.failing = map[string]int{}
-	s.benched = map[string]time.Time{}
 	s.stopping = ctx
 	jobs, err := s.Src.Resume()
 	if err != nil {
@@ -95,16 +102,17 @@ func (s *Server) AddWorker(token, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Tokens[token] = name
-	s.added[name] = time.Now()
+	s.worker(name).addedAt = time.Now()
 }
 
 func (s *Server) Deployed(worker string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.added, worker)
+	ws := s.worker(worker)
+	ws.addedAt = time.Time{}
 	// An unhealthy run already under way keeps its start.
-	if s.sickSince[worker].IsZero() {
-		s.sickSince[worker] = time.Now()
+	if ws.sickSince.IsZero() {
+		ws.sickSince = time.Now()
 	}
 }
 
@@ -113,7 +121,7 @@ func (s *Server) Deployed(worker string) {
 func (s *Server) Sick(worker string) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t := s.sickSince[worker]; !t.IsZero() {
+	if t := s.worker(worker).sickSince; !t.IsZero() {
 		return time.Since(t)
 	}
 	return 0
@@ -123,26 +131,42 @@ func (s *Server) Sick(worker string) time.Duration {
 func (s *Server) Undeployed(worker string) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.added[worker]; ok {
+	if t := s.worker(worker).addedAt; !t.IsZero() {
 		return time.Since(t)
 	}
 	return 0
 }
 
-// Drain stops an idle worker getting more work and says whether it did; a busy one is left alone unless always is set.
-func (s *Server) Drain(worker string, always bool) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	idle := s.busy[worker] == 0
+// idle says whether a worker holds nothing: no claim being answered, no live run. s.mu held.
+func (s *Server) idle(worker string) bool {
+	if s.worker(worker).busy != 0 {
+		return false
+	}
 	for _, a := range s.live {
 		if a.job.Worker == worker {
-			idle = false
+			return false
 		}
 	}
-	if idle || always {
-		s.drained[worker] = true
+	return true
+}
+
+// Drain stops an idle worker getting more work and says whether it did; a busy one is left alone.
+func (s *Server) Drain(worker string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idle := s.idle(worker)
+	if idle {
+		s.worker(worker).drained = true
 	}
 	return idle
+}
+
+// Fence stops a worker getting more work, busy or not, and says whether it is idle.
+func (s *Server) Fence(worker string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.worker(worker).drained = true
+	return s.idle(worker)
 }
 
 // Abandon releases the runs of a worker the queue destroyed; stopping them was asked for, so no try is charged.
@@ -299,7 +323,7 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request, worker string) {
 		rep.Stale = fmt.Sprintf("release %q, sweep runs %s", req.Release, s.Release)
 	}
 	s.mu.Lock()
-	s.ready[worker] = rep.Stale == ""
+	s.worker(worker).ready = rep.Stale == ""
 	s.mu.Unlock()
 	if rep.Stale != "" {
 		s.Log.Printf("%s is stale: %s", worker, rep.Stale)
@@ -309,11 +333,11 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request, worker string) {
 
 func (s *Server) hold(worker string) (release func()) {
 	s.mu.Lock()
-	s.busy[worker]++
+	s.worker(worker).busy++
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
-		s.busy[worker]--
+		s.worker(worker).busy--
 		s.mu.Unlock()
 	}
 }
@@ -336,7 +360,8 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 		// pass a worker that is being handed one.
 		release := s.hold(worker)
 		s.mu.Lock()
-		ready, healthy := s.ready[worker], s.unhealthy[worker] == "" && !s.drained[worker] && time.Now().After(s.benched[worker])
+		ws := s.worker(worker)
+		ready, healthy := ws.ready, ws.unhealthy == "" && !ws.drained && time.Now().After(ws.benched)
 		s.mu.Unlock()
 		if !ready || !healthy || s.stopping.Err() != nil {
 			release()
@@ -352,7 +377,7 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request, worker string) {
 		if st == queue.StateJob && err == nil {
 			s.mu.Lock()
 			// Drained while the ledger answered: an Abandon since saw no run to release.
-			fenced := s.drained[worker]
+			fenced := s.worker(worker).drained
 			if !fenced {
 				s.live[j.Attempt] = &liveAttempt{job: j, expires: time.Now().Add(LeaseFor)}
 			}
@@ -399,17 +424,18 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, worker string
 	var rep HeartbeatReply
 	var overridden []queue.Job
 	s.mu.Lock()
-	if s.unhealthy[worker] != req.Unhealthy {
+	ws := s.worker(worker)
+	if ws.unhealthy != req.Unhealthy {
 		s.Log.Printf("%s: unhealthy %q", worker, req.Unhealthy)
 	}
-	s.unhealthy[worker] = req.Unhealthy
+	ws.unhealthy = req.Unhealthy
 	switch {
 	case req.Unhealthy == "":
-		delete(s.sickSince, worker)
-	case len(req.Running) > 0 || s.sickSince[worker].IsZero():
+		ws.sickSince = time.Time{}
+	case len(req.Running) > 0 || ws.sickSince.IsZero():
 		// Counted while idle only: a run can hold the disk down for longer
 		// than trim waits, and frees it when it ends.
-		s.sickSince[worker] = time.Now()
+		ws.sickSince = time.Now()
 	}
 	for _, id := range req.Running {
 		a := s.live[id]
@@ -471,46 +497,59 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, worker string) {
 	settling := s.settling[id] > 0
 	s.mu.Unlock()
 	if a == nil || a.job.Worker != worker {
-		// A re-upload of one already installed, or one fenced off.
-		switch st, hash := s.Src.AttemptResult(id, worker); {
-		case st == queue.AttemptInstalled && hash == up.SHA256 && hash != "":
-			reply(w, UploadReply{Status: "installed"})
-		case settling:
-			// The first upload is still being answered, and may yet fail.
-			http.Error(w, "settling", http.StatusServiceUnavailable)
-		default:
-			// Including installing with nobody here settling it: a
-			// coordinator that died mid-install. Waiting won't help.
-			reply(w, UploadReply{Status: "stale"})
-		}
+		s.resend(w, id, worker, up, settling)
 		return
 	}
-	j := a.job
-
-	switch up.Outcome {
-	case OutcomeHost, OutcomeAborted:
-		kind := queue.OutcomeHost
-		if up.Outcome == OutcomeAborted {
-			kind = queue.OutcomeAborted
-		}
-		s.Log.Printf("%s: %s on %s: %s %q", id, j.Combination.ID(), worker, up.Outcome, up.Reason)
-		if s.answer(w, j, queue.Outcome{Kind: kind, Reason: up.Reason, Requested: up.Requested}) {
-			reply(w, UploadReply{Status: "accepted"})
-		}
+	if up.Outcome == OutcomeResult {
+		s.install(w, a, up, worker)
 		return
-	case OutcomeResult:
+	}
+	s.settleReported(w, a.job, up, worker)
+}
+
+// resend answers an upload whose attempt isn't live for this worker: one already installed, or one fenced off.
+func (s *Server) resend(w http.ResponseWriter, id, worker string, up Upload, settling bool) {
+	switch st, hash := s.Src.AttemptResult(id, worker); {
+	case st == queue.AttemptInstalled && hash == up.SHA256 && hash != "":
+		reply(w, UploadReply{Status: "installed"})
+	case settling:
+		// The first upload is still being answered, and may yet fail.
+		http.Error(w, "settling", http.StatusServiceUnavailable)
+	default:
+		// Including installing with nobody here settling it: a
+		// coordinator that died mid-install. Waiting won't help.
+		reply(w, UploadReply{Status: "stale"})
+	}
+}
+
+// settleReported settles an attempt the worker says ended without a result.
+func (s *Server) settleReported(w http.ResponseWriter, j queue.Job, up Upload, worker string) {
+	var kind queue.OutcomeKind
+	switch up.Outcome {
+	case OutcomeHost:
+		kind = queue.OutcomeHost
+	case OutcomeAborted:
+		kind = queue.OutcomeAborted
 	default:
 		s.reject(w, j, up, fmt.Errorf("unknown outcome %q", up.Outcome))
 		return
 	}
+	s.Log.Printf("%s: %s on %s: %s %q", j.Attempt, j.Combination.ID(), worker, up.Outcome, up.Reason)
+	if s.answer(w, j, queue.Outcome{Kind: kind, Reason: up.Reason, Requested: up.Requested}) {
+		reply(w, UploadReply{Status: "accepted"})
+	}
+}
 
+// install checks a worker's result and writes it to the ledger's results.
+func (s *Server) install(w http.ResponseWriter, a *liveAttempt, up Upload, worker string) {
+	j, id := a.job, a.job.Attempt
 	sum := sha256.Sum256(up.Result)
 	if hex.EncodeToString(sum[:]) != up.SHA256 {
 		s.reject(w, j, up, errors.New("checksum mismatch"))
 		return
 	}
 	res, err := Validate(up.Result, j.Combination, s.Workarounds)
-	if err == nil && s.Contract.Playwright && res.Steps["smoke"].Status == result.StatusPass && res.Steps["playwright"].Status == result.StatusSkip {
+	if err == nil && s.Contract.Playwright && queue.PlaywrightSkipped(res) {
 		err = errors.New("playwright skipped in a sweep that runs it")
 	}
 	if err != nil {
@@ -564,13 +603,14 @@ func (s *Server) answer(w http.ResponseWriter, j queue.Job, o queue.Outcome) boo
 	// Only what the worker reports: an expiry is as likely the tunnel.
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ws := s.worker(j.Worker)
 	switch o.Kind {
 	case queue.OutcomeResult:
-		s.failing[j.Worker] = 0
+		ws.failing = 0
 	case queue.OutcomeHost:
-		if s.failing[j.Worker]++; s.failing[j.Worker] >= FailingAfter {
-			s.failing[j.Worker] = 0
-			s.benched[j.Worker] = time.Now().Add(BenchFor)
+		if ws.failing++; ws.failing >= FailingAfter {
+			ws.failing = 0
+			ws.benched = time.Now().Add(BenchFor)
 			s.Log.Printf("%s: %d host failures in a row, the last %q; no work for %s", j.Worker, FailingAfter, o.Reason, BenchFor)
 		}
 	}

@@ -207,11 +207,29 @@ func refusedBy(out string) string {
 // clock times refusals; tests count attempts with it.
 var clock = time.Now
 
+// refusal is the kind of refusal the last attempt met and when its first
+// attempt began.
+type refusal struct {
+	kind  string
+	since time.Time
+}
+
+// lasted records an attempt that began at started and was refused as kind,
+// and says whether that kind has now gone on for RefusedFor. Each kind must
+// last on its own: a booting server's wrong key then a forward not yet
+// allowed is neither.
+func (r *refusal) lasted(kind string, started time.Time) bool {
+	if kind != r.kind {
+		r.kind, r.since = kind, started
+		return false
+	}
+	return kind != "" && clock().Sub(r.since) >= RefusedFor
+}
+
 // Tunnel forwards the coordinator's worker.sock to a worker's Dir until ctx ends or sshd keeps refusing it, reconnecting with backoff.
 func (p *Pool) Tunnel(ctx context.Context, name string, w *Worker, local string, lg *log.Logger) error {
 	wait := Backoff[0]
-	var refused time.Time
-	var refusal string
+	var refused refusal
 	for ctx.Err() == nil {
 		started, at := time.Now(), clock()
 		cmd := Command(ctx, p, "-N", "-R", w.Dir+"/worker.sock:"+local, name)
@@ -225,12 +243,7 @@ func (p *Pool) Tunnel(ctx context.Context, name string, w *Worker, local string,
 			return nil
 		}
 		kind := refusedBy(string(out.Bytes()))
-		// Each refusal must last on its own: a booting server's wrong key
-		// then a forward not yet allowed is neither.
-		if kind != refusal {
-			refusal, refused = kind, at
-		}
-		if kind != "" && clock().Sub(refused) >= RefusedFor {
+		if refused.lasted(kind, at) {
 			return fmt.Errorf("%s refused for %s: %s", kind, RefusedFor, LastLines(out.Bytes(), 2))
 		}
 		if time.Since(started) > time.Minute {
@@ -251,8 +264,7 @@ func (p *Pool) Tunnel(ctx context.Context, name string, w *Worker, local string,
 // It gives up on ErrPermanent and ErrUnfit, and on a refusal lasting RefusedFor.
 func (p *Pool) DeployUntilDone(ctx context.Context, name string, w *Worker, hash, tarball string, lg *log.Logger) error {
 	wait := Backoff[0]
-	var refused string
-	var since time.Time
+	var refused refusal
 	for {
 		started := clock()
 		attempt, cancel := context.WithTimeout(ctx, deployAttempt)
@@ -261,9 +273,7 @@ func (p *Pool) DeployUntilDone(ctx context.Context, name string, w *Worker, hash
 		if err == nil || ctx.Err() != nil || errors.Is(err, ErrPermanent) || errors.Is(err, ErrUnfit) {
 			return err
 		}
-		if kind := refusedBy(err.Error()); kind != refused {
-			refused, since = kind, started
-		} else if kind != "" && clock().Sub(since) >= RefusedFor {
+		if kind := refusedBy(err.Error()); refused.lasted(kind, started) {
 			return fmt.Errorf("%w: %s refused for %s: %w", ErrUnfit, kind, RefusedFor, err)
 		}
 		wait = min(max(wait*2, 10*Backoff[0]), 10*Backoff[1])

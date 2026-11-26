@@ -144,7 +144,7 @@ Everything but `ssh_from` has the default shown.
 `location` can be a list, such as `[hel1, fsn1, nbg1]`: each create tries them in turn while Hetzner has no room (`resource_unavailable` or `placement_error`), and the estimate uses the dearest.
 Hetzner sometimes accepts a create and only then finds no room; that server is destroyed before the next location is tried.
 `type` can be a list too, such as `[cx33, cpx32]`: when a type has no room in any location, the next type is tried in every location, and the estimate uses the dearest type and location.
-Types must be x86, as some stacks pin `linux/amd64` images.
+Types must be x86: burst workers have only been tried on it.
 Every create the burst asks for counts as billed by the started hour, until its server's delete is confirmed or the provider refused it, including a server destroyed for having no room and one whose create went unanswered.
 A worker only tries again while another hour keeps that under `max_burst_cost`. Workers failing at once can still pass it, by two server-hours each at most: their first server, which nothing checks, and one more try.
 A worker that gets no room anywhere is not replaced: the burst carries on with the rest.
@@ -162,8 +162,8 @@ aws: {region: eu-west-1, hourly: 0.42, type: m7a.2xlarge, image: debian-13, slot
 ```
 
 `region` and `hourly` are required.
-`hourly` is the instance's on-demand price plus its public IPv4 address and root disk, in euros like `max_burst_cost`; the queue can't look it up, so check it against the region's price list.
-The type must be x86, as some stacks pin `linux/amd64` images.
+`hourly` is the instance's on-demand price plus its public IPv4 address and root disk, in euros like `max_burst_cost`; the queue can't look it up, so check it against the region's price list. Burstable (`t*`) types launch with standard CPU credits, so no surplus credit charges come on top.
+The type must be x86: burst workers have only been tried on it.
 `image` is `debian-13` (the newest official Debian 13 AMI for the type's architecture) or an AMI ID, which must still be Debian's own.
 Instances go in the region's default VPC (a default subnet in a zone offering the type, moving to the next zone when one has no capacity) with a public address, a gp3 encrypted root disk deleted with them, no key pair, no instance profile, and a metadata service that only answers IMDSv2 tokens one hop away, which bridged containers are past (a host-network container still reaches it).
 A security group named `m2test-<id>` allows SSH from `ssh_from` only, which must be IPv4 here.
