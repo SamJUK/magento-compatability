@@ -175,7 +175,7 @@ func TestLocal_DoneWaitsForClaims(t *testing.T) {
 
 func TestLocal_RefusesIDCollisions(t *testing.T) {
 	a, b := combo("8.3"), combo("8.3")
-	b.WebserverVersion = "1.26" // not in the ID
+	b.Mirror = "https://mirror.example/" // not in the ID
 	lg := openLedger(t, t.TempDir())
 	if _, err := NewLocal(lg, t.TempDir(), []matrix.Combination{a, a}, Contract{}, false); err != nil {
 		t.Errorf("a repeated combination was refused: %v", err)

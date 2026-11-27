@@ -91,6 +91,27 @@ func TestCombinationID_Deterministic(t *testing.T) {
 	}
 }
 
+func TestCombinationID_IncludesWebserverVersion(t *testing.T) {
+	base := matrix.Combination{
+		Product: "magento", Version: "2.4.9", PHP: "8.5",
+		WebserverType: "nginx", WebserverVersion: "1.30",
+		DBType: "mariadb", DBVersion: "12.3", Varnish: "8.0",
+	}
+	const want = "magento-249-php85-mariadb123----nginx130-varnish80"
+	if got := base.ID(); got != want {
+		t.Errorf("ID = %q, want %q", got, want)
+	}
+	same := base
+	if same.ID() != base.ID() {
+		t.Error("identical combinations got different IDs")
+	}
+	older := base
+	older.WebserverVersion = "1.28"
+	if older.ID() == base.ID() {
+		t.Errorf("nginx 1.28 and 1.30 share the ID %s", base.ID())
+	}
+}
+
 func TestBuildCombinations_BaselineFirst(t *testing.T) {
 	m, err := matrix.Load(filepath.Join(repoRoot(t), "matrix.yml"))
 	if err != nil {

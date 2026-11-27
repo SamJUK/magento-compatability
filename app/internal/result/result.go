@@ -55,13 +55,14 @@ type DBService struct {
 
 // Services mirrors the services sub-object in the result JSON.
 type Services struct {
-	PHP       string    `json:"php"`
-	Webserver string    `json:"webserver"`
-	DB        DBService `json:"db"`
-	Search    DBService `json:"search"`
-	Cache     DBService `json:"cache"`
-	Queue     DBService `json:"queue"`
-	Varnish   string    `json:"varnish"`
+	PHP              string    `json:"php"`
+	Webserver        string    `json:"webserver"`
+	WebserverVersion string    `json:"webserver_version,omitempty"`
+	DB               DBService `json:"db"`
+	Search           DBService `json:"search"`
+	Cache            DBService `json:"cache"`
+	Queue            DBService `json:"queue"`
+	Varnish          string    `json:"varnish"`
 }
 
 // TestResult is the canonical result record written to disk and read by the

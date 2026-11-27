@@ -1158,13 +1158,14 @@ func writeResult(
 
 func Services(c matrix.Combination) result.Services {
 	return result.Services{
-		PHP:       c.PHP,
-		Webserver: c.WebserverType,
-		DB:        result.DBService{Type: c.DBType, Version: c.DBVersion},
-		Search:    result.DBService{Type: c.SearchType, Version: c.SearchVersion},
-		Cache:     result.DBService{Type: c.CacheType, Version: c.CacheVersion},
-		Queue:     result.DBService{Type: c.QueueType, Version: c.QueueVersion},
-		Varnish:   c.Varnish,
+		PHP:              c.PHP,
+		Webserver:        c.WebserverType,
+		WebserverVersion: c.WebserverVersion,
+		DB:               result.DBService{Type: c.DBType, Version: c.DBVersion},
+		Search:           result.DBService{Type: c.SearchType, Version: c.SearchVersion},
+		Cache:            result.DBService{Type: c.CacheType, Version: c.CacheVersion},
+		Queue:            result.DBService{Type: c.QueueType, Version: c.QueueVersion},
+		Varnish:          c.Varnish,
 	}
 }
 

@@ -195,7 +195,9 @@ func TestSweepRelease_AChangedPackageNeedsFresh(t *testing.T) {
 	}
 }
 
-func TestSweepRelease_AMatrixChangeTheReleaseDidntPinNeedsFresh(t *testing.T) {
+// The sweep key hashes the IDs, so a webserver change is a new sweep rather
+// than a resume of the old one against a release that never tested it.
+func TestSweepRelease_AChangedWebserverIsANewSweep(t *testing.T) {
 	lg, sel, combos, dir := releaseRig(t)
 	first, err := sweepRelease(lg, sel, combos, false, true, dir)
 	if err != nil {
@@ -203,15 +205,15 @@ func TestSweepRelease_AMatrixChangeTheReleaseDidntPinNeedsFresh(t *testing.T) {
 	}
 	start(t, lg, sel, combos, first)
 	moved := []matrix.Combination{combos[0]}
-	moved[0].WebserverVersion = "1.26"
-	if moved[0].ID() != combos[0].ID() {
-		t.Fatal("the version is in the ID now; this test needs another field")
+	moved[0].WebserverType, moved[0].WebserverVersion = "apache", "2.4"
+	if moved[0].ID() == combos[0].ID() {
+		t.Fatal("the webserver should be part of the ID")
 	}
-	if _, err := sweepRelease(lg, sel, moved, false, true, dir); err == nil || !strings.Contains(err.Error(), "-fresh") {
-		t.Errorf("resumed with an unpinned image: %v", err)
+	if _, ok, err := queue.SweepContract(lg, sel.resultsDir, moved); err != nil || ok {
+		t.Errorf("the changed matrix resumed the old sweep: found=%v err=%v", ok, err)
 	}
-	if again, err := sweepRelease(lg, sel, combos, false, true, dir); err != nil || again != first {
-		t.Errorf("control: %q %v", again, err)
+	if _, ok, err := queue.SweepContract(lg, sel.resultsDir, combos); err != nil || !ok {
+		t.Errorf("control: the original sweep is gone: found=%v err=%v", ok, err)
 	}
 }
 
