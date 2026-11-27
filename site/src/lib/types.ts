@@ -61,6 +61,8 @@ export interface TestResult {
   container_logs?: Record<string, string>;
   /** Ids from docker/scripts/workarounds.json that this install needed */
   workarounds?: string[];
+  /** Per-service image platform and repo digest; absent from older results */
+  images?: Record<string, { platform?: string; emulated?: boolean; digest?: string }>;
   timestamp: string;
 }
 

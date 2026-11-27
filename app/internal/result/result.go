@@ -65,6 +65,20 @@ type Services struct {
 	Varnish          string    `json:"varnish"`
 }
 
+// Image records what a service container actually ran. Every field is
+// optional: results written before it existed, and runs where inspecting the
+// image failed, simply leave it out.
+type Image struct {
+	// Platform is the image's os/arch, e.g. "linux/amd64".
+	Platform string `json:"platform,omitempty"`
+	// Emulated is true when the image's arch differs from the Docker host's.
+	// A nil value means it is not known, which is not the same as false.
+	Emulated *bool `json:"emulated,omitempty"`
+	// Digest is the image's repo digest ("repo@sha256:..."). Images built
+	// locally have none.
+	Digest string `json:"digest,omitempty"`
+}
+
 // TestResult is the canonical result record written to disk and read by the
 // Astro site and the reporter.
 type TestResult struct {
@@ -76,6 +90,7 @@ type TestResult struct {
 	Steps         map[string]Step   `json:"steps"`
 	ContainerLogs map[string]string `json:"container_logs,omitempty"`
 	Workarounds   []string          `json:"workarounds,omitempty"`
+	Images        map[string]Image  `json:"images,omitempty"`
 	Timestamp     string            `json:"timestamp"`
 }
 

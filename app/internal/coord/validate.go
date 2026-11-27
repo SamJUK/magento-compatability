@@ -21,6 +21,8 @@ import (
 var (
 	safeName    = regexp.MustCompile(`^[a-z0-9._-]{1,200}$`)
 	serviceName = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
+	platform    = regexp.MustCompile(`^[a-z0-9]{2,20}/[a-z0-9]{2,20}(/[a-z0-9]{1,10})?$`)
+	repoDigest  = regexp.MustCompile(`^[a-zA-Z0-9./_:-]{1,300}@sha256:[0-9a-f]{64}$`)
 	stepOrder   = []string{"stack_up", "install", "smoke", "playwright"}
 	// checkSteps run after Playwright whatever its outcome, in no fixed order.
 	checkStepNames = map[string]bool{"queue": true, "cron": true, "varnish": true}
@@ -87,10 +89,34 @@ func Validate(raw []byte, c matrix.Combination, workarounds map[string]bool) (re
 			return r, fmt.Errorf("container log for %q", svc)
 		}
 	}
+	if err := checkImages(r.Images); err != nil {
+		return r, err
+	}
 	if _, err := time.Parse(time.RFC3339, r.Timestamp); err != nil {
 		return r, fmt.Errorf("timestamp: %w", err)
 	}
 	return r, nil
+}
+
+// checkImages validates the optional image provenance. Results from before it
+// existed have none, and any field may be left out.
+func checkImages(images map[string]result.Image) error {
+	if len(images) > 20 {
+		return fmt.Errorf("%d images", len(images))
+	}
+	for svc, img := range images {
+		switch {
+		case !serviceName.MatchString(svc):
+			return fmt.Errorf("image for %q", svc)
+		case img.Platform != "" && !platform.MatchString(img.Platform):
+			return fmt.Errorf("image %s platform %q", svc, img.Platform)
+		case img.Emulated != nil && img.Platform == "":
+			return fmt.Errorf("image %s is marked emulated without a platform", svc)
+		case img.Digest != "" && !repoDigest.MatchString(img.Digest):
+			return fmt.Errorf("image %s digest %q", svc, img.Digest)
+		}
+	}
+	return nil
 }
 
 // checkSteps holds steps to the runner's order: each one ran only because

@@ -255,3 +255,34 @@ func TestWrite_KeepsTheUmask(t *testing.T) {
 		t.Errorf("mode %v under umask 077, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestImages_OptionalInJSON(t *testing.T) {
+	dir := t.TempDir()
+	emulated := true
+	with := result.TestResult{ID: "a", Product: "magento", Version: "2.4.8", OverallStatus: "pass",
+		Images: map[string]result.Image{"search": {Platform: "linux/amd64", Emulated: &emulated}}}
+	without := result.TestResult{ID: "b", Product: "magento", Version: "2.4.8", OverallStatus: "pass"}
+	for _, r := range []result.TestResult{with, without} {
+		if err := result.Write(filepath.Join(dir, "magento", r.ID+".json"), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := result.ReadAll(dir)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("ReadAll = %d results, %v", len(all), err)
+	}
+	for _, r := range all {
+		switch r.ID {
+		case "a":
+			if img := r.Images["search"]; img.Platform != "linux/amd64" || img.Emulated == nil || !*img.Emulated {
+				t.Errorf("images = %+v, want them read back", r.Images)
+			}
+		case "b":
+			raw, _ := os.ReadFile(filepath.Join(dir, "magento", "b.json"))
+			if r.Images != nil || strings.Contains(string(raw), `"images"`) {
+				t.Errorf("absent images written or read as %+v", r.Images)
+			}
+		}
+	}
+}

@@ -84,7 +84,20 @@ func TestValidate(t *testing.T) {
 		"wrong category":     {func(r *result.TestResult) { r.Steps["playwright"] = failed("disk_space", "compatibility") }, false},
 		"unknown workaround": {func(r *result.TestResult) { r.Workarounds = []string{"nope"} }, false},
 		"odd log key":        {func(r *result.TestResult) { r.ContainerLogs = map[string]string{"../php": ""} }, false},
-		"bad timestamp":      {func(r *result.TestResult) { r.Timestamp = "yesterday" }, false},
+		"images present": {func(r *result.TestResult) {
+			yes := true
+			r.Images = map[string]result.Image{
+				"db":      {Platform: "linux/arm64", Emulated: new(bool), Digest: "mariadb@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+				"search":  {Platform: "linux/amd64", Emulated: &yes},
+				"php-fpm": {},
+			}
+		}, true},
+		"images absent":        {func(r *result.TestResult) { r.Images = nil }, true},
+		"image bad platform":   {func(r *result.TestResult) { r.Images = map[string]result.Image{"db": {Platform: "arm 64"}} }, false},
+		"image bad digest":     {func(r *result.TestResult) { r.Images = map[string]result.Image{"db": {Digest: "mariadb:latest"}} }, false},
+		"image odd service":    {func(r *result.TestResult) { r.Images = map[string]result.Image{"../db": {}} }, false},
+		"emulated no platform": {func(r *result.TestResult) { r.Images = map[string]result.Image{"db": {Emulated: new(bool)}} }, false},
+		"bad timestamp":        {func(r *result.TestResult) { r.Timestamp = "yesterday" }, false},
 	}
 	for name, tc := range cases {
 		r := goodResult(c, result.StatusPass)
