@@ -51,6 +51,33 @@ func TestValidate(t *testing.T) {
 			r.OverallStatus = result.OverallStatus(r.Steps)
 		}, false},
 		"playwright skipped": {func(r *result.TestResult) { r.Steps["playwright"] = result.Step{Status: result.StatusSkip} }, true},
+		"service checks": {func(r *result.TestResult) {
+			r.Steps["queue"] = result.Step{Status: result.StatusPass}
+			r.Steps["cron"] = result.Step{Status: result.StatusSkip}
+			r.Steps["cron"] = failed("indexer_not_updated", "compatibility")
+			r.OverallStatus = result.StatusFail
+		}, true},
+		"varnish check without Varnish": {func(r *result.TestResult) {
+			r.Steps["varnish"] = result.Step{Status: result.StatusPass}
+		}, false},
+		"checks after failed playwright": {func(r *result.TestResult) {
+			r.Steps["playwright"] = failed("search_results_missing", "compatibility")
+			r.Steps["queue"] = failed("queue_not_consumed", "compatibility")
+			r.OverallStatus = result.StatusFail
+		}, true},
+		"check without playwright": {func(r *result.TestResult) {
+			*r = goodResult(c, result.StatusFail)
+			r.Steps["queue"] = result.Step{Status: result.StatusPass}
+		}, false},
+		"check unknown code": {func(r *result.TestResult) {
+			r.Steps["queue"] = failed("made_up", "compatibility")
+			r.OverallStatus = result.StatusFail
+		}, false},
+		"check wrong category": {func(r *result.TestResult) {
+			r.Steps["cron"] = failed("cron_jobs_failed", "harness")
+			r.OverallStatus = result.StatusFail
+		}, false},
+		"check bad status":   {func(r *result.TestResult) { r.Steps["queue"] = result.Step{Status: "maybe"} }, false},
 		"bad status":         {func(r *result.TestResult) { r.Steps["smoke"] = result.Step{Status: "maybe"} }, false},
 		"step after failure": {func(r *result.TestResult) { r.Steps["install"] = failed("db_version_unsupported", "compatibility") }, false},
 		"unknown code":       {func(r *result.TestResult) { r.Steps["playwright"] = failed("made_up", "harness") }, false},
@@ -76,5 +103,17 @@ func TestValidate(t *testing.T) {
 		if _, err := Validate([]byte(raw), c, known); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestValidateVarnishCheck(t *testing.T) {
+	c := combo("8.3")
+	c.Varnish = "7.7"
+	r := goodResult(c, result.StatusPass)
+	r.Steps["varnish"] = result.Step{Status: result.StatusFail, Failure: &result.Failure{Code: "varnish_probe_failing", Category: "compatibility"}}
+	r.OverallStatus = result.StatusFail
+	raw, _ := json.Marshal(r)
+	if _, err := Validate(raw, c, nil); err != nil {
+		t.Fatalf("Validate() = %v, want a varnish check on a Varnish combination accepted", err)
 	}
 }

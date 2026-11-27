@@ -22,6 +22,8 @@ var (
 	safeName    = regexp.MustCompile(`^[a-z0-9._-]{1,200}$`)
 	serviceName = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
 	stepOrder   = []string{"stack_up", "install", "smoke", "playwright"}
+	// checkSteps run after Playwright whatever its outcome, in no fixed order.
+	checkStepNames = map[string]bool{"queue": true, "cron": true, "varnish": true}
 )
 
 func LoadWorkarounds(path string) (map[string]bool, error) {
@@ -66,7 +68,7 @@ func Validate(raw []byte, c matrix.Combination, workarounds map[string]bool) (re
 		return r, fmt.Errorf("services %+v don't match the combination", r.Services)
 	}
 
-	if err := checkSteps(r.Steps); err != nil {
+	if err := checkSteps(r.Steps, c); err != nil {
 		return r, err
 	}
 	if want := result.OverallStatus(r.Steps); r.OverallStatus != want {
@@ -92,8 +94,42 @@ func Validate(raw []byte, c matrix.Combination, workarounds map[string]bool) (re
 }
 
 // checkSteps holds steps to the runner's order: each one ran only because
-// the one before it passed.
-func checkSteps(steps map[string]result.Step) error {
+// the one before it passed. The service checks sit outside that chain.
+func checkSteps(all map[string]result.Step, c matrix.Combination) error {
+	steps := map[string]result.Step{}
+	for name, st := range all {
+		if !checkStepNames[name] {
+			steps[name] = st
+			continue
+		}
+		if _, ran := all["playwright"]; !ran {
+			return fmt.Errorf("service check %s without a playwright step", name)
+		}
+		if name == "varnish" && (c.Varnish == "none" || c.Varnish == "") {
+			return errors.New("varnish check on a combination without Varnish")
+		}
+		if err := checkStep(name, st); err != nil {
+			return err
+		}
+	}
+	return checkCore(steps)
+}
+
+func checkStep(name string, st result.Step) error {
+	switch st.Status {
+	case result.StatusPass, result.StatusFail, result.StatusSkip:
+	default:
+		return fmt.Errorf("step %s has status %q", name, st.Status)
+	}
+	if st.Failure != nil {
+		if cat, ok := runner.FailureCodes[st.Failure.Code]; !ok || cat != st.Failure.Category {
+			return fmt.Errorf("step %s has failure %s/%s", name, st.Failure.Category, st.Failure.Code)
+		}
+	}
+	return nil
+}
+
+func checkCore(steps map[string]result.Step) error {
 	known := map[string]bool{}
 	for _, name := range stepOrder {
 		known[name] = true
@@ -120,15 +156,8 @@ func checkSteps(steps map[string]result.Step) error {
 			}
 			return nil
 		}
-		switch st.Status {
-		case result.StatusPass, result.StatusFail, result.StatusSkip:
-		default:
-			return fmt.Errorf("step %s has status %q", name, st.Status)
-		}
-		if st.Failure != nil {
-			if cat, ok := runner.FailureCodes[st.Failure.Code]; !ok || cat != st.Failure.Category {
-				return fmt.Errorf("step %s has failure %s/%s", name, st.Failure.Category, st.Failure.Code)
-			}
+		if err := checkStep(name, st); err != nil {
+			return err
 		}
 		if st.Status != result.StatusPass && i+1 < len(stepOrder) {
 			if _, ok := steps[stepOrder[i+1]]; ok {
