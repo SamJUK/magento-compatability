@@ -33,12 +33,10 @@ export const GET: APIRoute = ({ props }) => {
       option('varnish', 'varnish', s.varnish),
     ].map((o) => o.label),
     timestamp: r.timestamp,
-    steps: STEPS.filter((s) => r.steps?.[s]).map((s) => ({
-      name: STEP_LABELS[s],
-      status: r.steps[s].status,
-      duration: r.steps[s].duration_s,
-      log: r.steps[s].log,
-    })),
+    steps: STEPS.flatMap((s) => {
+      const step = r.steps?.[s];
+      return step ? [{ name: STEP_LABELS[s], status: step.status, duration: step.duration_s, log: step.log }] : [];
+    }),
     containers: Object.entries(r.container_logs ?? {}).map(([name, log]) => ({ name, log })),
   };
   return new Response(JSON.stringify(entry), { headers: { 'Content-Type': 'application/json' } });

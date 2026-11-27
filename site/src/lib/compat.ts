@@ -43,7 +43,7 @@ export interface Cell {
   failure?: Failure;
 }
 
-export const STEPS = ['stack_up', 'install', 'smoke', 'playwright'] as const;
+export const STEPS = ['stack_up', 'install', 'smoke', 'playwright', 'queue', 'cron', 'varnish'] as const;
 export type StepName = (typeof STEPS)[number];
 
 export const STEP_LABELS: Record<StepName, string> = {
@@ -51,6 +51,9 @@ export const STEP_LABELS: Record<StepName, string> = {
   install: 'Install',
   smoke: 'Compile',
   playwright: 'Browser tests',
+  queue: 'Queue',
+  cron: 'Cron and indexers',
+  varnish: 'Varnish cache',
 };
 
 export const PRODUCT_LABELS: Record<string, string> = {
@@ -250,7 +253,7 @@ export function getRelease(product: string, version: string): ReleaseInfo | unde
 export function firstFailure(result: TestResult): Failure | undefined {
   for (const step of STEPS) {
     const s: StepResult | undefined = result.steps?.[step];
-    if (!s || s.status === 'pass') continue;
+    if (!s || (s.status !== 'fail' && s.status !== 'error')) continue;
     return {
       step,
       code: s.failure?.code ?? `${step}_failed`,
