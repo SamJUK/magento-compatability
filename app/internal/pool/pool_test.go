@@ -188,7 +188,7 @@ func TestSetupWaitsForADeploy(t *testing.T) {
 	run := func(lock string) (string, bool) {
 		d, bin, home := t.TempDir(), t.TempDir(), t.TempDir()
 		os.WriteFile(bin+"/flock", []byte("#!/bin/sh\necho lock >> "+d+"/calls\n"+lock+"\n"), 0o755)
-		os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ : >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n"), 0o755)
+		os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ true >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n"), 0o755)
 		os.WriteFile(d+"/m2test-worker.new", []byte("new"), 0o644)
 		w := lab()
 		w.Dir = d
@@ -252,7 +252,7 @@ func TestDeployScriptRestartsOnlyOnANewRelease(t *testing.T) {
 	os.WriteFile(bin+"/mv", []byte("#!/bin/sh\n[ \"$1\" = -T ] && { shift; rm -f \"$2\"; }\nexec /bin/mv -f \"$1\" \"$2\"\n"), 0o755)
 	os.WriteFile(bin+"/flock", []byte("#!/bin/sh\n"), 0o755)
 	// Whatever systemctl starts must not inherit the deploy lock.
-	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ : >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n[ \"$2\" = restart ] && rm "+d+"/fail 2>/dev/null && exit 1\nexit 0\n"), 0o755)
+	os.WriteFile(bin+"/systemctl", []byte("#!/bin/sh\n{ true >&9; } 2>/dev/null && echo holds-lock >> "+d+"/calls\necho \"$2\" >> "+d+"/calls\n[ \"$2\" = restart ] && rm "+d+"/fail 2>/dev/null && exit 1\nexit 0\n"), 0o755)
 	// Never the real daemon: housekeeping prunes images.
 	os.WriteFile(bin+"/docker", []byte("#!/bin/sh\necho \"$*\" >> "+d+"/docker\n"), 0o755)
 	os.WriteFile(d+"/incoming/abc.tar.gz", []byte("x"), 0o644)
