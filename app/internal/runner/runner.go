@@ -219,6 +219,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
 			LikelyFlaky: true,
 		}
+	case stepName == "playwright" && strings.Contains(text, "- storefront search finds the seeded product"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "search_results_missing",
+			Summary:     "The storefront search did not return the seeded product, or returned results for a nonsense term, so the search engine is not serving the catalogue it was indexed with.",
+			LikelyFlaky: false,
+		}
 	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
 		strings.Contains(text, "endpoint with name") && strings.Contains(text, "already exists in network") ||
 		strings.Contains(text, "network with name") && strings.Contains(text, "already exists")):

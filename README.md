@@ -96,7 +96,7 @@ A patch is applied only to the versions its entry lists (`"2.4.4"` covers 2.4.4 
 
 ## Playwright
 
-Three specs run on every install: the storefront renders, a guest checks out, and an admin saves a CMS block.
+Four specs run on every install: the storefront renders, search finds the seeded product, a guest checks out, and an admin saves a CMS block.
 To run them against your own install:
 
 ```bash
