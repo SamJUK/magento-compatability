@@ -33,6 +33,7 @@ export interface ServiceInfo {
 export interface TestServices {
   php: string;
   webserver: string;
+  webserver_version?: string;
   db: ServiceInfo;
   search: ServiceInfo;
   cache: ServiceInfo;
