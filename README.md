@@ -115,6 +115,7 @@ Each is its own step in the result, so results recorded before it existed stay v
 Run one by hand with `docker compose exec php-fpm bash /scripts/tests/run-check.sh php /scripts/tests/check-queue.php`.
 
 - `queue`: schedules the bulk the admin mass attribute update schedules, runs `product_action_attribute.update` once, and checks the attribute changed and the bulk finished. Works over AMQP and STOMP.
+- `cron`: puts the price and search indexers on update-by-schedule, changes the seeded product and runs `cron:run`, then checks no `cron_schedule` row errored or was missed and the change reached the price index and the search engine. It needs the database to create triggers, so it exercises MySQL, MariaDB and Percona. It queues the index update job as due now, so it does not wait for cron's next minute.
 
 ## Results site
 
