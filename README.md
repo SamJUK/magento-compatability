@@ -112,10 +112,14 @@ Set `PLAYWRIGHT_ADMIN_USER`, `PLAYWRIGHT_ADMIN_PASSWORD` and `PLAYWRIGHT_ADMIN_P
 
 After Playwright, each service gets a check that proves it works rather than just connected.
 Each is its own step in the result, so results recorded before it existed stay valid, and a check exits 3 (recorded as a skip) when the release has nothing to test.
-Run one by hand with `docker compose exec php-fpm bash /scripts/tests/run-check.sh php /scripts/tests/check-queue.php`.
+Run one by hand with `docker compose exec php-fpm bash /scripts/tests/run-check.sh php /scripts/tests/check-<name>.php`.
 
 - `queue`: schedules the bulk the admin mass attribute update schedules, runs `product_action_attribute.update` once, and checks the attribute changed and the bulk finished. Works over AMQP and STOMP.
 - `cron`: puts the price and search indexers on update-by-schedule, changes the seeded product and runs `cron:run`, then checks no `cron_schedule` row errored or was missed and the change reached the price index and the search engine. It needs the database to create triggers, so it exercises MySQL, MariaDB and Percona. It queues the index update job as due now, so it does not wait for cron's next minute.
+- `varnish` (when Varnish is not `none`): sets the full page cache to Varnish, loads the VCL into the varnish container, waits for the backend probe and empties the cache, then checks that a product page is a miss and then a hit, that the cart and login pages are not cached, and that saving the product purges its page.
+  It runs last, after Playwright, because it changes the stack: before it, Varnish only proxies and no cached page can affect the browser specs.
+  One VCL, Magento 2.4.9's own template with the harness's host, port and access list filled in, is kept in `docker/scripts/tests/varnish.vcl` and used for every release, as the check proves Varnish works with a valid VCL rather than that each release's generated VCL is right.
+  A probe URL that does not answer 200 fails the check.
 
 ## Results site
 
