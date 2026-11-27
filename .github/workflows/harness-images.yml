@@ -1,0 +1,141 @@
+name: Harness images
+
+# Builds the m2test/* harness images and pushes them to GHCR, tagged with their build context's hash.
+on:
+  push:
+    branches: [master]
+    paths:
+      - docker/**
+      - matrix.yml
+      - app/cmd/builder/**
+      - app/internal/images/**
+      - app/internal/release/**
+      - app/internal/matrix/**
+      - app/internal/runner/**
+      - .github/workflows/harness-images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-images
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    # A run from another branch would publish its images under these names.
+    # Forks can't push to this registry.
+    if: github.ref == 'refs/heads/master' && github.repository == 'samjuk/magento-compatability'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: List the images GHCR lacks
+        id: plan
+        working-directory: app
+        run: |
+          go run ./cmd/builder images -repo .. > "$RUNNER_TEMP/all.json"
+          todo='[]'
+          while read -r img; do
+            remote=$(jq -r .remote <<< "$img")
+            # Only a tag that is absent or lacks an architecture is rebuilt;
+            # any other error stops the run rather than overwrite one.
+            if out=$(docker buildx imagetools inspect --raw "$remote" 2>&1); then
+              if [ "$(jq -c '[.manifests[]?.platform | select(.os == "linux") | .architecture] | sort | unique' <<< "$out")" = '["amd64","arm64"]' ]; then
+                echo "have $remote"
+                continue
+              fi
+              echo "need $remote (not both architectures)"
+              todo=$(jq -c --argjson i "$img" '. + [$i]' <<< "$todo")
+            elif grep -qi 'not found' <<< "$out"; then
+              echo "need $remote"
+              todo=$(jq -c --argjson i "$img" '. + [$i]' <<< "$todo")
+            else
+              echo "::error::inspecting $remote: $out"
+              exit 1
+            fi
+          done < <(jq -c '.[]' "$RUNNER_TEMP/all.json")
+          echo "images=$todo" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.images != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+        platform:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push
+        working-directory: app
+        env:
+          REMOTE: ${{ matrix.image.remote }}
+          ARCH: ${{ matrix.platform.arch }}
+        run: |
+          go run ./cmd/builder images -repo .. -build "$REMOTE" -tag "$REMOTE-$ARCH"
+          docker push "$REMOTE-$ARCH"
+
+  merge:
+    needs: [plan, build]
+    # One image failing must not hold back the others.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.images != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Join each image's architectures under its tag
+        env:
+          IMAGES: ${{ needs.plan.outputs.images }}
+        run: |
+          failed=0
+          for remote in $(jq -r '.[].remote' <<< "$IMAGES"); do
+            if docker buildx imagetools inspect "$remote-amd64" > /dev/null && docker buildx imagetools inspect "$remote-arm64" > /dev/null; then
+              docker buildx imagetools create -t "$remote" "$remote-amd64" "$remote-arm64"
+            else
+              echo "::error::$remote lacks an architecture; not published"
+              failed=1
+            fi
+          done
+          exit "$failed"

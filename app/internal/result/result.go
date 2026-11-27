@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/samjuk/magento-compatability/internal/atomicfile"
 )
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -112,9 +114,8 @@ func Now() string {
 // ── Write ─────────────────────────────────────────────────────────────────────
 
 // Write serialises r as indented JSON to path, creating parent directories as
-// needed. This replaces write_result_json in scripts/lib.sh and, crucially,
-// never calls jq — eliminating the --argjson failures caused by unescaped log
-// content.
+// needed. The file is replaced atomically, so readers never see a partial
+// result, even if the process dies mid-write.
 func Write(path string, r TestResult) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("result: mkdir %s: %w", filepath.Dir(path), err)
@@ -123,7 +124,7 @@ func Write(path string, r TestResult) error {
 	if err != nil {
 		return fmt.Errorf("result: marshalling %s: %w", r.ID, err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	if err := atomicfile.Write(path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("result: writing %s: %w", path, err)
 	}
 	return nil

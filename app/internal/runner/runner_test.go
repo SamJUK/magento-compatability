@@ -1223,3 +1223,40 @@ func TestQueuePort(t *testing.T) {
 		t.Errorf("rabbitmq: got %s, want 5672", got)
 	}
 }
+
+func TestRunPlaywrightStopsAtTheDeadlineDespiteItsChildren(t *testing.T) {
+	old := WaitDelay
+	WaitDelay = 100 * time.Millisecond
+	defer func() { WaitDelay = old }()
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "npx"), []byte("#!/bin/sh\nsleep 10 &\nwait\n"), 0o755)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	// Long enough for the child to have started.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := runPlaywright(ctx, t.TempDir(), "http://x", "id"); err == nil {
+		t.Error("control: a killed run reported success")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("returned after %v, held by the child", d)
+	}
+}
+
+func TestComposeStopsAtTheDeadlineDespiteAPlugin(t *testing.T) {
+	old := WaitDelay
+	WaitDelay = 100 * time.Millisecond
+	defer func() { WaitDelay = old }()
+	cp := &Compose{execCommand: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", "sleep 10 & wait")
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := cp.run(ctx, "up"); err == nil {
+		t.Error("control: a killed docker reported success")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("returned after %v, held by the plugin", d)
+	}
+}

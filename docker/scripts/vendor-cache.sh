@@ -10,9 +10,8 @@
 # and competing writes when multiple runs hit the same PHP/package/version.
 
 : "${VENDOR_CACHE_LOCK_WAIT_SECONDS:=1800}"
-: "${VENDOR_CACHE_LOCK_STALE_SECONDS:=3600}"
 
-VENDOR_CACHE_HELD_LOCK_DIR=""
+VENDOR_CACHE_LOCK_FD=""
 
 # Each entry is one zstd archive of vendor/ plus NonComposerComponentRegistration.php.
 # Older entries are plain directories and are converted on their first restore.
@@ -47,52 +46,40 @@ vendor_cache_write_archive() {
     || { rm -f "${tmp_file}"; return 1; }
 }
 
+# The lock is a kernel flock on <entry>.flock, so it dies with its holder and
+# never needs stale detection. Needs util-linux flock for -w.
 vendor_cache_release_lock() {
-  if [[ -n "${VENDOR_CACHE_HELD_LOCK_DIR}" ]]; then
-    rm -rf -- "${VENDOR_CACHE_HELD_LOCK_DIR}"
-    VENDOR_CACHE_HELD_LOCK_DIR=""
+  if [[ -n "${VENDOR_CACHE_LOCK_FD}" ]]; then
+    exec {VENDOR_CACHE_LOCK_FD}>&-
+    VENDOR_CACHE_LOCK_FD=""
   fi
 }
 
+# An image built before the lock has no util-linux flock: run uncached.
+vendor_cache_usable() {
+  flock --version 2>/dev/null | grep -q util-linux && return 0
+  echo "[WARN] util-linux flock is missing from the PHP image, so the vendor cache is skipped; rebuild it with docker compose build" >&2
+  return 1
+}
+
 vendor_cache_acquire_lock() {
-  local cache_path="$1"
-  local lock_dir="${cache_path}.lock"
-  local started_at now acquired_at
-  local wait_logged=0
+  local lock_file="$1.flock"
 
-  started_at="$(date +%s)"
+  if ! flock --version 2>/dev/null | grep -q util-linux; then
+    echo "[ERROR] util-linux flock is missing from the PHP image, rebuild it with docker compose build" >&2
+    return 1
+  fi
 
-  while ! mkdir "${lock_dir}" 2>/dev/null; do
-    now="$(date +%s)"
-    acquired_at=0
-    if [[ -f "${lock_dir}/acquired_at" ]]; then
-      acquired_at="$(cat "${lock_dir}/acquired_at" 2>/dev/null || echo 0)"
-    fi
+  mkdir -p "$(dirname "${lock_file}")"
+  exec {VENDOR_CACHE_LOCK_FD}>>"${lock_file}" || { VENDOR_CACHE_LOCK_FD=""; return 1; }
+  flock -n "${VENDOR_CACHE_LOCK_FD}" && return 0
 
-    if [[ "${acquired_at}" =~ ^[0-9]+$ ]] && (( acquired_at > 0 )) && (( now - acquired_at > VENDOR_CACHE_LOCK_STALE_SECONDS )); then
-      echo "[WARN] Removing stale vendor cache lock: ${lock_dir}" >&2
-      rm -rf -- "${lock_dir}"
-      continue
-    fi
+  echo "[INFO] Waiting for vendor cache lock: ${lock_file}" >&2
+  flock -w "${VENDOR_CACHE_LOCK_WAIT_SECONDS}" "${VENDOR_CACHE_LOCK_FD}" && return 0
 
-    if (( wait_logged == 0 )); then
-      echo "[INFO] Waiting for vendor cache lock: ${lock_dir}" >&2
-      wait_logged=1
-    fi
-
-    if (( now - started_at >= VENDOR_CACHE_LOCK_WAIT_SECONDS )); then
-      echo "[ERROR] Timed out waiting for vendor cache lock: ${lock_dir}" >&2
-      return 1
-    fi
-
-    sleep 1
-  done
-
-  printf '%s\n' "$(date +%s)" > "${lock_dir}/acquired_at"
-  printf '%s\n' "${HOSTNAME:-unknown}" > "${lock_dir}/owner"
-  printf '%s\n' "$$" > "${lock_dir}/pid"
-
-  VENDOR_CACHE_HELD_LOCK_DIR="${lock_dir}"
+  echo "[ERROR] Timed out waiting for vendor cache lock: ${lock_file}" >&2
+  vendor_cache_release_lock
+  return 1
 }
 
 vendor_cache_restore() {

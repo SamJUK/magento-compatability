@@ -27,9 +27,6 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
-          - goos: windows
-            goarch: amd64
-            ext: .exe
 
     steps:
       - name: Checkout
@@ -49,7 +46,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go build -trimpath -ldflags="-s -w" \
-            -o ../dist/magento-compatibility-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            -o ../dist/magento-compatibility-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd/cli
 
       - name: Build builder binary
@@ -60,7 +57,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go build -trimpath -ldflags="-s -w" \
-            -o ../dist/magento-compatibility-builder-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            -o ../dist/magento-compatibility-builder-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd/builder
 
       - name: Upload binaries to release

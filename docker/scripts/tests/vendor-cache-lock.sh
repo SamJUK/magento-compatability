@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: OSL-3.0
 
 
+# Needs util-linux flock, so run it in the PHP image:
+#   docker run --rm -v "$PWD/docker/scripts:/scripts:ro" m2test/php:8.3 bash /scripts/tests/vendor-cache-lock.sh
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -114,23 +117,27 @@ test_restore_waits_until_cache_is_ready() {
   assert_eq "$(cat "${target_dir}/vendor/phpmd/phpmd/src/main/php/PHPMD/source.txt")" "from-cache" "restored cache contents should match"
 }
 
-test_stale_lock_is_removed() {
-  local cache_path="${TMP_ROOT}/stale-cache"
-  local stale_lock="${cache_path}.lock"
-  mkdir -p "${stale_lock}"
-  printf '1\n' > "${stale_lock}/acquired_at"
+test_lock_dies_with_its_holder() {
+  local cache_path="${TMP_ROOT}/dead-holder-cache"
 
-  local started_at
-  started_at="$(date +%s)"
-  VENDOR_CACHE_LOCK_STALE_SECONDS=1 vendor_cache_acquire_lock "${cache_path}"
-  local elapsed=$(( $(date +%s) - started_at ))
+  # exec, so the pid we kill is the process holding the lock.
+  LIB_PATH="${LIB_PATH}" bash -c '
+    source "${LIB_PATH}"
+    vendor_cache_acquire_lock "'"${cache_path}"'"
+    exec sleep 60
+  ' &
+  local holder_pid=$!
+  sleep 1
 
-  assert_ge "${elapsed}" "0" "stale lock acquisition should not fail"
+  local status=0
+  VENDOR_CACHE_LOCK_WAIT_SECONDS=1 vendor_cache_acquire_lock "${cache_path}" 2>/dev/null || status=$?
+  assert_eq "${status}" "1" "a live holder should block the lock"
+
+  kill -9 "${holder_pid}"
+  wait "${holder_pid}" 2>/dev/null || true
+
+  VENDOR_CACHE_LOCK_WAIT_SECONDS=5 vendor_cache_acquire_lock "${cache_path}"
   vendor_cache_release_lock
-  if [[ -d "${stale_lock}" ]]; then
-    echo "stale lock was not cleaned up" >&2
-    exit 1
-  fi
 }
 
 test_save_then_restore_round_trips_through_the_archive() {
@@ -179,6 +186,6 @@ test_restore_waits_until_cache_is_ready
 test_save_then_restore_round_trips_through_the_archive
 test_restore_converts_a_directory_entry
 test_corrupt_archive_restores_as_a_miss
-test_stale_lock_is_removed
+test_lock_dies_with_its_holder
 
 echo "vendor cache lock tests passed"

@@ -121,6 +121,7 @@ jobs:
             -playwright=false \
             -no-tui \
             -force \
+            -build-images \
             -max-log-bytes 262144 \
             -results-dir "${RUNNER_TEMP}/results"
 

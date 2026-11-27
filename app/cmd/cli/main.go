@@ -48,11 +48,11 @@ type apiSummary struct {
 }
 
 type apiResult struct {
-	ID            string            `json:"id"`
-	OverallStatus string            `json:"overall_status"`
-	Services      apiServices       `json:"services"`
+	ID            string             `json:"id"`
+	OverallStatus string             `json:"overall_status"`
+	Services      apiServices        `json:"services"`
 	Steps         map[string]apiStep `json:"steps"`
-	Timestamp     string            `json:"timestamp"`
+	Timestamp     string             `json:"timestamp"`
 }
 
 type apiServices struct {
@@ -98,9 +98,9 @@ Examples:
   magento-compatibility --url https://staging.example.com 2.4.8`)
 	}
 
-	flagURL     := fs.String("url", "", "Base URL of the compatibility site (e.g. https://m2compat.example.com)")
+	flagURL := fs.String("url", "", "Base URL of the compatibility site (e.g. https://m2compat.example.com)")
 	flagProduct := fs.String("product", "magento", "Product name (magento|mageos)")
-	flagFormat  := fs.String("format", "table", "Output format: table, json, csv")
+	flagFormat := fs.String("format", "table", "Output format: table, json, csv")
 	flagTimeout := fs.Duration("timeout", 15*time.Second, "HTTP request timeout")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {

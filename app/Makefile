@@ -8,6 +8,7 @@ build:
 	@mkdir -p $(GOBIN)
 	$(GOCMD) build $(LDFLAGS) -o $(GOBIN)/magento-compatibility-builder ./cmd/builder
 	$(GOCMD) build $(LDFLAGS) -o $(GOBIN)/magento-compatibility ./cmd/cli
+	$(GOCMD) build $(LDFLAGS) -o $(GOBIN)/m2test-worker ./cmd/worker
 
 test:
 	$(GOCMD) test ./...

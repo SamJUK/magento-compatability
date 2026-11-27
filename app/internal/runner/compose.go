@@ -82,36 +82,39 @@ func parseHostPort(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-// newCompose builds a Compose from a Combination, pre-resolving all compose
-// file paths.  composeDir is the absolute path to the compose/ directory.
-func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Compose, error) {
+func StackFiles(c matrix.Combination, composeDir string) ([]string, error) {
 	files := []string{filepath.Join(composeDir, "base.yml")}
-
-	addService := func(typ string) error {
+	for _, typ := range []string{c.DBType, c.SearchType, c.CacheType, c.QueueType} {
 		name, ok := composeFileMap[typ]
 		if !ok {
-			return fmt.Errorf("compose: unknown service type %q", typ)
+			return nil, fmt.Errorf("compose: unknown service type %q", typ)
 		}
 		files = append(files, filepath.Join(composeDir, "services", name))
-		return nil
-	}
-
-	if err := addService(c.DBType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.SearchType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.CacheType); err != nil {
-		return nil, err
-	}
-	if err := addService(c.QueueType); err != nil {
-		return nil, err
 	}
 	if c.Varnish != "none" && c.Varnish != "" {
 		files = append(files, filepath.Join(composeDir, "services", "varnish.yml"))
 	}
+	return files, nil
+}
 
+func StackEnv(c matrix.Combination) []string {
+	return []string{
+		"PHP_VERSION=" + c.PHP,
+		"WEBSERVER_TYPE=" + c.WebserverType,
+		"WEBSERVER_VERSION=" + c.WebserverVersion,
+		"DB_VERSION=" + c.DBVersion,
+		"SEARCH_VERSION=" + c.SearchVersion,
+		"CACHE_VERSION=" + c.CacheVersion,
+		"QUEUE_VERSION=" + c.QueueVersion,
+		"VARNISH_VERSION=" + c.Varnish,
+	}
+}
+
+func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Compose, error) {
+	files, err := StackFiles(c, composeDir)
+	if err != nil {
+		return nil, err
+	}
 	projectName := uniqueProjectName(c.ID())
 
 	// Start from the current process environment so that PATH, HOME,
@@ -122,22 +125,16 @@ func newCompose(c matrix.Combination, composeDir string, extraEnv []string) (*Co
 		// Docker/Compose endpoint races while still allowing multiple builder
 		// combinations to run concurrently.
 		"COMPOSE_PARALLEL_LIMIT=1",
-		"PHP_VERSION="+c.PHP,
-		"WEBSERVER_TYPE="+c.WebserverType,
-		"WEBSERVER_VERSION="+c.WebserverVersion,
-		"DB_VERSION="+c.DBVersion,
-		"SEARCH_VERSION="+c.SearchVersion,
-		"CACHE_VERSION="+c.CacheVersion,
-		"QUEUE_VERSION="+c.QueueVersion,
-		"VARNISH_VERSION="+c.Varnish,
 		"WEBSERVER_PORT=0",
 	)
+	env = append(env, StackEnv(c)...)
 	env = append(env, extraEnv...)
 
 	return &Compose{
 		projectName: projectName,
 		files:       files,
 		env:         env,
+		execCommand: stubExec,
 	}, nil
 }
 
@@ -150,11 +147,15 @@ func (cp *Compose) args(sub ...string) []string {
 	return append(a, sub...)
 }
 
+var stubExec func(context.Context, string, ...string) *exec.Cmd
+
 func (cp *Compose) command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	if cp.execCommand != nil {
-		return cp.execCommand(ctx, name, args...)
+		cmd := cp.execCommand(ctx, name, args...)
+		cmd.WaitDelay = WaitDelay
+		return cmd
 	}
-	return exec.CommandContext(ctx, name, args...)
+	return Command(ctx, name, args...)
 }
 
 // run executes docker with the given arguments, capturing combined output.
@@ -195,12 +196,10 @@ func (cp *Compose) Up(ctx context.Context) (string, error) {
 
 // removeEphemeralVolumes deletes the per-run volumes created by this stack.
 // Compose names them {COMPOSE_PROJECT_NAME}_{suffix}. Errors are ignored —
-// volumes may not exist if Up never succeeded. Uses a fresh context so cleanup
-// runs even when the caller's context is already cancelled.
-func (cp *Compose) removeEphemeralVolumes() {
-	bg := context.Background()
+// volumes may not exist if Up never succeeded.
+func (cp *Compose) removeEphemeralVolumes(ctx context.Context) {
 	for _, suffix := range []string{"_magento", "_db-data", "_search-data"} {
-		cmd := cp.command(bg, "docker", "volume", "rm", "--force", cp.projectName+suffix)
+		cmd := cp.command(ctx, "docker", "volume", "rm", "--force", cp.projectName+suffix)
 		cmd.Env = cp.env
 		_ = cmd.Run()
 	}
@@ -210,7 +209,7 @@ func (cp *Compose) removeEphemeralVolumes() {
 // and RabbitMQ images declare; the external cache volumes survive it.
 func (cp *Compose) Down(ctx context.Context) error {
 	_, err := cp.run(ctx, "down", "--volumes", "--remove-orphans")
-	cp.removeEphemeralVolumes()
+	cp.removeEphemeralVolumes(ctx)
 	return err
 }
 

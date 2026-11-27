@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -212,5 +213,45 @@ func TestParseWorkarounds(t *testing.T) {
 	}
 	if result.ParseWorkarounds("[OK] Composer install complete") != nil {
 		t.Fatal("ParseWorkarounds() without markers should be nil so the field is omitted")
+	}
+}
+
+func TestWrite_ReplacesAtomically(t *testing.T) {
+	defer syscall.Umask(syscall.Umask(0o022))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "magento", "x.json")
+	for _, status := range []string{result.StatusFail, result.StatusPass} {
+		if err := result.Write(path, result.TestResult{ID: "x", Product: "magento", Version: "2.4.8", OverallStatus: status}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got result.TestResult
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil || got.OverallStatus != result.StatusPass {
+		t.Fatalf("want second write to win, got %q (%v)", got.OverallStatus, err)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v, want 0644", info.Mode().Perm())
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Errorf("want only x.json left, got %d entries", len(entries))
+	}
+}
+
+func TestWrite_KeepsTheUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	path := filepath.Join(t.TempDir(), "magento", "x.json")
+	if err := result.Write(path, result.TestResult{ID: "x", Product: "magento"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v under umask 077, want 0600", info.Mode().Perm())
 	}
 }
