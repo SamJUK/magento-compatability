@@ -40,7 +40,7 @@ const recommended = [...cells.values()].filter((c) => c.recommended);
 const baseline = recommended[0]?.result;
 const baselineStatus = recommended[0]?.status ?? 'untested';
 const steps = baseline
-  ? STEPS.filter((s) => baseline.steps?.[s]).map((s) => ({ name: STEP_LABELS[s], ...baseline.steps[s] }))
+  ? STEPS.flatMap((s) => (baseline.steps?.[s] ? [{ name: STEP_LABELS[s], ...baseline.steps[s] }] : []))
   : [];
 const longest = Math.max(1, ...steps.map((s) => s.duration_s));
 const total = steps.reduce((n, s) => n + s.duration_s, 0);
@@ -175,7 +175,7 @@ const monthYear = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { m
                 <span>{s.name}</span>
                 <span class="h-2.5 rounded-full bg-black/25">
                   <span
-                    class:list={['block h-2.5 rounded-full', s.status === 'pass' ? 'bg-[#7cd992]' : 'bg-[#ff8f7a]']}
+                    class:list={['block h-2.5 rounded-full', s.status === 'pass' ? 'bg-[#7cd992]' : s.status === 'skip' ? 'bg-white/40' : 'bg-[#ff8f7a]']}
                     style={`width: ${Math.max(3, (s.duration_s / longest) * 100)}%`}
                   ></span>
                 </span>

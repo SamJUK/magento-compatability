@@ -919,6 +919,34 @@ func TestClassifyStepFailure(t *testing.T) {
 			},
 		},
 		{
+			name:     "search finds nothing",
+			stepName: "playwright",
+			log:      "[3/4] [chromium] › tests/search.spec.ts:10:7 › Search › storefront search finds the seeded product\nError: expect(locator).toBeVisible() failed\nPlaywright failures:\n - storefront search finds the seeded product and nothing for a nonsense term",
+			want: &result.Failure{
+				Category:    "compatibility",
+				Code:        "search_results_missing",
+				Summary:     "The storefront search did not return the seeded product, or returned results for a nonsense term, so the search engine is not serving the catalogue it was indexed with.",
+				LikelyFlaky: false,
+			},
+		},
+		{
+			name:     "another spec fails after search passed",
+			stepName: "playwright",
+			log:      "[3/4] [chromium] › tests/search.spec.ts:10:7 › Search › storefront search finds the seeded product\n[4/4] [chromium] › tests/storefront.spec.ts:9:7 › Storefront › home page\nError: something new\nPlaywright failures:\n - home page",
+			want:     nil,
+		},
+		{
+			name:     "search spec hits a timeout",
+			stepName: "playwright",
+			log:      "tests/search.spec.ts:10:7\nTimeoutError: page.goto: Timeout 30000ms exceeded.",
+			want: &result.Failure{
+				Category:    "infrastructure",
+				Code:        "storefront_timeout",
+				Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
+				LikelyFlaky: true,
+			},
+		},
+		{
 			name:     "cleanup race",
 			stepName: "stack_up",
 			log:      "dependency failed to start: Error response from daemon: No such container: deadbeef",

@@ -13,6 +13,7 @@
 #   3. seed checkout product  — simple product for the Playwright checkout spec
 #   4. disable page builder   — the admin spec saves through the standard editor
 #   5. indexer:reindex        — makes the seeded product salable
+#   6. health_check.php       — answers 200 on the origin web server
 #
 # Environment:
 #   RUN_DI_COMPILE  — set to 0 to skip setup:di:compile (default: 1)
@@ -108,5 +109,9 @@ chown -R www-data:www-data \
     "${MAGENTO_DIR}/pub" \
     "${MAGENTO_DIR}/generated" \
     2>/dev/null || true
+
+# 2.4.9 answers 500 here when the page cache has no backend, and Varnish probes it.
+run_step "health_check.php answers 200" \
+  php -r '@file_get_contents("http://webserver/health_check.php", false, stream_context_create(["http" => ["ignore_errors" => true, "follow_location" => 0]])); $var = "http_response_header"; $headers = function_exists("http_get_last_response_headers") ? http_get_last_response_headers() : ($$var ?? []); $status = $headers[0] ?? "no response"; echo $status, "\n"; exit(strpos($status, " 200") !== false ? 0 : 1);'
 
 echo "[OK] All smoke tests passed"

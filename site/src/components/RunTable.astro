@@ -54,11 +54,13 @@ const td = 'px-3 py-2 border-t border-line whitespace-nowrap';
                 {STEPS.map((step) => {
                   const st = r.steps?.[step];
                   if (!st) return null;
+                  const skipped = st.status === 'skip';
+                  const reason = st.log?.match(/\[SKIP\][^\n]*/)?.[0];
                   return (
                     <span
-                      title={`${STEP_LABELS[step]}: ${st.status}`}
-                      class:list={['px-1.5 py-0.5 rounded font-sans text-[11px] font-semibold', st.status === 'pass' ? 'bg-pass text-pass-ink' : 'bg-fail text-fail-ink border border-dashed border-fail-line']}
-                    >{STEP_LABELS[step]}</span>
+                      title={reason ? `${STEP_LABELS[step]}: skipped. ${reason}` : `${STEP_LABELS[step]}: ${st.status}`}
+                      class:list={['px-1.5 py-0.5 rounded font-sans text-[11px] font-semibold', st.status === 'pass' ? 'bg-pass text-pass-ink' : skipped ? 'border border-dotted border-line text-muted' : 'bg-fail text-fail-ink border border-dashed border-fail-line']}
+                    >{skipped ? `${STEP_LABELS[step]} skipped` : STEP_LABELS[step]}</span>
                   );
                 })}
               </span>

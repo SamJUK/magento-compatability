@@ -51,6 +51,10 @@ export interface TestResult {
     install: StepResult;
     smoke: StepResult;
     playwright: StepResult;
+    // Absent from results recorded before these checks existed
+    queue?: StepResult;
+    cron?: StepResult;
+    varnish?: StepResult;
   };
   /** Per-service container logs captured after the run, keyed by service name */
   container_logs?: Record<string, string>;

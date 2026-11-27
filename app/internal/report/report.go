@@ -59,6 +59,11 @@ func rowPassed(r result.TestResult) bool {
 	install := stepStatus(r, "install")
 	smoke := stepStatus(r, "smoke")
 	pw := stepStatus(r, "playwright")
+	for _, s := range r.Steps {
+		if s.Status == result.StatusFail || s.Status == result.StatusError {
+			return false
+		}
+	}
 	return install == result.StatusPass &&
 		smoke == result.StatusPass &&
 		(pw == result.StatusPass || pw == result.StatusSkip)
@@ -106,8 +111,8 @@ func Summary(results []result.TestResult) (passed, total int) {
 // WriteMD writes a GitHub Flavoured Markdown table to w.
 func WriteMD(w io.Writer, product string, results []result.TestResult) error {
 	fmt.Fprintf(w, "# %s Test Results\n\n", product)
-	fmt.Fprintln(w, "| Combo ID | Version | PHP | Webserver | DB | Search | Cache | Queue | Varnish | Stack Up | Install | Smoke | Playwright |")
-	fmt.Fprintln(w, "|----------|---------|-----|-----------|-----|--------|-------|-------|---------|----------|---------|-------|------------|")
+	fmt.Fprintln(w, "| Combo ID | Version | PHP | Webserver | DB | Search | Cache | Queue | Varnish | Stack Up | Install | Smoke | Playwright | Queue check | Cron check | Varnish check |")
+	fmt.Fprintln(w, "|----------|---------|-----|-----------|-----|--------|-------|-------|---------|----------|---------|-------|------------|-------------|------------|---------------|")
 
 	for _, r := range results {
 		db := r.Services.DB.Type + ":" + r.Services.DB.Version
@@ -115,7 +120,7 @@ func WriteMD(w io.Writer, product string, results []result.TestResult) error {
 		cache := r.Services.Cache.Type + ":" + r.Services.Cache.Version
 		queue := r.Services.Queue.Type + ":" + r.Services.Queue.Version
 
-		fmt.Fprintf(w, "| `%s` | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(w, "| `%s` | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			r.ID,
 			r.Version,
 			r.Services.PHP,
@@ -126,6 +131,9 @@ func WriteMD(w io.Writer, product string, results []result.TestResult) error {
 			stepIcon(stepStatus(r, "install")),
 			stepIcon(stepStatus(r, "smoke")),
 			stepIcon(stepStatus(r, "playwright")),
+			stepIcon(stepStatus(r, "queue")),
+			stepIcon(stepStatus(r, "cron")),
+			stepIcon(stepStatus(r, "varnish")),
 		)
 	}
 
@@ -137,13 +145,15 @@ func WriteMD(w io.Writer, product string, results []result.TestResult) error {
 
 // ── WriteCSV ──────────────────────────────────────────────────────────────────
 
-// WriteCSV writes a CSV file with the same column layout as reporter.sh.
+// WriteCSV writes a CSV file with the column layout of reporter.sh, then one column
+// per service check.
 func WriteCSV(w io.Writer, product string, results []result.TestResult) error {
 	cw := csv.NewWriter(w)
 	if err := cw.Write([]string{
 		"id", "product", "version", "php", "webserver",
 		"db", "search", "cache", "queue", "varnish",
 		"stack_up", "install", "smoke", "playwright", "timestamp",
+		"queue_check", "cron_check", "varnish_check",
 	}); err != nil {
 		return err
 	}
@@ -161,6 +171,9 @@ func WriteCSV(w io.Writer, product string, results []result.TestResult) error {
 			stepPlain(stepStatus(r, "smoke")),
 			stepPlain(stepStatus(r, "playwright")),
 			r.Timestamp,
+			stepPlain(stepStatus(r, "queue")),
+			stepPlain(stepStatus(r, "cron")),
+			stepPlain(stepStatus(r, "varnish")),
 		}); err != nil {
 			return err
 		}
@@ -237,9 +250,10 @@ func StdoutSummary(w io.Writer, results []result.TestResult, colour bool) {
 		smoke := stepStatus(r, "smoke")
 		pw := stepStatus(r, "playwright")
 
-		line := fmt.Sprintf("%s %s | install:%s smoke:%s pw:%s",
+		line := fmt.Sprintf("%s %s | install:%s smoke:%s pw:%s queue:%s cron:%s varnish:%s",
 			icon, r.ID,
 			stepIcon(install), stepIcon(smoke), stepIcon(pw),
+			stepIcon(stepStatus(r, "queue")), stepIcon(stepStatus(r, "cron")), stepIcon(stepStatus(r, "varnish")),
 		)
 		fmt.Fprintln(w, cf(lineColour, line))
 	}

@@ -400,6 +400,10 @@ bin/magento setup:install \
   --cache-backend-redis-server="${CACHE_HOST}" \
   --cache-backend-redis-port="${CACHE_PORT}" \
   --cache-backend-redis-db=0 \
+  --page-cache=redis \
+  --page-cache-redis-server="${CACHE_HOST}" \
+  --page-cache-redis-port="${CACHE_PORT}" \
+  --page-cache-redis-db=2 \
   --session-save=redis \
   --session-save-redis-host="${CACHE_HOST}" \
   --session-save-redis-port="${CACHE_PORT}" \

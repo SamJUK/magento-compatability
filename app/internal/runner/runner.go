@@ -101,6 +101,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 	text := compactWhitespace(strings.ToLower(log))
 
 	switch {
+	case strings.Contains(text, "[error] "+stepName+":"):
+		return &result.Failure{
+			Category:    "harness",
+			Code:        "check_error",
+			Summary:     "The check could not run, so it says nothing about this release.",
+			LikelyFlaky: true,
+		}
 	case stepName == "install" && isTransientComposerNetworkFailure(text):
 		return &result.Failure{
 			Category:    "infrastructure",
@@ -238,6 +245,90 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Summary:     "The run exhausted host or Docker disk space.",
 			LikelyFlaky: true,
 		}
+	case stepName == "queue" && strings.Contains(text, "amq229119"):
+		return &result.Failure{
+			Category:    "infrastructure",
+			Code:        "disk_space",
+			Summary:     "Artemis stopped accepting messages because the host or Docker disk is nearly full.",
+			LikelyFlaky: true,
+		}
+	case strings.Contains(text, "[fail] "+stepName+": uncaught "):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "check_exception",
+			Summary:     "The check script stopped on an uncaught error.",
+			LikelyFlaky: false,
+		}
+	case stepName == "queue" && strings.Contains(text, "schedulebulk returned false"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "queue_publish_failed",
+			Summary:     "Magento could not publish a message to the queue service it connected to at install.",
+			LikelyFlaky: false,
+		}
+	case stepName == "queue" && strings.Contains(text, "[fail] queue:"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "queue_not_consumed",
+			Summary:     "A message was published but the consumer did not deliver it, so the queue connects but does not work.",
+			LikelyFlaky: false,
+		}
+	case stepName == "cron" && strings.Contains(text, "cron job indexer_update_all_views ended as"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "cron_jobs_failed",
+			Summary:     "Cron ran but recorded failed or missed jobs in cron_schedule.",
+			LikelyFlaky: false,
+		}
+	case stepName == "cron" && strings.Contains(text, "[fail] cron:"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "indexer_not_updated",
+			Summary:     "A product change made under update-by-schedule indexing did not reach the indexes after cron ran, or the database triggers never recorded it.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && strings.Contains(text, "rejected the vcl fixture"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_vcl_rejected",
+			Summary:     "Varnish would not load the VCL fixture on this release of Magento.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && strings.Contains(text, "would mark the backend sick"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_probe_failing",
+			Summary:     "The health probe in the VCL Magento generated does not answer 200, so Varnish would mark the backend sick and serve 503.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && strings.Contains(text, "did not answer 200"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_bad_response",
+			Summary:     "A page the check requested through Varnish did not answer 200, so caching could not be judged.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && strings.Contains(text, "was served from the cache"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_private_page_cached",
+			Summary:     "Varnish cached a page that must be passed through, such as the cart or login page.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && (strings.Contains(text, "not purged") || strings.Contains(text, "not cached again")):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_not_purged",
+			Summary:     "Saving a product did not purge its page from Varnish, so customers would see stale pages.",
+			LikelyFlaky: false,
+		}
+	case stepName == "varnish" && strings.Contains(text, "[fail] varnish:"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "varnish_not_caching",
+			Summary:     "Varnish sits in front of Magento but did not cache a cacheable page.",
+			LikelyFlaky: false,
+		}
 	case stepName == "playwright" && strings.Contains(text, "executable doesn't exist"):
 		return &result.Failure{
 			Category:    "harness",
@@ -266,6 +357,13 @@ func classifyStepFailureForCombination(c matrix.Combination, stepName, log strin
 			Code:        "storefront_timeout",
 			Summary:     "The storefront did not answer the browser within the page timeout, usually because the host was overloaded.",
 			LikelyFlaky: true,
+		}
+	case stepName == "playwright" && strings.Contains(text, "- storefront search finds the seeded product"):
+		return &result.Failure{
+			Category:    "compatibility",
+			Code:        "search_results_missing",
+			Summary:     "The storefront search did not return the seeded product, or returned results for a nonsense term, so the search engine is not serving the catalogue it was indexed with.",
+			LikelyFlaky: false,
 		}
 	case stepName == "stack_up" && (strings.Contains(text, "already in use by container") ||
 		strings.Contains(text, "endpoint with name") && strings.Contains(text, "already exists in network") ||
@@ -820,7 +918,194 @@ func Run(ctx context.Context, c matrix.Combination, cfg RunConfig) (ran bool, er
 		}
 	}
 
+	for _, check := range serviceChecks(c) {
+		t = time.Now()
+		status, log := runServiceCheck(runCtx, cp, check)
+		recordStep(check.name, status, time.Since(t).Seconds(), log)
+	}
+
 	return true, finish()
+}
+
+// serviceCheck is a script run in the php-fpm container that proves one service
+// works, not just that Magento connected to it. Each one is its own step, so
+// results recorded before a check existed stay valid.
+type serviceCheck struct {
+	name string
+	argv []string
+	// service is the container whose log tail is added to a failed check, for
+	// causes the script cannot see, such as a broker refusing messages.
+	service string
+	// run replaces argv for a check that needs more than one command.
+	run func(ctx context.Context, cp *Compose) (status, log string)
+}
+
+// skipExitCode is what a check script exits with when the release has nothing
+// to test, for example no bulk operations.
+const skipExitCode = 3
+
+// serviceChecks lists the checks for a combination. They run after Playwright,
+// so the existing steps keep the meaning they had.
+func serviceChecks(c matrix.Combination) []serviceCheck {
+	checks := []serviceCheck{
+		{name: "queue", argv: []string{"php", "/scripts/tests/check-queue.php"}, service: "queue"},
+		{name: "cron", argv: []string{"php", "/scripts/tests/check-cron.php"}},
+	}
+	if c.Varnish != "none" && c.Varnish != "" {
+		checks = append(checks, serviceCheck{name: "varnish", run: runVarnishCheck})
+	}
+	return checks
+}
+
+func checkStatus(err error) string {
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return result.StatusPass
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == skipExitCode:
+		return result.StatusSkip
+	default:
+		return result.StatusFail
+	}
+}
+
+var (
+	vclRejection = regexp.MustCompile(`(?i)VCL compilation failed|Message from VCC`)
+	dnsFailure   = regexp.MustCompile(`(?i)resolution error|Name or service not known|Temporary failure in name resolution|could not be resolved`)
+)
+
+var (
+	varnishBackendTimeout  = 30 * time.Second
+	varnishBackendInterval = time.Second
+	backendHealthy         = regexp.MustCompile(`(?i)\bhealthy\b`)
+	backendSick            = regexp.MustCompile(`(?i)\bsick\b`)
+)
+
+// waitForHealthyBackend polls until Varnish's probe has marked the backend healthy,
+// as a new backend starts out sick. It returns the last varnishadm error, so a
+// varnishadm that never answered is not taken for a sick backend.
+func waitForHealthyBackend(ctx context.Context, cp *Compose) (string, bool, error) {
+	deadline := time.Now().Add(varnishBackendTimeout)
+	for {
+		out, err := cp.run(ctx, "exec", "-T", "varnish", "varnishadm", "backend.list")
+		if err == nil && backendHealthy.MatchString(out) && !backendSick.MatchString(out) {
+			return out, true, nil
+		}
+		if time.Now().After(deadline) {
+			return out, false, err
+		}
+		select {
+		case <-ctx.Done():
+			return out, false, err
+		case <-time.After(varnishBackendInterval):
+		}
+	}
+}
+
+// runVarnishCheck points Magento at Varnish, loads the VCL into the varnish
+// container, then checks caching and purging. The VCL reaches varnish through
+// the host, as the two containers share no volume.
+func runVarnishCheck(ctx context.Context, cp *Compose) (string, string) {
+	var log strings.Builder
+	record := func(title, out string) { fmt.Fprintf(&log, "=== %s ===\n%s\n", title, strings.TrimSpace(out)) }
+	runCheck := func(argv ...string) (string, error) {
+		return cp.Exec(ctx, "php-fpm", append([]string{"bash", "/scripts/tests/run-check.sh"}, argv...)...)
+	}
+
+	out, err := runCheck("bash", "/scripts/tests/check-varnish.sh")
+	record("configure Magento for Varnish", out)
+	if err != nil {
+		return checkStatus(err), log.String()
+	}
+
+	dir, err := os.MkdirTemp("", "m2test-vcl-")
+	if err != nil {
+		record("stage the VCL", err.Error())
+		return result.StatusFail, log.String()
+	}
+	defer os.RemoveAll(dir)
+	vcl := filepath.Join(dir, "magento.vcl")
+
+	for _, step := range []struct {
+		title    string
+		argv     []string
+		rejected bool
+	}{
+		{"copy the VCL out of php-fpm", []string{"cp", "php-fpm:/scripts/tests/varnish.vcl", vcl}, false},
+		{"copy it into varnish", []string{"cp", vcl, "varnish:/etc/varnish/magento.vcl"}, false},
+		{"load it", []string{"exec", "-T", "varnish", "varnishadm", "vcl.load", "magento", "/etc/varnish/magento.vcl"}, true},
+		{"switch Varnish to it", []string{"exec", "-T", "varnish", "varnishadm", "vcl.use", "magento"}, false},
+	} {
+		out, err := cp.run(ctx, step.argv...)
+		record(step.title, out)
+		if err == nil {
+			continue
+		}
+		if step.rejected && vclRejection.MatchString(out) && !dnsFailure.MatchString(out) {
+			fmt.Fprintln(&log, "[FAIL] varnish: Varnish rejected the VCL fixture")
+		} else {
+			fmt.Fprintf(&log, "[ERROR] varnish: could not %s\n", step.title)
+		}
+		return result.StatusFail, log.String()
+	}
+
+	out, healthy, listErr := waitForHealthyBackend(ctx, cp)
+	record("wait for the backend probe", out)
+	if listErr != nil {
+		fmt.Fprintf(&log, "[ERROR] varnish: varnishadm backend.list kept failing: %v\n", listErr)
+		return result.StatusFail, log.String()
+	}
+	if !healthy {
+		fmt.Fprintf(&log, "[FAIL] varnish: the backend was not healthy %s after the VCL was loaded, so Varnish would mark the backend sick\n", varnishBackendTimeout)
+		return result.StatusFail, log.String()
+	}
+
+	// Pages cached while Playwright ran would turn the check's first GET into a hit.
+	out, err = cp.run(ctx, "exec", "-T", "varnish", "varnishadm", "ban", "req.url", "~", ".")
+	record("empty the cache", out)
+	if err != nil {
+		fmt.Fprintf(&log, "[ERROR] varnish: could not empty the cache\n")
+		return result.StatusFail, log.String()
+	}
+
+	out, err = runCheck("php", "/scripts/tests/check-varnish.php")
+	record("check caching and purging", out)
+	return checkStatus(err), log.String()
+}
+
+// serviceCheckTimeout backstops run-check.sh, which stops the script itself after
+// 870 seconds. Killing the exec client would not stop what runs in the container.
+var serviceCheckTimeout = 15 * time.Minute
+
+func runServiceCheck(parent context.Context, cp *Compose, check serviceCheck) (string, string) {
+	ctx, cancel := context.WithTimeout(parent, serviceCheckTimeout)
+	defer cancel()
+
+	status, log, killed := execServiceCheck(parent, ctx, cp, check)
+	if killed && parent.Err() == nil {
+		return result.StatusFail, log + fmt.Sprintf("\n[ERROR] %s: timed out after %s\n", check.name, serviceCheckTimeout)
+	}
+	return status, log
+}
+
+// execServiceCheck also reports whether the deadline killed the check itself.
+func execServiceCheck(parent, ctx context.Context, cp *Compose, check serviceCheck) (status, log string, killed bool) {
+	if check.run != nil {
+		status, log = check.run(ctx, cp)
+		return status, log, ctx.Err() == context.DeadlineExceeded
+	}
+	args := append([]string{"bash", "/scripts/tests/run-check.sh"}, check.argv...)
+	log, err := cp.Exec(ctx, "php-fpm", args...)
+	killed = ctx.Err() == context.DeadlineExceeded
+	status = checkStatus(err)
+	if status == result.StatusFail && check.service != "" {
+		// The check has already failed, so the broker log gets its own short deadline.
+		logCtx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		serviceLog, _ := cp.Logs(logCtx, check.service, 8<<10)
+		log += fmt.Sprintf("\n=== %s container log ===\n%s", check.service, serviceLog)
+	}
+	return status, log, killed
 }
 
 // writeResult captures container logs then persists the result file.

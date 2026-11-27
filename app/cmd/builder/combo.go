@@ -15,7 +15,7 @@ import (
 )
 
 // baselineStepOrder controls the display order of steps in baseline output.
-var baselineStepOrder = []string{"stack_up", "install", "smoke", "playwright"}
+var baselineStepOrder = []string{"stack_up", "install", "smoke", "playwright", "queue", "cron", "varnish"}
 
 type stepResult struct {
 	name   string

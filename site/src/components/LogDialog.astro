@@ -62,7 +62,7 @@
         ? { glyph: '✓+', tone: 'bg-pass text-pass-ink', text: 'Works with an extra patch or module' }
         : { glyph: '✓', tone: 'bg-pass text-pass-ink', text: 'Installs and passes every check' };
     const steps = e.steps
-      .map((s) => `<span class="${s.status === 'pass' ? 'text-pass dark:text-pass-ink' : 'text-fail-line'}">${s.status === 'pass' ? '✓' : '✕'} ${esc(s.name)}</span>`)
+      .map((s) => `<span class="${s.status === 'pass' ? 'text-pass dark:text-pass-ink' : s.status === 'skip' ? 'text-muted' : 'text-fail-line'}" title="${esc(s.log.match(/\[SKIP\][^\n]*/)?.[0] ?? '')}">${s.status === 'pass' ? '✓' : s.status === 'skip' ? '–' : '✕'} ${esc(s.name)}</span>`)
       .join('');
     summary.innerHTML = `
       <div class="flex items-center gap-3">
@@ -91,7 +91,7 @@
       body.innerHTML = entry.steps.length
         ? entry.steps
             .map((s) => {
-              const tone = s.status === 'pass' ? 'text-pass dark:text-pass-ink' : 'text-fail-line';
+              const tone = s.status === 'pass' ? 'text-pass dark:text-pass-ink' : s.status === 'skip' ? 'text-muted' : 'text-fail-line';
               return block(esc(s.name), `<span class="${tone}">${esc(s.status)}</span><span class="ml-auto text-muted">${s.duration.toFixed(1)}s</span>`, s.log);
             })
             .join('')
