@@ -41,12 +41,12 @@ function checkObjectManager(): ObjectManager
 }
 
 // PHP 8.5 deprecates $http_response_header, and http_get_last_response_headers() has
-// replaced it since 8.4. The variable only exists where the request was made.
+// replaced it since 8.4. The variable only exists where the request was made, and
+// PHP 8.1 to 8.3 only fill it in a function that names it literally.
 function checkHttpGet(string $url, array $http): array
 {
     $body = @file_get_contents($url, false, stream_context_create(['http' => $http]));
-    $variable = 'http_response_header';
-    $headers = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : ($$variable ?? []);
+    $headers = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : ($http_response_header ?? []);
 
     return [(string)$body, $headers ?? []];
 }
