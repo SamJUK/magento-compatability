@@ -6,6 +6,8 @@ services:
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
       xpack.security.enabled: "false"
       cluster.routing.allocation.disk.threshold_enabled: "false"
+      # Magento sorts search results on _id, which Elasticsearch 8 refuses by default (see magento/module-elasticsearch-8 README).
+      indices.id_field_data.enabled: "true"
     volumes:
       - search-data:/usr/share/elasticsearch/data
     networks:
