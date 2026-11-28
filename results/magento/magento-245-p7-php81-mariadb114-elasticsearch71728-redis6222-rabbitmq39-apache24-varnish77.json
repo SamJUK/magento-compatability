@@ -55,5 +55,15 @@
     "308e261",
     "ACSD-46815_2.4.5_v2"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-02T08:14:37Z"
 }

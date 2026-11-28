@@ -56,5 +56,15 @@
     "varnish": "varnish-1  | 2026-10-04T13:14:00.300428223Z Warnings:\nvarnish-1  | 2026-10-04T13:14:00.300438806Z Message from VCC-compiler:\nvarnish-1  | 2026-10-04T13:14:00.300445348Z ACL entry:\nvarnish-1  | 2026-10-04T13:14:00.300446598Z ('/etc/varnish/default.vcl' Line 15 Pos 5)\nvarnish-1  | 2026-10-04T13:14:00.300447723Z     \"127.0.0.1\";\nvarnish-1  | 2026-10-04T13:14:00.300448764Z ----###########-\nvarnish-1  | 2026-10-04T13:14:00.300449723Z \nvarnish-1  | 2026-10-04T13:14:00.300870432Z left of:\nvarnish-1  | 2026-10-04T13:14:00.300874474Z ('/etc/varnish/default.vcl' Line 14 Pos 5)\nvarnish-1  | 2026-10-04T13:14:00.300875599Z     \"localhost\";\nvarnish-1  | 2026-10-04T13:14:00.300876640Z ----###########-\nvarnish-1  | 2026-10-04T13:14:00.300877682Z \nvarnish-1  | 2026-10-04T13:14:00.300901599Z removing the latter and expanding mask of the former by one to /31\nvarnish-1  | 2026-10-04T13:14:00.300903724Z (That was just a warning)\nvarnish-1  | 2026-10-04T13:14:00.300904765Z \nvarnish-1  | 2026-10-04T13:14:00.303608564Z Debug: Version: varnish-8.0.2 revision fb46a7bb50531f1a86e17173aa64116fd98a8b86\nvarnish-1  | 2026-10-04T13:14:00.304908483Z Debug: Platform: Linux,7.0.14-orbstack-00380-ga7e0a2dc9535,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-10-04T13:14:00.306176903Z Debug: Child (20) Started\nvarnish-1  | 2026-10-04T13:14:00.414118746Z Child launched OK\nvarnish-1  | 2026-10-04T13:14:00.415406582Z Info: Child (20) said Child starts\n",
     "webserver": "webserver-1  | 2026-10-04T13:15:33.514487573Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 192.168.176.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-10-04T13:15:33.516154040Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 192.168.176.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-10-04T13:15:33.517558298Z [Sun Oct 04 13:15:33.517375 2026] [mpm_event:notice] [pid 1:tid 1] AH00489: Apache/2.4.68 (Unix) configured -- resuming normal operations\nwebserver-1  | 2026-10-04T13:15:33.517570673Z [Sun Oct 04 13:15:33.517465 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'httpd -D FOREGROUND'\n"
   },
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-04T13:17:35Z"
 }

@@ -58,5 +58,11 @@
   "workarounds": [
     "musl-glob-brace-magento"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-01T19:38:49Z"
 }

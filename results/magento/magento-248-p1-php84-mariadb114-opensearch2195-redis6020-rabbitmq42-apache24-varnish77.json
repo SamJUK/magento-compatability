@@ -56,5 +56,15 @@
     "varnish": "varnish-1  | 2026-10-01T00:46:08.169747227Z Debug: Version: varnish-7.7.3 revision 6884b75af9c9bdb2c9b6e2aa464a435e42cb4931\nvarnish-1  | 2026-10-01T00:46:08.169757310Z Debug: Platform: Linux,7.0.14-orbstack-00380-ga7e0a2dc9535,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-10-01T00:46:08.170086312Z Debug: Child (20) Started\nvarnish-1  | 2026-10-01T00:46:08.252857548Z Child launched OK\nvarnish-1  | 2026-10-01T00:46:08.253477718Z Info: Child (20) said Child starts\n",
     "webserver": "webserver-1  | 2026-10-01T00:47:10.055527424Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 192.168.159.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-10-01T00:47:10.059517196Z AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 192.168.159.7. Set the 'ServerName' directive globally to suppress this message\nwebserver-1  | 2026-10-01T00:47:10.061279580Z [Thu Oct 01 00:47:10.061162 2026] [mpm_event:notice] [pid 1:tid 1] AH00489: Apache/2.4.68 (Unix) configured -- resuming normal operations\nwebserver-1  | 2026-10-01T00:47:10.061446290Z [Thu Oct 01 00:47:10.061352 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'httpd -D FOREGROUND'\n"
   },
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-01T00:49:26Z"
 }

@@ -51,5 +51,15 @@
     "varnish": "varnish-1  | 2026-11-24T14:58:08.413332134Z Debug: Version: varnish-7.7.3 revision 6884b75af9c9bdb2c9b6e2aa464a435e42cb4931\nvarnish-1  | 2026-11-24T14:58:08.413515802Z Debug: Platform: Linux,7.2.12-orbstack-00394-gbecdd6130068,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-11-24T14:58:08.414296806Z Debug: Child (20) Started\nvarnish-1  | 2026-11-24T14:58:08.454953346Z Child launched OK\nvarnish-1  | 2026-11-24T14:58:08.455599308Z Info: Child (20) said Child starts\n",
     "webserver": ""
   },
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-11-24T14:58:20Z"
 }

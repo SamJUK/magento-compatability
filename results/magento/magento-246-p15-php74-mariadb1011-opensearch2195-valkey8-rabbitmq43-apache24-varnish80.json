@@ -51,5 +51,15 @@
     "varnish": "varnish-1  | 2026-11-24T18:10:42.246733945Z Warnings:\nvarnish-1  | 2026-11-24T18:10:42.246742529Z Message from VCC-compiler:\nvarnish-1  | 2026-11-24T18:10:42.246747320Z ACL entry:\nvarnish-1  | 2026-11-24T18:10:42.246748320Z ('/etc/varnish/default.vcl' Line 15 Pos 5)\nvarnish-1  | 2026-11-24T18:10:42.246749237Z     \"127.0.0.1\";\nvarnish-1  | 2026-11-24T18:10:42.246750112Z ----###########-\nvarnish-1  | 2026-11-24T18:10:42.246751071Z \nvarnish-1  | 2026-11-24T18:10:42.246752112Z left of:\nvarnish-1  | 2026-11-24T18:10:42.246752904Z ('/etc/varnish/default.vcl' Line 14 Pos 5)\nvarnish-1  | 2026-11-24T18:10:42.246754029Z     \"localhost\";\nvarnish-1  | 2026-11-24T18:10:42.246754821Z ----###########-\nvarnish-1  | 2026-11-24T18:10:42.246756737Z \nvarnish-1  | 2026-11-24T18:10:42.246765821Z removing the latter and expanding mask of the former by one to /31\nvarnish-1  | 2026-11-24T18:10:42.246766946Z (That was just a warning)\nvarnish-1  | 2026-11-24T18:10:42.246767737Z \nvarnish-1  | 2026-11-24T18:10:42.247584575Z Debug: Version: varnish-8.0.2 revision fb46a7bb50531f1a86e17173aa64116fd98a8b86\nvarnish-1  | 2026-11-24T18:10:42.247793201Z Debug: Platform: Linux,7.2.12-orbstack-00394-gbecdd6130068,aarch64,-jnone,-smalloc,-sdefault,-hcritbit\nvarnish-1  | 2026-11-24T18:10:42.248981500Z Debug: Child (20) Started\nvarnish-1  | 2026-11-24T18:10:42.282779856Z Child launched OK\nvarnish-1  | 2026-11-24T18:10:42.285688205Z Info: Child (20) said Child starts\n",
     "webserver": ""
   },
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-11-24T18:10:54Z"
 }
