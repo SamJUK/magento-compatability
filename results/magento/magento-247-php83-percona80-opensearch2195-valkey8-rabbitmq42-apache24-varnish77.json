@@ -59,5 +59,15 @@
   "workarounds": [
     "308e261"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-01T07:46:48Z"
 }

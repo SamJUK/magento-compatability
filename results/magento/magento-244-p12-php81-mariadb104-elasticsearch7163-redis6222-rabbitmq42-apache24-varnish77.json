@@ -61,5 +61,15 @@
     "AC-2855",
     "ACSD-46815_2.4.4_v2"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-02T16:18:11Z"
 }

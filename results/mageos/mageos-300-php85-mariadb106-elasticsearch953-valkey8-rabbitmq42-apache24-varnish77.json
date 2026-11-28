@@ -54,5 +54,15 @@
   "workarounds": [
     "musl-glob-brace-mageos"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-04T09:35:47Z"
 }

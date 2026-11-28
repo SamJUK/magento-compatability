@@ -61,5 +61,15 @@
     "elasticsearch8-client-alias",
     "308e261"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-01T15:01:20Z"
 }

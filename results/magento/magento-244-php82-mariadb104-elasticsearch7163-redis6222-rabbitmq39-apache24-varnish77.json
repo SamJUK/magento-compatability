@@ -54,5 +54,15 @@
   "workarounds": [
     "magento-244-composer-aliases"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-02T23:34:04Z"
 }

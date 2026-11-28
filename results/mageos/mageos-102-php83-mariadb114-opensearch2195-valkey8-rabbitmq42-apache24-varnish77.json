@@ -54,5 +54,15 @@
   "workarounds": [
     "308e261-mageos"
   ],
+  "images": {
+    "search": {
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    "varnish": {
+      "platform": "linux/arm64",
+      "emulated": false
+    }
+  },
   "timestamp": "2026-10-05T10:40:15Z"
 }

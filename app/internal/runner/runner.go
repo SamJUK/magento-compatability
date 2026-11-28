@@ -1133,6 +1133,7 @@ func writeResult(
 ) (wrote bool, err error) {
 	logCtx, cancel := context.WithTimeout(ctx, diagnosticTimeout)
 	containerLogs := captureContainerLogs(logCtx, cp, maxLog)
+	images := captureImages(logCtx, cp)
 	cancel()
 
 	r := result.TestResult{
@@ -1143,6 +1144,7 @@ func writeResult(
 		Services:      Services(c),
 		Steps:         steps,
 		ContainerLogs: containerLogs,
+		Images:        images,
 		Workarounds:   result.ParseWorkarounds(steps["install"].Log),
 		Timestamp:     result.Now(),
 	}
