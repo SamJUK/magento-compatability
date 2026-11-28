@@ -45,6 +45,19 @@ ensure_composer_cache_health() {
 
 ensure_composer_cache_health
 
+# Composer's ensureDirectoryExists() calls mkdir() without re-checking is_dir(),
+# so two slots filling a cold shared cache fail with "<dir> does not exist and
+# could not be created". Serialise the runs that write to the cache.
+composer_cache_locked() {
+  local lock="${COMPOSER_CACHE_DIR:-/composer-cache}/.composer.flock"
+
+  if ! flock --version 2>/dev/null | grep -q util-linux; then
+    "$@"
+    return
+  fi
+  flock -w "${COMPOSER_CACHE_LOCK_WAIT_SECONDS:-1800}" "${lock}" "$@"
+}
+
 composer --version
 php -v
 
@@ -264,7 +277,7 @@ CREATE_PROJECT_DIR="$(mktemp -d /tmp/magento-create-project.XXXXXX)"
 
 # Get composer.json + lock without downloading vendor so we can inject
 # version fixes before the first composer install.
-composer create-project \
+composer_cache_locked composer create-project \
   --repository-url="${MIRROR_URL}" \
   --no-interaction \
   --no-progress \
@@ -316,7 +329,7 @@ else
   echo "=== Installing ${PRODUCT_PACKAGE}:${PRODUCT_VERSION} (no vendor cache) ==="
 fi
 
-composer install \
+composer_cache_locked composer install \
   --no-interaction \
   --no-progress \
   2>&1
