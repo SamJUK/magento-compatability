@@ -1066,6 +1066,12 @@ services:
     - type: rabbitmq
       version: "3.13"
     - type: rabbitmq
+      version: "3.12"
+    - type: rabbitmq
+      version: "3.11"
+    - type: rabbitmq
+      version: "3.10"
+    - type: rabbitmq
       version: "3.9"
     - type: rabbitmq
       version: "3.8"
