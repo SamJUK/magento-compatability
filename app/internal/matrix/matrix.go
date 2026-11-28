@@ -149,6 +149,7 @@ func (c Combination) ID() string {
 	b.WriteString(strings.ReplaceAll(c.QueueVersion, ".", ""))
 	b.WriteString("-")
 	b.WriteString(c.WebserverType)
+	b.WriteString(strings.ReplaceAll(c.WebserverVersion, ".", ""))
 	if c.Varnish != "none" && c.Varnish != "" {
 		b.WriteString("-varnish")
 		b.WriteString(strings.ReplaceAll(c.Varnish, ".", ""))
